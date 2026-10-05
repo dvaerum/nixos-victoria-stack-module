@@ -1,0 +1,291 @@
+{ lib, ... }:
+
+let
+  inherit (lib)
+    mkOption
+    mkEnableOption
+    types
+    ;
+
+  # Not lib.mkPackageOption: that helper resolves its default via
+  # attrByPath against the real `pkgs.<name>`, correct for
+  # metrics/logs/traces/vmauth (all real nixpkgs attributes), but wrong for
+  # the three MCP server packages (this flake's own packages/*, not
+  # anything in nixpkgs). Both cases instead declare a plain `types.package`
+  # option here with no literal default, and get their actual default value
+  # via `lib.mkDefault` in config.nix, where `pkgs` (and, for MCP, this
+  # flake's own package derivations) are naturally in scope -- one
+  # consistent mechanism for both cases rather than two different helpers.
+  mkPackageOption' =
+    description:
+    mkOption {
+      type = types.package;
+      inherit description;
+    };
+
+  # Shared option shape for metrics/logs/traces -- each storage service is an
+  # independent systemd unit built directly on the relevant victoria-family
+  # binary (see docs/decisions/0001), not a wrapper around nixpkgs' own
+  # services.victoriametrics/victorialogs/victoriatraces modules.
+  mkStorageServiceOptions =
+    {
+      name, # "victoriametrics" | "victorialogs" | "victoriatraces"
+      defaultListenAddress,
+      defaultMcpPort,
+      binaryName,
+    }:
+    {
+      enable = mkEnableOption name;
+
+      package = mkPackageOption' "The ${binaryName} package to use. Defaults to pkgs.${name}, set via mkDefault in config.nix.";
+
+      dataDir = mkOption {
+        type = types.path;
+        default = /var/lib/${name};
+        defaultText = lib.literalExpression "/var/lib/${name}";
+        description = ''
+          Directory the ${binaryName} binary stores its data in
+          (`-storageDataPath`). Changing this away from the default
+          `/var/lib/${name}` -- e.g. to point at an externally-mounted
+          dataset -- requires `dynamicUser = false` (static user); see
+          `suppressDynamicUserWarning` and
+          docs/decisions/0009-dynamicuser-warning-not-assertion.md for why
+          this is a warning, not a hard assertion.
+        '';
+      };
+
+      dynamicUser = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Whether to run ${binaryName} under a systemd `DynamicUser`
+          (nixpkgs' own default behavior for these binaries) or a static,
+          stable system user. `DynamicUser`'s `StateDirectory` handling
+          tries to migrate a pre-existing `dataDir` into a private
+          DynamicUser-managed copy on every start, which fails outright
+          ("Device or resource busy") once `dataDir` is itself an
+          externally-managed mount (e.g. a ZFS dataset) -- confirmed on two
+          independent real deployments. Set this to `false` whenever
+          `dataDir` is not the default `/var/lib/${name}` path.
+        '';
+      };
+
+      suppressDynamicUserWarning = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Silence the build-time warning emitted when `dataDir` has been
+          customized away from `/var/lib/...` while `dynamicUser` is still
+          `true`. Use once you've deliberately confirmed this combination
+          is what you want (it almost never is -- see `dynamicUser`'s own
+          description).
+        '';
+      };
+
+      listenAddress = mkOption {
+        type = types.str;
+        default = defaultListenAddress;
+        description = ''
+          Address ${binaryName} listens on. Defaults to loopback-only --
+          `services.victoriaStack.vmauth` is the sanctioned way to reach it
+          from outside this host. Override to `0.0.0.0:<port>` to bypass
+          vmauth entirely and expose it directly, if that's deliberately
+          what you want.
+        '';
+      };
+
+      retentionPeriod = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "30d";
+        description = ''
+          How long to retain data for. `null` (the default) means
+          whatever ${binaryName} itself does when the flag is omitted
+          entirely (effectively unbounded for these binaries) -- matching
+          upstream's own default rather than imposing an opinionated one.
+        '';
+      };
+
+      extraOptions = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "-search.maxUniqueTimeseries=300000" ];
+        description = ''
+          Extra command-line flags passed straight through to ${binaryName},
+          for anything not worth promoting to its own typed option.
+        '';
+      };
+
+      mcp = {
+        enable = mkEnableOption "an MCP (Model Context Protocol) server fronting this ${name} instance";
+
+        package = mkPackageOption' "The mcp-${name} package to use. Defaults to this flake's own packages.mcp-${name}, set via mkDefault in config.nix.";
+
+        listenAddress = mkOption {
+          type = types.str;
+          default = "127.0.0.1:${toString defaultMcpPort}";
+          description = ''
+            Address the MCP server listens on. Defaults to loopback-only
+            (reach it via `services.victoriaStack.vmauth`'s own `/mcp/*`
+            routing); override to expose it directly if `vmauth` is
+            disabled and that's what you want. Requires this service's own
+            `enable = true` -- there is nothing for the MCP server to proxy
+            to otherwise (see docs/decisions/0002-opt-in-everything.md).
+          '';
+        };
+      };
+    };
+in
+{
+  options.services.victoriaStack = {
+    metrics = mkStorageServiceOptions {
+      name = "victoriametrics";
+      binaryName = "victoria-metrics";
+      defaultListenAddress = "127.0.0.1:8428";
+      defaultMcpPort = 8881;
+    };
+
+    logs = mkStorageServiceOptions {
+      name = "victorialogs";
+      binaryName = "victoria-logs";
+      defaultListenAddress = "127.0.0.1:9428";
+      defaultMcpPort = 8882;
+    };
+
+    traces = mkStorageServiceOptions {
+      name = "victoriatraces";
+      binaryName = "victoria-traces";
+      defaultListenAddress = "127.0.0.1:10428";
+      defaultMcpPort = 8883;
+    };
+
+    vmauth = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Whether to run vmauth, the auth/routing gateway in front of
+          whichever of metrics/logs/traces are enabled. Auto-defaults to
+          `true` (via `mkDefault`, so it stays overridable) whenever any of
+          those is enabled -- see
+          docs/decisions/0002-opt-in-everything.md. A `true` value here has
+          no effect at all if none of metrics/logs/traces is enabled (there
+          is nothing to front).
+        '';
+      };
+
+      package = mkPackageOption' "The victoriametrics package vmauth's binary is bundled in. Defaults (via mkDefault) to config.services.victoriaStack.metrics.package -- see docs/decisions/0007-package-override-options.md.";
+
+      listenAddress = mkOption {
+        type = types.str;
+        default = "127.0.0.1:8880";
+        description = "Address vmauth listens on.";
+      };
+
+      idleConnTimeout = mkOption {
+        type = types.str;
+        default = "5m";
+        description = ''
+          vmauth's `-http.idleConnTimeout`. The default of `1m` sits right
+          on top of a typical collector's own OTLP export interval
+          (confirmed in production: ~52-60s), producing intermittent
+          "connection reset by peer" retries as vmauth force-closes
+          connections collectors are about to reuse. 5m gives real headroom.
+        '';
+      };
+
+      requireAuthForWrites = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Whether the native ingest/write paths for enabled backends
+          require a write-tier credential (`writeTokensFile`). Default
+          `true`. Set to `false` to open those paths to any caller that can
+          reach vmauth at all, relying on a network boundary (e.g. a
+          tailnet) as the only gate instead -- a single toggle, not a
+          per-path list to maintain.
+        '';
+      };
+
+      writeTokensFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          Path to a YAML file (typically sops-nix rendered) containing a
+          `tokens:` list of bearer tokens authorized for the write/ingest
+          paths only. Each entry may carry an inline `#` comment (stripped
+          automatically) naming which host/purpose it's for. See
+          docs/decisions/0003-vmauth-two-credential-tiers.md. Required
+          when `requireAuthForWrites = true` and at least one storage
+          service is enabled.
+        '';
+      };
+
+      readTokensFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          Path to a YAML file (typically sops-nix rendered) containing a
+          `tokens:` list of bearer tokens authorized for read + MCP paths.
+          Deliberately a SEPARATE file from `writeTokensFile` -- see
+          docs/decisions/0003-vmauth-two-credential-tiers.md for why.
+        '';
+      };
+
+      adminPasswordFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          Path to a file containing the plaintext password for vmauth's
+          Basic Auth "admin" user (read + MCP paths, same access as any
+          `readTokensFile` entry, just a different credential type).
+        '';
+      };
+
+      openIngestPaths = mkOption {
+        type = types.listOf types.attrs;
+        default = [ ];
+        description = ''
+          vmauth `url_map` entries for the unauthenticated-write case
+          (`requireAuthForWrites = false`). Auto-derived from whichever of
+          metrics/logs/traces is enabled; override to `[ ]` to close
+          writes entirely even with `requireAuthForWrites = false` (has no
+          effect when `requireAuthForWrites = true`, since those paths
+          require the write-tier credential regardless of this list).
+        '';
+      };
+
+      extraReadUrlMap = mkOption {
+        type = types.listOf types.attrs;
+        default = [ ];
+        description = "Extra vmauth url_map entries for the read/admin tier, appended after the auto-derived ones.";
+      };
+    };
+
+    grafana.enable = mkEnableOption ''
+      Grafana datasource provisioning for whichever of metrics/logs/traces
+      is enabled. Does NOT configure services.grafana itself (left entirely
+      to the consumer) and never routes through vmauth -- see
+      docs/decisions/0010-grafana-direct-loopback-own-auth.md
+    '';
+
+    nginx = {
+      enable = mkEnableOption ''
+        a single nginx vhost reverse-proxying to vmauth, covering every
+        currently-enabled service plus Grafana (if enabled). Requires
+        `vmauth.enable = true` -- see docs/decisions/0002-opt-in-everything.md
+      '';
+
+      domain = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          Optional FQDN for the vhost's `server_name`. `null` (the
+          default) serves on plain IP/hostname with no domain-specific
+          behavior -- this module deliberately has no ACME/TLS opinion
+          either way.
+        '';
+      };
+    };
+  };
+}
