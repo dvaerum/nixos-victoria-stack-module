@@ -7,7 +7,8 @@ let
     storage = import ./storage.nix { inherit pkgs nixosModule; };
     vmauth = import ./vmauth.nix { inherit pkgs nixosModule; };
     grafana = import ./grafana.nix { inherit pkgs nixosModule; };
-    # Other groups (nginx, mcp, collector, full) land phase-by-phase per
+    nginx = import ./nginx.nix { inherit pkgs nixosModule; };
+    # Other groups (mcp, collector, full) land phase-by-phase per
     # PLAN.md's task list, each adding its own import here as its phase
     # lands.
   };
