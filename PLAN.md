@@ -131,8 +131,12 @@ Vendored Grafana dashboards, default alerting rules, migrating
       needs `nix.settings.auto-allocate-uids` enabled on the host, or CI
       verification once push access is restored. See
       docs/decisions/0011-local-nspawn-verification-blocker.md)
-- [ ] 4. `storage`: logs (red->green)
-- [ ] 5. `storage`: traces (red->green)
+- [~] 4. `storage`: logs (same status as metrics -- implemented,
+      eval-only checks green, container-boot checks pending
+      docs/decisions/0011)
+- [~] 5. `storage`: traces (same status as metrics -- implemented,
+      eval-only checks green, container-boot checks pending
+      docs/decisions/0011)
 - [ ] 6. `vmauth` (red->green)
 - [ ] 7. `grafana` (red->green)
 - [ ] 8. `nginx` (red->green)
