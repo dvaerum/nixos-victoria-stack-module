@@ -153,7 +153,7 @@ Vendored Grafana dashboards, default alerting rules, migrating
       check pending docs/decisions/0011)
 - [x] 12. docs: `generate-doc.nix` + `docs/options.md`, README
 - [x] 13. `update-mcp-packages.yml` workflow
-- [ ] 14. Two independent fresh-agent critical reviews
+- [x] 14. Two independent fresh-agent critical reviews
 - [ ] 15. Address review findings, final gate, report completion
 
 Each phase: gate with `nix flake check -L` (run detached, polled — never a
