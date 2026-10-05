@@ -1,6 +1,7 @@
 { pkgs, nixosModule }:
 
 let
+  inherit (pkgs) lib;
   stackModule = nixosModule.nixosModules.victoriaStack;
   collectorModule = nixosModule.nixosModules.victoriaCollector;
 
@@ -10,6 +11,26 @@ let
   '';
 
   writeTokenFixture = pkgs.writeText "collector-test-write-token" "collector-test-write-token";
+
+  # Pure eval, no container boot needed: confirms the https:// branch of
+  # journaldWriteEndpoint actually renders the dummy-cert + CA-bundle
+  # settings it's supposed to -- the one branch with no prior coverage
+  # at all (the roundtrip test above only ever uses a plain http://
+  # writeEndpoint).
+  httpsEvaluated = import (pkgs.path + "/nixos/lib/eval-config.nix") {
+    inherit (pkgs) system;
+    modules = [
+      collectorModule
+      {
+        system.stateVersion = lib.trivial.release;
+        services.victoriaCollector = {
+          logs.enable = true;
+          journaldWriteEndpoint = "https://victoria-stack.example.invalid:8880";
+          hostType = "server";
+        };
+      }
+    ];
+  };
 in
 {
   # The one genuinely novel integration risk this whole project called
@@ -95,6 +116,50 @@ in
       collector.fail("systemctl status alloy.service")
     '';
   };
+
+  # needsAlloyOtlp is an OR across metrics/traces -- the check above only
+  # exercises the "both off" side. This confirms traces alone is
+  # sufficient on its own (not just in combination with metrics, as
+  # metrics-roundtrip-across-containers happens to test).
+  traces-alone-enables-alloy = pkgs.testers.nixosTest {
+    name = "victoria-collector-traces-alone-enables-alloy";
+
+    containers.collector = {
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        traces.enable = true;
+        # metrics/logs deliberately left disabled.
+        writeEndpoint = "http://127.0.0.1:8880";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      collector.wait_for_unit("alloy.service")
+      config_text = collector.succeed("cat /etc/alloy/config.alloy")
+      assert "otlp" in config_text
+      assert "traces" in config_text
+    '';
+  };
+
+  journal-upload-https-renders-dummy-cert =
+    pkgs.runCommand "journal-upload-https-renders-dummy-cert" { }
+      (
+        let
+          upload = httpsEvaluated.config.services.journald.upload.settings.Upload;
+          checks = [
+            (upload ? ServerKeyFile)
+            (upload ? ServerCertificateFile)
+            (upload.TrustedCertificateFile == "/etc/ssl/certs/ca-certificates.crt")
+            (upload.URL == "https://victoria-stack.example.invalid:8880/insert/journald")
+          ];
+        in
+        if builtins.all (x: x) checks then
+          "echo OK > $out"
+        else
+          throw "journal-upload https:// branch did not render the expected settings: ${builtins.toJSON upload}"
+      );
 
   queue-option-takes-effect = pkgs.testers.nixosTest {
     name = "victoria-collector-queue-option";

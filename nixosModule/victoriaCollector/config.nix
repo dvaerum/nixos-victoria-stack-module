@@ -33,10 +33,28 @@ let
     name = "victoria-collector-journal-upload-token-header";
     text = ''
       mkdir -p /run/systemd/journal-upload.conf.d
+      conf=/run/systemd/journal-upload.conf.d/50-write-token.conf
       {
         echo "[Upload]"
         echo "Header=Authorization: Bearer $(cat "$CREDENTIALS_DIRECTORY/write-token")"
-      } > /run/systemd/journal-upload.conf.d/50-write-token.conf
+      } > "$conf"
+      chmod 600 "$conf"
+    '';
+  };
+
+  # alloy.service's own preStart runs too late to populate an
+  # EnvironmentFile=: systemd resolves EnvironmentFile= for every exec in
+  # the unit -- including ExecStartPre= itself -- before that exec runs,
+  # so a file only created by the unit's own preStart never exists yet.
+  # Same trap ADR 0012 already avoids for journal-upload; fixed here the
+  # same way, a dedicated oneshot ordered strictly before alloy.service.
+  renderAlloyWriteToken = pkgs.writeShellApplication {
+    name = "victoria-collector-alloy-write-token";
+    text = ''
+      mkdir -p /run/alloy
+      env=/run/alloy/write-token.env
+      echo "VICTORIA_WRITE_TOKEN=$(cat "$CREDENTIALS_DIRECTORY/write-token")" > "$env"
+      chmod 600 "$env"
     '';
   };
 in
@@ -65,17 +83,20 @@ in
       # no reason to restart it.
       systemd.services.alloy.restartTriggers = [ configAlloyText ];
 
-      systemd.services.alloy.serviceConfig = lib.mkIf (cfg.writeTokenFile != null) {
-        LoadCredential = [ "write-token:${cfg.writeTokenFile}" ];
-        # nixpkgs' own alloy module sets DynamicUser = true with no
-        # RuntimeDirectory -- added here so /run/alloy exists, owned by
-        # the same dynamic user, for the rendered env file below.
-        RuntimeDirectory = "alloy";
+      # Rendered by victoria-collector-alloy-write-token (see above) --
+      # NOT this unit's own preStart, which runs too late to satisfy its
+      # own EnvironmentFile=.
+      systemd.services.victoria-collector-alloy-write-token = lib.mkIf (cfg.writeTokenFile != null) {
+        description = "Render alloy's write-token EnvironmentFile=";
+        before = [ "alloy.service" ];
+        wantedBy = [ "alloy.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          LoadCredential = [ "write-token:${cfg.writeTokenFile}" ];
+          ExecStart = lib.getExe renderAlloyWriteToken;
+        };
       };
-
-      systemd.services.alloy.preStart = lib.mkIf (cfg.writeTokenFile != null) ''
-        echo "VICTORIA_WRITE_TOKEN=$(cat "$CREDENTIALS_DIRECTORY/write-token")" > /run/alloy/write-token.env
-      '';
     })
 
     (lib.mkIf cfg.logs.enable {

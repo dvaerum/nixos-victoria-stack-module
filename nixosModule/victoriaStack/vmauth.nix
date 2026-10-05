@@ -38,17 +38,17 @@ let
     # README). Callers must request with no trailing slash for this to
     # land exactly on "/mcp" rather than "/mcp/".
     ++ lib.optional topCfg.metrics.mcp.enable {
-      src_paths = [ "/mcp/metrics.*" ];
+      src_paths = [ "/mcp/metrics(/.*)?" ];
       drop_src_path_prefix_parts = 2;
       url_prefix = "http://${topCfg.metrics.mcp.listenAddress}/mcp";
     }
     ++ lib.optional topCfg.logs.mcp.enable {
-      src_paths = [ "/mcp/logs.*" ];
+      src_paths = [ "/mcp/logs(/.*)?" ];
       drop_src_path_prefix_parts = 2;
       url_prefix = "http://${topCfg.logs.mcp.listenAddress}/mcp";
     }
     ++ lib.optional topCfg.traces.mcp.enable {
-      src_paths = [ "/mcp/traces.*" ];
+      src_paths = [ "/mcp/traces(/.*)?" ];
       drop_src_path_prefix_parts = 2;
       url_prefix = "http://${topCfg.traces.mcp.listenAddress}/mcp";
     }
@@ -173,6 +173,12 @@ in
         # description.
         ExecStart = "${cfg.package}/bin/vmauth -auth.config=/run/vmauth/config.json -httpListenAddr=${cfg.listenAddress} -http.idleConnTimeout=${cfg.idleConnTimeout}";
         RuntimeDirectory = "vmauth";
+        RuntimeDirectoryMode = "0700";
+        # Default UMask (0022) would render config.json -- every bearer
+        # token and the admin password, in cleartext -- world-readable
+        # (mode 644). Applies to ExecStartPre too, so the file it renders
+        # comes out 600 from the start.
+        UMask = "0177";
         DynamicUser = true;
         Restart = "on-failure";
         RestartSec = 5;

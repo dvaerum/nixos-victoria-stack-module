@@ -19,15 +19,19 @@ let
       serviceCfg, # topCfg.<name>
       envPrefix, # "VM" | "VL" | "VT"
       instanceType ? null, # only VM_INSTANCE_TYPE needs a value; VL/VT don't use this env var at all
-      packagePath,
+      packagePath, # directory name under ../../packages
       binaryName,
       backendListenAddress,
+      backendUnit, # "victoriametrics.service" | "victorialogs.service" | "victoriatraces.service"
     }:
     {
       config = lib.mkIf serviceCfg.mcp.enable {
         systemd.services."mcp-victoria${name}" = {
           description = "mcp-victoria${name} (read-only MCP server for AI access to victoriaStack.${name})";
-          after = [ "network.target" ];
+          after = [
+            "network.target"
+            backendUnit
+          ];
           wantedBy = [ "multi-user.target" ];
 
           environment = {
@@ -63,6 +67,7 @@ in
       packagePath = "mcp-victoriametrics";
       binaryName = "mcp-victoriametrics";
       backendListenAddress = topCfg.metrics.listenAddress;
+      backendUnit = "victoriametrics.service";
     })
     (mkMcpService {
       name = "logs";
@@ -71,6 +76,7 @@ in
       packagePath = "mcp-victorialogs";
       binaryName = "mcp-victorialogs";
       backendListenAddress = topCfg.logs.listenAddress;
+      backendUnit = "victorialogs.service";
     })
     (mkMcpService {
       name = "traces";
@@ -79,6 +85,7 @@ in
       packagePath = "mcp-victoriatraces";
       binaryName = "mcp-victoriatraces";
       backendListenAddress = topCfg.traces.listenAddress;
+      backendUnit = "victoriatraces.service";
     })
   ];
 }

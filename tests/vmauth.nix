@@ -67,6 +67,35 @@ in
     '';
   };
 
+  write-paths-can-be-closed-entirely-even-with-auth-disabled = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-write-paths-closed-via-empty-open-ingest-paths";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.requireAuthForWrites = false;
+        # Overriding the auto-derived default to [] must close every
+        # write path entirely, even with requireAuthForWrites = false --
+        # this is the one guard (vmauth.nix's "($openmap[0] | length) > 0"
+        # check) with no prior test coverage.
+        vmauth.openIngestPaths = [ ];
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(8880)
+
+      machine.fail(
+          "curl -sf -X POST --data-binary "
+          "'victoria_stack_vmauth_test_metric 1' "
+          "'http://127.0.0.1:8880/opentelemetry'"
+      )
+    '';
+  };
+
   write-paths-require-write-token-by-default = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-write-paths-require-write-token-by-default";
 

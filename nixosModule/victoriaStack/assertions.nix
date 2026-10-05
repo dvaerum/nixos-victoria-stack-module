@@ -53,6 +53,17 @@ in
           traces itself is disabled there is nothing for it to connect to.
         '';
       }
+      {
+        assertion = cfg.grafana.enable -> config.services.grafana.enable;
+        message = ''
+          services.victoriaStack.grafana.enable requires
+          services.grafana.enable = true -- this module only provisions
+          datasources into an already-enabled Grafana (docs/decisions/0010),
+          it never enables the Grafana service itself; without it there is
+          nothing to provision datasources into, and nginx would otherwise
+          reverse-proxy "/grafana/" at a service that was never started.
+        '';
+      }
     ];
   };
 }

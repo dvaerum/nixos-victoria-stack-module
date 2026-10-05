@@ -4,6 +4,10 @@ let
   inherit (pkgs) lib;
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
   inherit (testLib) mkAssertionFiresCheck mkNoAssertionsFireCheck;
+
+  # Same throwaway fixture tests/grafana.nix uses -- nixpkgs' grafana
+  # module requires a real secret_key file-provider, no silent default.
+  secretKeyFixture = pkgs.writeText "grafana-secret-key" "test-fixture-secret-key-not-real";
 in
 {
   nginx-requires-vmauth = mkAssertionFiresCheck {
@@ -62,6 +66,30 @@ in
         mcp.enable = true;
       };
       services.victoriaStack.vmauth.enable = lib.mkForce false;
+    };
+  };
+
+  grafana-requires-grafana-service = mkAssertionFiresCheck {
+    name = "grafana-requires-grafana-service";
+    expectMessageSubstring = "services.grafana.enable";
+    module = {
+      services.victoriaStack.grafana.enable = true;
+      # services.grafana.enable deliberately left at its default (false)
+      # -- this module only provisions datasources, never enables Grafana
+      # itself (docs/decisions/0010).
+    };
+  };
+
+  # Control: victoriaStack.grafana.enable with services.grafana.enable
+  # both on -- no assertion should fire.
+  grafana-with-grafana-service-is-not-an-assertion-failure = mkNoAssertionsFireCheck {
+    name = "grafana-with-grafana-service-is-not-an-assertion-failure";
+    module = {
+      services.victoriaStack.grafana.enable = true;
+      services.grafana = {
+        enable = true;
+        settings.security.secret_key = "$__file{${secretKeyFixture}}";
+      };
     };
   };
 }
