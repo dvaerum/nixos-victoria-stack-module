@@ -10,7 +10,7 @@ let
     nginx = import ./nginx.nix { inherit pkgs nixosModule; };
     mcp = import ./mcp.nix { inherit pkgs nixosModule; };
     collector = import ./collector.nix { inherit pkgs nixosModule; };
-    # `full` lands as its own phase per PLAN.md's task list.
+    full = import ./full.nix { inherit pkgs nixosModule; };
   };
 in
 # Flatten { groupName = { checkName = drv; ... }; ... } into the flat
