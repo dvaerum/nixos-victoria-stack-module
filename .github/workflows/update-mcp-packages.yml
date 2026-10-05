@@ -1,0 +1,51 @@
+name: Update MCP server packages
+
+# Separate from update-flake.yml's weekly nixpkgs bump: these three
+# packages are pre-1.0 and can change runtime behavior on a version
+# bump (a tool renamed, a default flag flipped), unlike a pinned nixpkgs
+# revision -- worth its own gate (build + full test suite) before
+# committing, not folded into the same cron.
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes auto-allocate-uids cgroups
+            auto-allocate-uids = true
+
+      - name: Install nix-update
+        run: nix profile add nixpkgs#nix-update
+
+      - name: Bump each MCP package to its latest release
+        run: |
+          for pkg in mcp-victoriametrics mcp-victorialogs mcp-victoriatraces; do
+            nix-update --flake "$pkg" --build
+          done
+
+      - name: nix flake check
+        run: nix flake check -L
+
+      - name: Commit and push if anything changed
+        run: |
+          if git diff --quiet -- packages/; then
+            echo "no MCP package changes, nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/
+          git commit -m "mcp: bump package versions"
+          git push
