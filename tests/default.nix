@@ -8,9 +8,9 @@ let
     vmauth = import ./vmauth.nix { inherit pkgs nixosModule; };
     grafana = import ./grafana.nix { inherit pkgs nixosModule; };
     nginx = import ./nginx.nix { inherit pkgs nixosModule; };
-    # Other groups (mcp, collector, full) land phase-by-phase per
-    # PLAN.md's task list, each adding its own import here as its phase
-    # lands.
+    mcp = import ./mcp.nix { inherit pkgs nixosModule; };
+    # Other groups (collector, full) land phase-by-phase per PLAN.md's
+    # task list, each adding its own import here as its phase lands.
   };
 in
 # Flatten { groupName = { checkName = drv; ... }; ... } into the flat

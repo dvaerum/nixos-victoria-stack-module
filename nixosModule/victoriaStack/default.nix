@@ -10,5 +10,6 @@
     ./vmauth.nix
     ./grafana.nix
     ./nginx.nix
+    ./mcp.nix
   ];
 }

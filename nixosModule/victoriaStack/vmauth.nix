@@ -32,6 +32,26 @@ let
       drop_src_path_prefix_parts = 1;
       url_prefix = "http://${topCfg.traces.listenAddress}/";
     }
+    # MCP servers: drop 2 parts ("mcp" + the service name) so the backend
+    # sees exactly "/mcp" -- the one fixed path every mcp-victoria* binary
+    # serves in MCP_SERVER_MODE=http (confirmed via each project's own
+    # README). Callers must request with no trailing slash for this to
+    # land exactly on "/mcp" rather than "/mcp/".
+    ++ lib.optional topCfg.metrics.mcp.enable {
+      src_paths = [ "/mcp/metrics.*" ];
+      drop_src_path_prefix_parts = 2;
+      url_prefix = "http://${topCfg.metrics.mcp.listenAddress}/mcp";
+    }
+    ++ lib.optional topCfg.logs.mcp.enable {
+      src_paths = [ "/mcp/logs.*" ];
+      drop_src_path_prefix_parts = 2;
+      url_prefix = "http://${topCfg.logs.mcp.listenAddress}/mcp";
+    }
+    ++ lib.optional topCfg.traces.mcp.enable {
+      src_paths = [ "/mcp/traces.*" ];
+      drop_src_path_prefix_parts = 2;
+      url_prefix = "http://${topCfg.traces.mcp.listenAddress}/mcp";
+    }
     ++ cfg.extraReadUrlMap;
 
   # Each enabled backend's own native ingest/write path -- auto-derived

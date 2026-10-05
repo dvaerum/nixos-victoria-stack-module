@@ -144,7 +144,8 @@ Vendored Grafana dashboards, default alerting rules, migrating
       confirmed failing only for the known reason)
 - [~] 8. `nginx` (implemented, 2 container-boot checks pending
       docs/decisions/0011)
-- [ ] 9. `mcp`: package 3 Go servers for real + wiring (red->green)
+- [~] 9. `mcp`: 3 real buildGoModule packages built + wiring implemented
+      (2 container-boot checks pending docs/decisions/0011)
 - [ ] 10. `victoriaCollector` (red->green)
 - [ ] 11. `full` / `examples` assembly (red->green)
 - [ ] 12. docs: `generate-doc.nix` + `docs/options.md`, README

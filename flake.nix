@@ -32,6 +32,12 @@
         };
       in
       {
+        packages = {
+          mcp-victoriametrics = pkgs.callPackage ./packages/mcp-victoriametrics/package.nix { };
+          mcp-victorialogs = pkgs.callPackage ./packages/mcp-victorialogs/package.nix { };
+          mcp-victoriatraces = pkgs.callPackage ./packages/mcp-victoriatraces/package.nix { };
+        };
+
         checks = nixosTests;
 
         formatter = pkgs.nixfmt-tree;
