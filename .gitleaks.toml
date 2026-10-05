@@ -1,0 +1,15 @@
+title = "gitleaks config for nixos-victoria-stack-module"
+
+# Extends gitleaks' own bundled default ruleset (confirmed default
+# behavior when no `[extend]` with `useDefault = false` is set) --
+# this file only adds allowlist entries on top, it doesn't replace the
+# base rules.
+[extend]
+useDefault = true
+
+# Per-finding fingerprint exemptions (reviewed, deliberately fake
+# test-fixture credentials, not real secrets) live in .gitleaksignore,
+# not here -- gitleaks' own TOML [[allowlists]] schema only supports
+# paths/regexes/stopwords/commits checks, not fingerprints (confirmed via
+# `gitleaks protect --help`'s own -i/--gitleaks-ignore-path flag, which
+# defaults to this repo's root).

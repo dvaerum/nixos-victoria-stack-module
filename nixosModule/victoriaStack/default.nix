@@ -7,5 +7,6 @@
     ./metrics.nix
     ./logs.nix
     ./traces.nix
+    ./vmauth.nix
   ];
 }

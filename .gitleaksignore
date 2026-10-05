@@ -1,0 +1,4 @@
+tests/vmauth.nix:curl-auth-user:152
+tests/vmauth.nix:curl-auth-header:90
+tests/vmauth.nix:curl-auth-header:122
+tests/vmauth.nix:curl-auth-header:128

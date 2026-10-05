@@ -137,7 +137,8 @@ Vendored Grafana dashboards, default alerting rules, migrating
 - [~] 5. `storage`: traces (same status as metrics -- implemented,
       eval-only checks green, container-boot checks pending
       docs/decisions/0011)
-- [ ] 6. `vmauth` (red->green)
+- [~] 6. `vmauth` (same status -- implemented, eval-only check green,
+      5 container-boot checks pending docs/decisions/0011)
 - [ ] 7. `grafana` (red->green)
 - [ ] 8. `nginx` (red->green)
 - [ ] 9. `mcp`: package 3 Go servers for real + wiring (red->green)
