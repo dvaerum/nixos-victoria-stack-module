@@ -123,8 +123,8 @@ Vendored Grafana dashboards, default alerting rules, migrating
 ## Task list / phase order
 
 - [x] 0. SETUP: this file + ADRs, committed first
-- [ ] 1. Scaffolding: flake.nix, CI workflows, LICENSE, empty module entrypoints
-- [ ] 2. `assertions` test group (red first)
+- [x] 1. Scaffolding: flake.nix, CI workflows, LICENSE, empty module entrypoints
+- [x] 2. `assertions` test group (red first)
 - [ ] 3. `storage`: metrics (red->green)
 - [ ] 4. `storage`: logs (red->green)
 - [ ] 5. `storage`: traces (red->green)
