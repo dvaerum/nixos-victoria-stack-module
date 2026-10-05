@@ -36,6 +36,7 @@
           mcp-victoriametrics = pkgs.callPackage ./packages/mcp-victoriametrics/package.nix { };
           mcp-victorialogs = pkgs.callPackage ./packages/mcp-victorialogs/package.nix { };
           mcp-victoriatraces = pkgs.callPackage ./packages/mcp-victoriatraces/package.nix { };
+          optionsDoc = import ./generate-doc.nix { inherit pkgs; };
         };
 
         checks = nixosTests;

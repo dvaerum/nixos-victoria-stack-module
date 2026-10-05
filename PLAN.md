@@ -151,7 +151,7 @@ Vendored Grafana dashboards, default alerting rules, migrating
       docs/decisions/0011)
 - [~] 11. `full` / `examples` assembly (implemented, 1 container-boot
       check pending docs/decisions/0011)
-- [ ] 12. docs: `generate-doc.nix` + `docs/options.md`, README
+- [x] 12. docs: `generate-doc.nix` + `docs/options.md`, README
 - [ ] 13. `update-mcp-packages.yml` workflow
 - [ ] 14. Two independent fresh-agent critical reviews
 - [ ] 15. Address review findings, final gate, report completion

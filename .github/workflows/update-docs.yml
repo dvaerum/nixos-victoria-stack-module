@@ -1,0 +1,40 @@
+name: Auto Update Docs
+
+on:
+  push:
+    branches: ['**']
+
+jobs:
+  update-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Git user
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Generate docs
+        run: |
+          nix build .#optionsDoc -L
+          cp -v result docs/options.md
+
+      - name: Commit changes if any
+        run: |
+          if [[ -n "$(git status --porcelain -- docs/options.md)" ]]; then
+            git add docs/options.md
+            git commit -m "docs: regenerate options.md"
+            git push
+          else
+            echo "No changes to commit."
+          fi
