@@ -139,7 +139,9 @@ Vendored Grafana dashboards, default alerting rules, migrating
       docs/decisions/0011)
 - [~] 6. `vmauth` (same status -- implemented, eval-only check green,
       5 container-boot checks pending docs/decisions/0011)
-- [ ] 7. `grafana` (red->green)
+- [~] 7. `grafana` (implemented, 3 container-boot checks pending
+      docs/decisions/0011 -- no eval-only checks in this group, all 3
+      confirmed failing only for the known reason)
 - [ ] 8. `nginx` (red->green)
 - [ ] 9. `mcp`: package 3 Go servers for real + wiring (red->green)
 - [ ] 10. `victoriaCollector` (red->green)

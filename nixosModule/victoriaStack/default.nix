@@ -8,5 +8,6 @@
     ./logs.nix
     ./traces.nix
     ./vmauth.nix
+    ./grafana.nix
   ];
 }
