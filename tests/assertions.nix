@@ -2,71 +2,8 @@
 
 let
   inherit (pkgs) lib;
-
-  # Deliberately NOT the full `lib.nixosSystem`/`eval-config.nix` machinery:
-  # that pulls in nixos/modules/module-list.nix wholesale, which produces a
-  # wall of unrelated assertions (bootloader, filesystems, etc.) for a
-  # minimal test module and would drown out the one assertion each of these
-  # checks actually cares about. `assertions`/`warnings` as options are
-  # defined in the small, standalone lib/modules/generic/assertions.nix --
-  # evaluating just that plus our own module is enough to inspect
-  # `config.assertions` as data, and is near-instant (pure evaluation, no
-  # derivation realization), matching this group's own design goal (see
-  # PLAN.md's `assertions` test group: fast, eval-only, no container boot).
-  evalWith =
-    extraModule:
-    lib.evalModules {
-      modules = [
-        (pkgs.path + "/lib/modules/generic/assertions.nix")
-        nixosModule.nixosModules.victoriaStack
-        extraModule
-      ];
-    };
-
-  # A `checks`-compatible derivation: builds successfully (passes) when a
-  # failed assertion whose message contains `expectMessageSubstring` is
-  # present in `config.assertions`; fails the build (with the full
-  # assertions list for debugging) otherwise.
-  mkAssertionFiresCheck =
-    {
-      name,
-      module,
-      expectMessageSubstring,
-    }:
-    let
-      evaluated = evalWith module;
-      matching = builtins.filter (
-        a: !a.assertion && lib.hasInfix expectMessageSubstring a.message
-      ) evaluated.config.assertions;
-    in
-    pkgs.runCommand "assertions-${name}" { } (
-      if matching != [ ] then
-        "echo OK > $out"
-      else
-        throw ''
-          expected a failed assertion containing "${expectMessageSubstring}" for check "${name}", but none was found.
-          Actual config.assertions: ${builtins.toJSON evaluated.config.assertions}
-        ''
-    );
-
-  # The inverse: builds successfully when NO failed assertion exists at all
-  # -- the control case confirming a legitimate configuration doesn't
-  # spuriously trip either assertion.
-  mkNoAssertionsFireCheck =
-    { name, module }:
-    let
-      evaluated = evalWith module;
-      failed = builtins.filter (a: !a.assertion) evaluated.config.assertions;
-    in
-    pkgs.runCommand "assertions-${name}" { } (
-      if failed == [ ] then
-        "echo OK > $out"
-      else
-        throw ''
-          expected no failed assertions for check "${name}", but found some.
-          Failed: ${builtins.toJSON failed}
-        ''
-    );
+  testLib = import ./lib.nix { inherit pkgs nixosModule; };
+  inherit (testLib) mkAssertionFiresCheck mkNoAssertionsFireCheck;
 in
 {
   nginx-requires-vmauth = mkAssertionFiresCheck {

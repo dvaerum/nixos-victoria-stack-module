@@ -125,7 +125,12 @@ Vendored Grafana dashboards, default alerting rules, migrating
 - [x] 0. SETUP: this file + ADRs, committed first
 - [x] 1. Scaffolding: flake.nix, CI workflows, LICENSE, empty module entrypoints
 - [x] 2. `assertions` test group (red first)
-- [ ] 3. `storage`: metrics (red->green)
+- [~] 3. `storage`: metrics (implemented, eval-only checks green; 3
+      container-boot checks implemented but NOT locally verifiable --
+      this dev machine's Nix daemon lacks `uid-range` system feature;
+      needs `nix.settings.auto-allocate-uids` enabled on the host, or CI
+      verification once push access is restored. See
+      docs/decisions/0011-local-nspawn-verification-blocker.md)
 - [ ] 4. `storage`: logs (red->green)
 - [ ] 5. `storage`: traces (red->green)
 - [ ] 6. `vmauth` (red->green)

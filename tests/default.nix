@@ -4,9 +4,10 @@ let
 
   groups = {
     assertions = import ./assertions.nix { inherit pkgs nixosModule; };
-    # Other groups (storage, vmauth, grafana, nginx, mcp, collector, full)
-    # land phase-by-phase per PLAN.md's task list, each adding its own
-    # import here as its phase lands.
+    storage = import ./storage.nix { inherit pkgs nixosModule; };
+    # Other groups (vmauth, grafana, nginx, mcp, collector, full) land
+    # phase-by-phase per PLAN.md's task list, each adding its own import
+    # here as its phase lands.
   };
 in
 # Flatten { groupName = { checkName = drv; ... }; ... } into the flat
