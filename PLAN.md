@@ -1,0 +1,146 @@
+# Implementation plan: nixos-victoria-stack-module
+
+Source of truth for implementation and for independent review agents (who will
+not have the chat history this plan was negotiated in — only this file, the
+ADRs in `docs/decisions/`, and the code itself).
+
+## Goal
+
+A flake-based NixOS module providing a from-scratch VictoriaMetrics /
+VictoriaLogs / VictoriaTraces stack with an auth gateway (vmauth), optional
+Grafana datasource wiring, optional nginx reverse-proxy, optional MCP servers,
+and a separate fleet-wide collector agent (`victoriaCollector`). Everything
+opt-in except where there is genuinely nothing to opt out of. Fixes the real,
+confirmed structural problems in nixpkgs' own `services.victoriametrics` /
+`victorialogs` / `victoriatraces` modules (hardcoded `-storageDataPath`,
+`DynamicUser` incompatible with a pre-mounted dataset, no `retentionPeriod` on
+`victorialogs`) by not wrapping them at all — storage services are written
+from scratch directly on `pkgs.victoriametrics`'s binaries.
+
+## Repository layout (target)
+
+```
+flake.nix / flake.lock
+LICENSE (MIT)
+README.md
+docs/options.md                  — generated via generate-doc.nix, CI-committed
+docs/decisions/NNNN-*.md         — ADRs, terse, WHY only
+.github/workflows/
+  ci.yml                          — nix flake check -L
+  ci-stable.yml                   — dynamic current-stable nixpkgs override
+  update-flake.yml                — weekly nixpkgs bump
+  update-mcp-packages.yml         — weekly nix-update per MCP package
+  update-docs.yml                 — regenerate + commit docs/options.md
+nixosModule/
+  default.nix                     — nixosModules.default (both trees)
+  victoriaStack/{options,config,metrics,logs,traces,vmauth,grafana,nginx,mcp}.nix
+  victoriaCollector/{options,config,config.alloy...}.nix
+packages/mcp-victoria{metrics,logs,traces}/package.nix
+examples/default.nix              — same config the `full` test exercises
+tests/{default,assertions,storage,vmauth,grafana,nginx,mcp,collector,full}.nix
+```
+
+## Options surface (agreed)
+
+```
+services.victoriaStack = {
+  metrics = { enable; package; dataDir; dynamicUser; listenAddress;
+              retentionPeriod; extraOptions; suppressDynamicUserWarning;
+              mcp = { enable; package; listenAddress; }; };
+  logs    = { <same shape>; mcp = { ... }; };
+  traces  = { <same shape>; mcp = { ... }; };
+
+  vmauth = {
+    enable;              # mkDefault true whenever any backend enabled; no-op w/o one
+    package;              # mkDefault metrics.package
+    listenAddress; idleConnTimeout;
+    requireAuthForWrites;  # default true; single toggle to open ingest paths
+    writeTokensFile;       # sops-nix YAML secret, list w/ inline # comments
+    readTokensFile;        # SEPARATE sops-nix YAML secret (different blast radius)
+    adminPasswordFile;     # plain scalar secret
+    openIngestPaths;       # auto-derived list, overridable to [ ]
+    extraReadUrlMap;       # escape hatch
+  };
+
+  grafana.enable;          # opt-in datasource wiring ONLY; services.grafana.* untouched,
+                            # never routed through vmauth, always direct loopback
+  nginx = { enable; domain = nullOr str /* default null */; };
+    # assertion: nginx.enable -> vmauth.enable
+};
+
+services.victoriaCollector = {
+  metrics.enable; logs.enable; traces.enable;   # independent, OTLP receiver tied to traces
+  writeEndpoint; journaldWriteEndpoint;
+  writeTokenFile;
+  hostType;                # free-form str, no enum
+  queue = { maxSizeBytes; directory; };  # default 1GiB / /var/lib/alloy/queue
+  alloy.package; alloy.extraFlags;
+  trustedCertificateFile;
+};
+```
+
+Assertion: `<service>.mcp.enable -> <service>.enable` (not vmauth — mcp can be
+exposed directly via its own `listenAddress` when vmauth is off).
+
+## Key technical decisions (see docs/decisions/ for full WHY)
+
+- VM/VL/VT built from scratch, not wrapping nixpkgs' own modules.
+- vmauth two SEPARATE credential-tier secrets (write vs read/admin), both
+  YAML format with inline `#` comments, parsed via `yq-go` (not raw `jq -R`
+  line-splitting).
+- Grafana: own built-in auth only, direct loopback, never through vmauth.
+- `dataDir`/`dynamicUser` mismatch -> warning + suppress option, not a hard
+  assertion.
+- Alloy's write-token: `otelcol.auth.headers` + `sys.env()` + `EnvironmentFile=`
+  — token never touches rendered `config.alloy` text.
+- journal-upload's write-token: nixpkgs' `services.journald.upload` module
+  kept for non-secret settings; a separate `conf.d/*.conf` drop-in symlinked
+  at a `sops.templates.*.path` carries just the `Header=` line. No hand-rolled
+  systemd unit for this one.
+- Every service (metrics/logs/traces/vmauth/all 3 MCP packages) gets its own
+  `.package` option; vmauth's defaults from metrics' via `mkDefault`.
+- Secrets: fully agnostic `...File` path options everywhere. No sops-nix
+  dependency in module code. Composes with sops-nix's native one-key-per-secret
+  addressing (documented, not re-implemented).
+- Test backend: `containers = {...}` (nspawn) throughout, confirmed via
+  nixpkgs' own `nixos/tests/nixos-test-driver/containers.nix` self-test
+  (validates container<->container and container<->node networking by
+  hostname across vlans) — no QEMU fallback needed anywhere, cross-container
+  collector->stack path included.
+- MCP servers: real `buildGoModule` packages (not fetchurl prebuilt
+  binaries), `nix-update --flake <pkg> --build` compatible, version bumps
+  via a dedicated weekly CI workflow (not folded into the nixpkgs
+  `update-flake.yml` cron — these are pre-1.0 and can change runtime
+  behavior on a bump, unlike a pinned nixpkgs revision).
+- `examples/default.nix` IS the `full` test group's config — one source of
+  truth, not a docs example that quietly drifts from what's tested.
+
+## Explicitly deferred (not in this plan)
+
+Vendored Grafana dashboards, default alerting rules, migrating
+`deployment-a`/`deployment-b` onto the new module.
+
+## Task list / phase order
+
+- [x] 0. SETUP: this file + ADRs, committed first
+- [ ] 1. Scaffolding: flake.nix, CI workflows, LICENSE, empty module entrypoints
+- [ ] 2. `assertions` test group (red first)
+- [ ] 3. `storage`: metrics (red->green)
+- [ ] 4. `storage`: logs (red->green)
+- [ ] 5. `storage`: traces (red->green)
+- [ ] 6. `vmauth` (red->green)
+- [ ] 7. `grafana` (red->green)
+- [ ] 8. `nginx` (red->green)
+- [ ] 9. `mcp`: package 3 Go servers for real + wiring (red->green)
+- [ ] 10. `victoriaCollector` (red->green)
+- [ ] 11. `full` / `examples` assembly (red->green)
+- [ ] 12. docs: `generate-doc.nix` + `docs/options.md`, README
+- [ ] 13. `update-mcp-packages.yml` workflow
+- [ ] 14. Two independent fresh-agent critical reviews
+- [ ] 15. Address review findings, final gate, report completion
+
+Each phase: gate with `nix flake check -L` (run detached, polled — never a
+single tool-call timeout for a full nspawn build) + nixfmt-rfc-style clean,
+commit separately, push. Any genuinely open question discovered mid-phase
+gets researched (nixpkgs source, sibling repos, upstream docs) and recorded
+as a new ADR in the same commit — never guessed past silently.
