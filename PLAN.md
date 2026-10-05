@@ -146,7 +146,9 @@ Vendored Grafana dashboards, default alerting rules, migrating
       docs/decisions/0011)
 - [~] 9. `mcp`: 3 real buildGoModule packages built + wiring implemented
       (2 container-boot checks pending docs/decisions/0011)
-- [ ] 10. `victoriaCollector` (red->green)
+- [~] 10. `victoriaCollector` (implemented, including the cross-container
+      metrics-roundtrip test; 3 container-boot checks pending
+      docs/decisions/0011)
 - [ ] 11. `full` / `examples` assembly (red->green)
 - [ ] 12. docs: `generate-doc.nix` + `docs/options.md`, README
 - [ ] 13. `update-mcp-packages.yml` workflow
