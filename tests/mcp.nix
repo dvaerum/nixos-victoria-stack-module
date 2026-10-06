@@ -75,6 +75,49 @@ in
     };
   };
 
+  mcp-log-and-disabled-tools-options-are-inert-unless-configured =
+    pkgs.runCommand "mcp-log-and-disabled-tools-inert-unless-configured" { }
+      (
+        let
+          unset = evalWith {
+            services.victoriaStack.metrics = {
+              enable = true;
+              mcp.enable = true;
+            };
+          };
+          set = evalWith {
+            services.victoriaStack.metrics = {
+              enable = true;
+              mcp = {
+                enable = true;
+                logLevel = "debug";
+                logFormat = "json";
+                disabledTools = [
+                  "documentation"
+                  "some-other-tool"
+                ];
+              };
+            };
+          };
+          envUnset = unset.config.systemd.services.mcp-victoriametrics.environment;
+          envSet = set.config.systemd.services.mcp-victoriametrics.environment;
+          checks = {
+            "MCP_LOG_LEVEL absent when unset" = !(envUnset ? MCP_LOG_LEVEL);
+            "MCP_LOG_FORMAT absent when unset" = !(envUnset ? MCP_LOG_FORMAT);
+            "MCP_DISABLED_TOOLS absent when unset" = !(envUnset ? MCP_DISABLED_TOOLS);
+            "MCP_LOG_LEVEL present when set" = (envSet.MCP_LOG_LEVEL or null) == "debug";
+            "MCP_LOG_FORMAT present when set" = (envSet.MCP_LOG_FORMAT or null) == "json";
+            "MCP_DISABLED_TOOLS joined with commas when set" =
+              (envSet.MCP_DISABLED_TOOLS or null) == "documentation,some-other-tool";
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "mcp logLevel/logFormat/disabledTools options broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
   mcp-reachable-only-through-vmauth = pkgs.testers.nixosTest {
     name = "victoria-stack-mcp-through-vmauth";
 

@@ -41,6 +41,18 @@ let
           }
           // lib.optionalAttrs (instanceType != null) {
             "${envPrefix}_INSTANCE_TYPE" = instanceType;
+          }
+          # MCP_LOG_LEVEL/MCP_LOG_FORMAT/MCP_DISABLED_TOOLS -- confirmed
+          # identical across all three mcp-victoria* binaries' own
+          # READMEs. All inert unless configured.
+          // lib.optionalAttrs (serviceCfg.mcp.logLevel != null) {
+            MCP_LOG_LEVEL = serviceCfg.mcp.logLevel;
+          }
+          // lib.optionalAttrs (serviceCfg.mcp.logFormat != null) {
+            MCP_LOG_FORMAT = serviceCfg.mcp.logFormat;
+          }
+          // lib.optionalAttrs (serviceCfg.mcp.disabledTools != [ ]) {
+            MCP_DISABLED_TOOLS = lib.concatStringsSep "," serviceCfg.mcp.disabledTools;
           };
 
           serviceConfig = {

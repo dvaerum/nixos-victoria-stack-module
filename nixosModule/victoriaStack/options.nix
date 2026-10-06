@@ -169,6 +169,56 @@ let
             to otherwise (see docs/decisions/0002-opt-in-everything.md).
           '';
         };
+
+        logLevel = mkOption {
+          type = types.nullOr (
+            types.enum [
+              "debug"
+              "info"
+              "warn"
+              "error"
+            ]
+          );
+          default = null;
+          description = ''
+            `MCP_LOG_LEVEL` -- confirmed identical across all three
+            mcp-victoria* binaries' own READMEs. `null` (the default)
+            omits the env var entirely, matching each binary's own
+            upstream default (`info`).
+          '';
+        };
+
+        logFormat = mkOption {
+          type = types.nullOr (
+            types.enum [
+              "text"
+              "json"
+            ]
+          );
+          default = null;
+          description = ''
+            `MCP_LOG_FORMAT` -- confirmed identical across all three
+            mcp-victoria* binaries' own READMEs. `null` (the default)
+            omits the env var entirely, matching each binary's own
+            upstream default (`text`).
+          '';
+        };
+
+        disabledTools = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          example = [ "documentation" ];
+          description = ''
+            `MCP_DISABLED_TOOLS` -- confirmed identical across all three
+            mcp-victoria* binaries' own READMEs (a comma-separated list
+            on the wire; this option takes a real Nix list and joins it).
+            `[ ]` (the default) omits the env var entirely. Each
+            binary's own README documents its available tool names --
+            e.g. `documentation` disables an embedded vector-database
+            tool that's otherwise the dominant source of that MCP
+            server's resource usage.
+          '';
+        };
       };
     };
 in
