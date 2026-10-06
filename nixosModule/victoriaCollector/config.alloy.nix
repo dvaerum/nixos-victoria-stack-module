@@ -26,6 +26,30 @@ let
     }
   '';
 
+  # Both inert unless configured (docs/decisions/0020) -- indented to
+  # nest correctly inside each exporter's own block below.
+  tlsBlock = lib.optionalString (cfg.alloy.tlsCaFile != null || cfg.alloy.tlsInsecureSkipVerify) ''
+    tls {
+    ${lib.optionalString (
+      cfg.alloy.tlsCaFile != null
+    ) "  ca_file = \"${toString cfg.alloy.tlsCaFile}\""}
+    ${lib.optionalString cfg.alloy.tlsInsecureSkipVerify "  insecure_skip_verify = true"}
+    }
+  '';
+
+  retryOnFailureBlock =
+    let
+      r = cfg.alloy.retryOnFailure;
+    in
+    lib.optionalString (r.initialInterval != null || r.maxInterval != null || r.maxElapsedTime != null)
+      ''
+        retry_on_failure {
+        ${lib.optionalString (r.initialInterval != null) "  initial_interval = \"${r.initialInterval}\""}
+        ${lib.optionalString (r.maxInterval != null) "  max_interval = \"${r.maxInterval}\""}
+        ${lib.optionalString (r.maxElapsedTime != null) "  max_elapsed_time = \"${r.maxElapsedTime}\""}
+        }
+      '';
+
   metricsSection = lib.optionalString cfg.metrics.enable ''
     // Metrics: host metrics -> OTLP
     prometheus.exporter.unix "host" {
@@ -172,12 +196,14 @@ let
       client {
         endpoint = "${cfg.writeEndpoint}/opentelemetry"
         auth     = otelcol.auth.headers.write_token.handler
+        ${tlsBlock}
       }
       sending_queue {
         storage    = otelcol.storage.file.queue.handler
         sizer      = "bytes"
         queue_size = ${toString cfg.queue.maxSizeBytes}
       }
+      ${retryOnFailureBlock}
     }
   '';
 
@@ -187,12 +213,14 @@ let
       client {
         endpoint = "${cfg.writeEndpoint}/insert/opentelemetry"
         auth     = otelcol.auth.headers.write_token.handler
+        ${tlsBlock}
       }
       sending_queue {
         storage    = otelcol.storage.file.queue.handler
         sizer      = "bytes"
         queue_size = ${toString cfg.queue.maxSizeBytes}
       }
+      ${retryOnFailureBlock}
     }
   '';
 in

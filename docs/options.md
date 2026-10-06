@@ -81,7 +81,7 @@ The Alloy package to use\. Defaults to pkgs\.grafana-alloy, set via mkDefault in
 package
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -105,7 +105,169 @@ list of string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
+
+
+
+## services\.victoriaCollector\.alloy\.retryOnFailure\.initialInterval
+
+
+
+` otelcol.exporter.otlphttp `’s ` retry_on_failure.initial_interval `
+on both the metrics and traces exporters\. ` null ` (the default)
+omits the block entirely, matching Alloy’s own default (` 5s `)\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"5s"
+```
+
+*Declared by:*
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
+
+
+
+## services\.victoriaCollector\.alloy\.retryOnFailure\.maxElapsedTime
+
+
+
+` otelcol.exporter.otlphttp `’s
+` retry_on_failure.max_elapsed_time ` – how long a gateway
+outage can last before Alloy gives up on a batch entirely
+(the disk-backed ` queue ` block is what actually protects
+against data loss during that window, this just bounds how
+long any ONE batch keeps retrying)\. ` null ` (the default)
+omits the block entirely, matching Alloy’s own default (` 5m `)\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"5m"
+```
+
+*Declared by:*
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
+
+
+
+## services\.victoriaCollector\.alloy\.retryOnFailure\.maxInterval
+
+
+
+` otelcol.exporter.otlphttp `’s ` retry_on_failure.max_interval `\.
+` null ` (the default) omits the block entirely, matching
+Alloy’s own default (` 30s `)\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"30s"
+```
+
+*Declared by:*
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
+
+
+
+## services\.victoriaCollector\.alloy\.tlsCaFile
+
+
+
+CA bundle for verifying the gateway’s own server certificate on
+Alloy’s OTLP exporters specifically (` otelcol.exporter.otlphttp `’s
+` tls.ca_file `) – a separate knob from ` trustedCertificateFile `
+below, which only covers journald-upload’s own HTTPS case (a
+different, non-Alloy code path)\. ` null ` (the default) omits the
+block entirely, matching Alloy’s own default (system CA trust)\.
+
+
+
+*Type:*
+null or absolute path
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+*Declared by:*
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
+
+
+
+## services\.victoriaCollector\.alloy\.tlsInsecureSkipVerify
+
+
+
+Skip TLS verification on Alloy’s OTLP exporters
+(` otelcol.exporter.otlphttp `’s ` tls.insecure_skip_verify `)\.
+` false ` (the default) omits the setting entirely, matching
+Alloy’s own default\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -139,7 +301,7 @@ string matching the pattern \[A-Za-z0-9_\.-]+
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -169,7 +331,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -201,7 +363,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -233,7 +395,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -257,7 +419,7 @@ absolute path
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -286,7 +448,7 @@ signed integer
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -324,7 +486,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -350,7 +512,7 @@ absolute path
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -377,7 +539,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -410,7 +572,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -446,7 +608,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -478,7 +640,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -494,7 +656,7 @@ The victoria-logs package to use\. Defaults to pkgs\.victorialogs, set via mkDef
 package
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -524,7 +686,7 @@ absolute path
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -556,7 +718,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -591,7 +753,7 @@ list of string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -619,7 +781,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -651,7 +813,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -683,7 +845,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -699,7 +861,7 @@ The mcp-victorialogs package to use\. Defaults to this flake’s own packages\.m
 package
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -728,7 +890,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -763,7 +925,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -791,7 +953,7 @@ false
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -823,7 +985,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -839,7 +1001,7 @@ The victoria-metrics package to use\. Defaults to pkgs\.victoriametrics, set via
 package
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -869,7 +1031,7 @@ absolute path
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -901,7 +1063,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -936,7 +1098,7 @@ list of string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -964,7 +1126,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -996,7 +1158,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1028,7 +1190,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1044,7 +1206,7 @@ The mcp-victoriametrics package to use\. Defaults to this flake’s own packages
 package
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1073,7 +1235,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1108,7 +1270,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1136,7 +1298,7 @@ false
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1171,7 +1333,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1198,7 +1360,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1230,7 +1392,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1246,7 +1408,7 @@ The victoria-traces package to use\. Defaults to pkgs\.victoriatraces, set via m
 package
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1276,7 +1438,7 @@ absolute path
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1308,7 +1470,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1343,7 +1505,7 @@ list of string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1371,7 +1533,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1403,7 +1565,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1435,7 +1597,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1451,7 +1613,7 @@ The mcp-victoriatraces package to use\. Defaults to this flake’s own packages\
 package
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1480,7 +1642,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1515,7 +1677,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1543,7 +1705,7 @@ false
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1573,7 +1735,7 @@ false
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1589,7 +1751,7 @@ The victoriametrics package vmauth’s binary is bundled in\. Defaults (via mkDe
 package
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1617,7 +1779,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1644,7 +1806,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1673,7 +1835,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1700,7 +1862,7 @@ false
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1729,7 +1891,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1753,7 +1915,7 @@ list of (attribute set)
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1790,7 +1952,7 @@ list of string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1827,7 +1989,7 @@ list of string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1855,7 +2017,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1879,7 +2041,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1906,7 +2068,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1933,7 +2095,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1964,7 +2126,7 @@ list of (attribute set)
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1993,7 +2155,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -2022,7 +2184,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -2058,6 +2220,6 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/xw55i7bv1k64561ahpmfhqlyxx13p7j2-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/whdhwqnh591myhrljwk7gy5spavpwph4-source/nixosModule/victoriaStack/options.nix)
 
 

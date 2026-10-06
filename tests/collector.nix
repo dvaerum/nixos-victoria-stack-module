@@ -224,6 +224,61 @@ in
           ''
       );
 
+  alloy-tls-and-retry-options-are-inert-unless-configured =
+    pkgs.runCommand "alloy-tls-and-retry-inert-unless-configured" { }
+      (
+        let
+          unset = evalCollector {
+            services.victoriaCollector = {
+              metrics.enable = true;
+              traces.enable = true;
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+            };
+          };
+          set = evalCollector {
+            services.victoriaCollector = {
+              metrics.enable = true;
+              traces.enable = true;
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+              alloy = {
+                tlsCaFile = ./lib.nix; # in-repo fixture, content irrelevant
+                tlsInsecureSkipVerify = true;
+                retryOnFailure = {
+                  initialInterval = "1s";
+                  maxInterval = "10s";
+                  maxElapsedTime = "1m";
+                };
+              };
+            };
+          };
+          textUnset = unset.config.environment.etc."alloy/config.alloy".text;
+          textSet = set.config.environment.etc."alloy/config.alloy".text;
+          # How many of the 2 exporters (metrics + traces) actually got the
+          # block -- counts occurrences rather than guessing exact
+          # whitespace/formatting.
+          countOccurrences = needle: haystack: (lib.length (lib.splitString needle haystack)) - 1;
+          checks = {
+            "no tls block when unset" = !(lib.hasInfix "tls {" textUnset);
+            "no retry_on_failure block when unset" = !(lib.hasInfix "retry_on_failure {" textUnset);
+            "insecure_skip_verify set on both exporters" =
+              countOccurrences "insecure_skip_verify = true" textSet == 2;
+            "ca_file set on both exporters" = countOccurrences "ca_file" textSet == 2;
+            "initial_interval set on both exporters" =
+              countOccurrences ''initial_interval = "1s"'' textSet == 2;
+            "max_interval set on both exporters" = countOccurrences ''max_interval = "10s"'' textSet == 2;
+            "max_elapsed_time set on both exporters" =
+              countOccurrences ''max_elapsed_time = "1m"'' textSet == 2;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "alloy tls/retry_on_failure options broken: ${builtins.toJSON (builtins.attrNames failed)}\n${textSet}"
+      );
+
   queue-directory-outside-statedir-gets-readwritepaths =
     pkgs.runCommand "queue-directory-outside-statedir-gets-readwritepaths" { }
       (

@@ -119,6 +119,69 @@ in
         default = [ ];
         description = "Extra command-line flags passed straight through to Alloy.";
       };
+
+      tlsCaFile = mkOption {
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          CA bundle for verifying the gateway's own server certificate on
+          Alloy's OTLP exporters specifically (`otelcol.exporter.otlphttp`'s
+          `tls.ca_file`) -- a separate knob from `trustedCertificateFile`
+          below, which only covers journald-upload's own HTTPS case (a
+          different, non-Alloy code path). `null` (the default) omits the
+          block entirely, matching Alloy's own default (system CA trust).
+        '';
+      };
+
+      tlsInsecureSkipVerify = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Skip TLS verification on Alloy's OTLP exporters
+          (`otelcol.exporter.otlphttp`'s `tls.insecure_skip_verify`).
+          `false` (the default) omits the setting entirely, matching
+          Alloy's own default.
+        '';
+      };
+
+      retryOnFailure = {
+        initialInterval = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "5s";
+          description = ''
+            `otelcol.exporter.otlphttp`'s `retry_on_failure.initial_interval`
+            on both the metrics and traces exporters. `null` (the default)
+            omits the block entirely, matching Alloy's own default (`5s`).
+          '';
+        };
+
+        maxInterval = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "30s";
+          description = ''
+            `otelcol.exporter.otlphttp`'s `retry_on_failure.max_interval`.
+            `null` (the default) omits the block entirely, matching
+            Alloy's own default (`30s`).
+          '';
+        };
+
+        maxElapsedTime = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "5m";
+          description = ''
+            `otelcol.exporter.otlphttp`'s
+            `retry_on_failure.max_elapsed_time` -- how long a gateway
+            outage can last before Alloy gives up on a batch entirely
+            (the disk-backed `queue` block is what actually protects
+            against data loss during that window, this just bounds how
+            long any ONE batch keeps retrying). `null` (the default)
+            omits the block entirely, matching Alloy's own default (`5m`).
+          '';
+        };
+      };
     };
 
     trustedCertificateFile = mkOption {
