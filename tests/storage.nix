@@ -6,8 +6,49 @@ let
   module = nixosModule.nixosModules.victoriaStack;
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) mkWarningFiresCheck mkNoWarningsCheck;
+  inherit (testLib) mkWarningFiresCheck mkNoWarningsCheck evalWith;
 
+  # Shared across the hardening/readiness/manageTmpfiles checks below --
+  # one evalModules pass per service is enough to introspect all of it.
+  mkHardeningCheck =
+    {
+      name,
+      serviceName, # "victoriametrics" | "victorialogs" | "victoriatraces"
+      enableModule,
+      expectLimitNOFILE, # true for metrics/traces, false for logs -- matches nixpkgs' own asymmetry
+    }:
+    pkgs.runCommand name { } (
+      let
+        evaluated = evalWith enableModule;
+        sc = evaluated.config.systemd.services.${serviceName}.serviceConfig;
+        postStart = evaluated.config.systemd.services.${serviceName}.postStart or "";
+        # A representative subset of nixpkgs' own profile -- not every
+        # single field, enough to catch "the hardening pass was dropped or
+        # never applied" as a class of regression.
+        hardeningChecks = {
+          "NoNewPrivileges" = (sc.NoNewPrivileges or null) == true;
+          "ProtectSystem" = (sc.ProtectSystem or null) == "full";
+          "PrivateDevices" = (sc.PrivateDevices or null) == true;
+          "MemoryDenyWriteExecute" = (sc.MemoryDenyWriteExecute or null) == true;
+          "RestrictAddressFamilies" =
+            (sc.RestrictAddressFamilies or null) == [
+              "AF_INET"
+              "AF_INET6"
+              "AF_UNIX"
+            ];
+          "LimitNOFILE" = (sc.LimitNOFILE or null) == (if expectLimitNOFILE then 1048576 else null);
+          "wait4x readiness (not a hand-rolled curl loop)" = lib.hasInfix "wait4x" postStart;
+        };
+        failed = lib.filterAttrs (_: ok: !ok) hardeningChecks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw ''
+          ${serviceName}'s serviceConfig is missing expected hardening/readiness:
+          ${builtins.toJSON (builtins.attrNames failed)}
+        ''
+    );
 in
 {
   # Phase 3: metrics only. logs/traces checks are added here as their own
@@ -61,6 +102,54 @@ in
       };
     };
   };
+
+  metrics-hardening-profile-and-readiness = mkHardeningCheck {
+    name = "metrics-hardening-profile-and-readiness";
+    serviceName = "victoriametrics";
+    enableModule = {
+      services.victoriaStack.metrics.enable = true;
+    };
+    expectLimitNOFILE = true; # same as nixpkgs' own victoriametrics module
+  };
+
+  metrics-manage-tmpfiles-default-true-rule-present =
+    pkgs.runCommand "metrics-manage-tmpfiles-default-true-rule-present" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack.metrics = {
+              enable = true;
+              dataDir = "/data/victoria/metrics";
+              dynamicUser = false;
+            };
+          };
+          rules = evaluated.config.systemd.tmpfiles.rules;
+        in
+        if lib.any (lib.hasInfix "/data/victoria/metrics") rules then
+          "echo OK > $out"
+        else
+          throw "manageTmpfiles defaults to true -- expected a tmpfiles rule for the custom dataDir"
+      );
+
+  metrics-manage-tmpfiles-false-rule-absent =
+    pkgs.runCommand "metrics-manage-tmpfiles-false-rule-absent" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack.metrics = {
+              enable = true;
+              dataDir = "/data/victoria/metrics";
+              dynamicUser = false;
+              manageTmpfiles = false;
+            };
+          };
+          rules = evaluated.config.systemd.tmpfiles.rules;
+        in
+        if !(lib.any (lib.hasInfix "/data/victoria/metrics") rules) then
+          "echo OK > $out"
+        else
+          throw "manageTmpfiles = false must suppress the every-boot tmpfiles ownership rule entirely"
+      );
 
   # --- container-boot: real systemd unit behavior ---
 
@@ -198,6 +287,15 @@ in
     };
   };
 
+  logs-hardening-profile-and-readiness = mkHardeningCheck {
+    name = "logs-hardening-profile-and-readiness";
+    serviceName = "victorialogs";
+    enableModule = {
+      services.victoriaStack.logs.enable = true;
+    };
+    expectLimitNOFILE = false; # matches nixpkgs' own victorialogs module (no LimitNOFILE set)
+  };
+
   logs-ingest-query-roundtrip = pkgs.testers.nixosTest {
     name = "victoria-stack-logs-ingest-query-roundtrip";
 
@@ -327,6 +425,36 @@ in
       };
     };
   };
+
+  traces-hardening-profile-and-readiness = mkHardeningCheck {
+    name = "traces-hardening-profile-and-readiness";
+    serviceName = "victoriatraces";
+    enableModule = {
+      services.victoriaStack.traces.enable = true;
+    };
+    expectLimitNOFILE = true; # same as nixpkgs' own victoriatraces module
+  };
+
+  traces-retention-period-doc-states-real-7-day-default =
+    pkgs.runCommand "traces-retention-period-doc-states-real-7-day-default" { }
+      (
+        let
+          evaluated = evalWith { };
+          description = evaluated.options.services.victoriaStack.traces.retentionPeriod.description;
+        in
+        if
+          lib.hasInfix "7 day" description
+          && !lib.hasInfix "effectively unbounded for this binary" description
+        then
+          "echo OK > $out"
+        else
+          throw ''
+            traces.retentionPeriod's description must state the real
+            upstream default (7 days), not "effectively unbounded" --
+            that claim is only true for metrics/logs. Actual description:
+            ${description}
+          ''
+      );
 
   traces-ingest-query-roundtrip = pkgs.testers.nixosTest {
     name = "victoria-stack-traces-ingest-query-roundtrip";

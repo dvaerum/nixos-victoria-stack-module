@@ -40,7 +40,7 @@ in
         };
         users.groups.victoriametrics = { };
 
-        systemd.tmpfiles.rules = [
+        systemd.tmpfiles.rules = lib.optionals cfg.manageTmpfiles [
           "d ${toString cfg.dataDir} 0750 victoriametrics victoriametrics - -"
         ];
       })
@@ -50,6 +50,24 @@ in
           description = "VictoriaMetrics time series database";
           wantedBy = [ "multi-user.target" ];
           after = [ "network.target" ];
+
+          # wait4x (pkgs.wait4x) replaces a hand-rolled curl-poll loop --
+          # one command, purpose-built for exactly this, confirmed no
+          # shared helper exists anywhere in nixpkgs for this (every
+          # module hand-rolls the identical loop independently). Neither
+          # Type=notify nor socket activation apply: this binary
+          # implements neither sd_notify() nor sd_listen_fds(). See
+          # docs/decisions/0015.
+          path = [ pkgs.wait4x ];
+          postStart =
+            let
+              bindAddr =
+                if lib.hasPrefix "0.0.0.0:" cfg.listenAddress then
+                  "127.0.0.1:${lib.last (lib.splitString ":" cfg.listenAddress)}"
+                else
+                  cfg.listenAddress;
+            in
+            "wait4x http http://${bindAddr}/ping --timeout 90s";
 
           serviceConfig = lib.mkMerge [
             {
@@ -64,6 +82,47 @@ in
               );
               Restart = "on-failure";
               RestartSec = 5;
+
+              # Hardening -- copied verbatim from nixpkgs' own
+              # services.victoriametrics module (same pinned nixpkgs rev),
+              # an unacknowledged regression from going from-scratch (ADR
+              # 0001 never argued for dropping it). See docs/decisions/0015.
+              # Increase the limit to avoid errors like 'too many open
+              # files' when merging small parts (same comment nixpkgs'
+              # own module carries).
+              LimitNOFILE = 1048576;
+              DeviceAllow = [ "/dev/null rw" ];
+              DevicePolicy = "strict";
+              LockPersonality = true;
+              MemoryDenyWriteExecute = true;
+              NoNewPrivileges = true;
+              PrivateDevices = true;
+              PrivateTmp = true;
+              PrivateUsers = true;
+              ProtectClock = true;
+              ProtectControlGroups = true;
+              ProtectHome = true;
+              ProtectHostname = true;
+              ProtectKernelLogs = true;
+              ProtectKernelModules = true;
+              ProtectKernelTunables = true;
+              ProtectProc = "invisible";
+              ProtectSystem = "full";
+              RemoveIPC = true;
+              RestrictAddressFamilies = [
+                "AF_INET"
+                "AF_INET6"
+                "AF_UNIX"
+              ];
+              RestrictNamespaces = true;
+              RestrictRealtime = true;
+              RestrictSUIDSGID = true;
+              SystemCallArchitectures = "native";
+              SystemCallFilter = [
+                "@system-service"
+                "~@privileged"
+                "mincore"
+              ];
             }
 
             (
@@ -71,6 +130,7 @@ in
                 {
                   DynamicUser = true;
                   StateDirectory = "victoriametrics";
+                  StateDirectoryMode = "0700";
                 }
               else
                 {

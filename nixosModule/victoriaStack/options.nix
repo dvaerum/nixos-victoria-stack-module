@@ -33,6 +33,11 @@ let
       defaultListenAddress,
       defaultMcpPort,
       binaryName,
+      # The real, binary-specific behavior when retentionPeriod is omitted
+      # -- NOT a shared claim across all three, since it genuinely differs
+      # (confirmed per-binary via --help, not assumed to match): metrics
+      # and logs default to unbounded; traces defaults to 7 days.
+      retentionPeriodNullBehavior,
     }:
     {
       enable = mkEnableOption name;
@@ -82,6 +87,23 @@ let
         '';
       };
 
+      manageTmpfiles = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Whether this module re-asserts `dataDir`'s ownership/mode (via
+          `systemd.tmpfiles.rules`) on every boot, when `dynamicUser =
+          false` (the static-user branch). The default is self-healing:
+          it catches drift or manual mistakes automatically, which is
+          central to why the static-user path works at all for an
+          externally-managed mount (docs/decisions/0001). Set to `false`
+          to manage the directory's ownership/mode entirely yourself
+          outside this module -- a plain escape hatch for a real reason
+          this module can't anticipate, not a config mismatch, so there is
+          deliberately no warning attached to disabling it.
+        '';
+      };
+
       listenAddress = mkOption {
         type = types.str;
         default = defaultListenAddress;
@@ -101,7 +123,7 @@ let
         description = ''
           How long to retain data for. `null` (the default) means
           whatever ${binaryName} itself does when the flag is omitted
-          entirely (effectively unbounded for these binaries) -- matching
+          entirely (${retentionPeriodNullBehavior}) -- matching
           upstream's own default rather than imposing an opinionated one.
         '';
       };
@@ -143,6 +165,7 @@ in
       binaryName = "victoria-metrics";
       defaultListenAddress = "127.0.0.1:8428";
       defaultMcpPort = 8881;
+      retentionPeriodNullBehavior = "effectively unbounded for this binary";
     };
 
     logs = mkStorageServiceOptions {
@@ -150,6 +173,7 @@ in
       binaryName = "victoria-logs";
       defaultListenAddress = "127.0.0.1:9428";
       defaultMcpPort = 8882;
+      retentionPeriodNullBehavior = "effectively unbounded for this binary";
     };
 
     traces = mkStorageServiceOptions {
@@ -157,6 +181,11 @@ in
       binaryName = "victoria-traces";
       defaultListenAddress = "127.0.0.1:10428";
       defaultMcpPort = 8883;
+      # Confirmed from victoria-traces' own --help/upstream docs: unlike
+      # metrics/logs, omitting -retentionPeriod does NOT mean unbounded --
+      # it defaults to 7 days. See traces.nix's own ExecStart comment and
+      # docs/decisions/0020.
+      retentionPeriodNullBehavior = "a 7 day default for this binary, NOT unbounded -- unlike metrics/logs";
     };
 
     vmauth = {
