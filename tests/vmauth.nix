@@ -129,6 +129,28 @@ in
           throw "concurrency-limit options broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
+  # idleConnTimeout always renders (it has a non-null default, unlike the
+  # inert-unless-configured options above) -- the gap was never testing
+  # that an override actually reaches ExecStart, only that the default
+  # propagates to nginx (tests/nginx.nix).
+  idle-conn-timeout-override-reaches-execstart =
+    pkgs.runCommand "vmauth-idle-conn-timeout-override-reaches-execstart" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              vmauth.idleConnTimeout = "45s";
+            };
+          };
+          execStart = evaluated.config.systemd.services.vmauth.serviceConfig.ExecStart;
+        in
+        if lib.hasInfix "-http.idleConnTimeout=45s" execStart then
+          "echo OK > $out"
+        else
+          throw "vmauth's idleConnTimeout override did not reach ExecStart: ${execStart}"
+      );
+
   backend-tls-options-are-inert-unless-configured =
     pkgs.runCommand "vmauth-backend-tls-inert-unless-configured" { }
       (

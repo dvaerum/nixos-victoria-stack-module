@@ -49,6 +49,43 @@ let
           ${builtins.toJSON (builtins.attrNames failed)}
         ''
     );
+
+  # Previously untested for all 3 storage services: retentionPeriod,
+  # extraOptions, and a listenAddress override all reaching ExecStart /
+  # effectiveUrl correctly. One shared check applied per service rather
+  # than 3x near-identical hand-written tests.
+  mkExecStartOptionsCheck =
+    {
+      name,
+      serviceName, # "victoriametrics" | "victorialogs" | "victoriatraces"
+      serviceAttr, # "metrics" | "logs" | "traces"
+    }:
+    pkgs.runCommand name { } (
+      let
+        evaluated = evalWith {
+          services.victoriaStack.${serviceAttr} = {
+            enable = true;
+            retentionPeriod = "30d";
+            extraOptions = [ "-search.maxUniqueTimeseries=300000" ];
+            listenAddress = "127.0.0.1:19999";
+          };
+        };
+        execStart = evaluated.config.systemd.services.${serviceName}.serviceConfig.ExecStart;
+        effectiveUrl = evaluated.config.services.victoriaStack.${serviceAttr}.effectiveUrl;
+        checks = {
+          "retentionPeriod flag present" = lib.hasInfix "-retentionPeriod=30d" execStart;
+          "extraOptions flag present" = lib.hasInfix "-search.maxUniqueTimeseries=300000" execStart;
+          "listenAddress override reaches ExecStart" =
+            lib.hasInfix "-httpListenAddr=127.0.0.1:19999" execStart;
+          "listenAddress override reaches effectiveUrl" = effectiveUrl == "http://127.0.0.1:19999";
+        };
+        failed = lib.filterAttrs (_: ok: !ok) checks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "${serviceName}'s ExecStart is missing: ${builtins.toJSON (builtins.attrNames failed)}\n${execStart}"
+    );
 in
 {
   # Phase 3: metrics only. logs/traces checks are added here as their own
@@ -151,6 +188,28 @@ in
         else
           throw "effectiveUrl structural seam broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
+
+  # Previously untested for all 3 storage services: retentionPeriod,
+  # extraOptions, and a listenAddress override all reaching ExecStart /
+  # effectiveUrl correctly. One shared check applied per service rather
+  # than 3x near-identical hand-written tests.
+  metrics-retention-extraoptions-listenaddress-reach-execstart = mkExecStartOptionsCheck {
+    name = "metrics-retention-extraoptions-listenaddress-reach-execstart";
+    serviceName = "victoriametrics";
+    serviceAttr = "metrics";
+  };
+
+  logs-retention-extraoptions-listenaddress-reach-execstart = mkExecStartOptionsCheck {
+    name = "logs-retention-extraoptions-listenaddress-reach-execstart";
+    serviceName = "victorialogs";
+    serviceAttr = "logs";
+  };
+
+  traces-retention-extraoptions-listenaddress-reach-execstart = mkExecStartOptionsCheck {
+    name = "traces-retention-extraoptions-listenaddress-reach-execstart";
+    serviceName = "victoriatraces";
+    serviceAttr = "traces";
+  };
 
   metrics-hardening-profile-and-readiness = mkHardeningCheck {
     name = "metrics-hardening-profile-and-readiness";

@@ -40,8 +40,66 @@ let
       else
         throw "${serviceName}'s serviceConfig is missing expected hardening: ${builtins.toJSON (builtins.attrNames failed)}"
     );
+
+  # Previously untested for all 3 mcp services: mcp.package override
+  # reaching ExecStart. Eval-only (checks the resolved ExecStart string)
+  # rather than a nixosTest boot -- a derivation-path equality check
+  # doesn't need a running system to be a genuine, non-vacuous assertion.
+  #
+  # Plain string equality, not lib.hasInfix: a regex needle carrying
+  # store-path context (from "${overridePackage}") makes builtins.match
+  # refuse to compile ("is not allowed to refer to a store path") --
+  # confirmed by hitting this exact error.
+  mkPackageOverrideCheck =
+    {
+      name,
+      serviceName,
+      serviceAttr,
+      binaryName,
+    }:
+    pkgs.runCommand name { } (
+      let
+        overridePackage = pkgs.hello; # any derivation with a /bin -- content irrelevant, only the store path is checked
+        evaluated = evalWith {
+          services.victoriaStack.${serviceAttr} = {
+            enable = true;
+            mcp = {
+              enable = true;
+              package = overridePackage;
+            };
+          };
+        };
+        execStart = evaluated.config.systemd.services.${serviceName}.serviceConfig.ExecStart;
+        expected = "${overridePackage}/bin/${binaryName}";
+      in
+      if execStart == expected then
+        "echo OK > $out"
+      else
+        throw "${serviceName}'s ExecStart did not resolve through the overridden mcp.package: expected ${expected}, got ${execStart}"
+    );
 in
 {
+  mcp-metrics-package-override-takes-effect = mkPackageOverrideCheck {
+    name = "mcp-metrics-package-override-takes-effect";
+    serviceName = "mcp-victoriametrics";
+    serviceAttr = "metrics";
+    binaryName = "mcp-victoriametrics";
+  };
+
+  mcp-logs-package-override-takes-effect = mkPackageOverrideCheck {
+    name = "mcp-logs-package-override-takes-effect";
+    serviceName = "mcp-victorialogs";
+    serviceAttr = "logs";
+    binaryName = "mcp-victorialogs";
+  };
+
+  mcp-traces-package-override-takes-effect = mkPackageOverrideCheck {
+    name = "mcp-traces-package-override-takes-effect";
+    serviceName = "mcp-victoriatraces";
+    serviceAttr = "traces";
+    binaryName = "mcp-victoriatraces";
+  };
+
   mcp-metrics-hardening-profile = mkMcpHardeningCheck {
     name = "mcp-metrics-hardening-profile";
     serviceName = "mcp-victoriametrics";
