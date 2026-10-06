@@ -7,6 +7,20 @@ on:
 permissions:
   contents: write
 
+# Same race ADR 0018 fixed for the two scheduled update workflows
+# (two runs, each pushing directly to the branch with no rebase, can
+# land a push on a ref the other's own push is about to invalidate) --
+# but this workflow triggers on every push to every branch, so the race
+# is between overlapping runs of itself, not between two sibling
+# workflows. `needs:` (0018's fix) doesn't apply to a single-job
+# workflow; `concurrency:` is the right primitive for serializing runs
+# of the same workflow+branch. cancel-in-progress stays false
+# deliberately -- queue the newer run behind the current one rather
+# than cancelling a push that may already be in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   update-docs:
     runs-on: ubuntu-latest

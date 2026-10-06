@@ -178,6 +178,21 @@ in
           ProtectHome = true;
         };
       };
+
+      # Unlike the alloy write-token oneshot above (whose failure is
+      # self-enforcing: a missing EnvironmentFile= is a hard systemd
+      # failure for the consuming unit, per systemd.exec(5)), a drop-in
+      # config directory under /run/systemd/<unit>.conf.d/ with nothing
+      # in it is NOT inherently a failure -- systemd just falls back to
+      # the base unit config. Without an explicit `requires`, a failed
+      # token render here would let systemd-journal-upload.service start
+      # anyway, silently uploading unauthenticated (every upload then
+      # individually rejected by the gateway, rather than a visible
+      # systemctl --failed). `before`/`wantedBy` alone only order it,
+      # they don't make the consumer depend on its success.
+      systemd.services.systemd-journal-upload.requires = lib.mkIf (cfg.writeTokenFile != null) [
+        "victoria-collector-journal-upload-token.service"
+      ];
     })
   ];
 }

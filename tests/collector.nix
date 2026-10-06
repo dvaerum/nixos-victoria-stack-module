@@ -346,6 +346,38 @@ in
           ''
       );
 
+  # Unlike the alloy write-token oneshot (whose failure is self-enforcing
+  # via a required EnvironmentFile=, confirmed via systemd.exec(5)), the
+  # journal-upload token oneshot renders a config drop-in directory,
+  # which systemd treats as optional -- without an explicit `requires`,
+  # systemd-journal-upload.service would start anyway on a failed render,
+  # silently uploading unauthenticated. Found during Round 2 review.
+  journal-upload-service-requires-its-token-render-oneshot =
+    pkgs.runCommand "journal-upload-service-requires-its-token-render-oneshot" { }
+      (
+        let
+          evaluated = evalWithCollector {
+            services.victoriaCollector = {
+              logs.enable = true;
+              writeTokenFile = "${writeTokenFixture}";
+              hostType = "server";
+            };
+          };
+          requires = evaluated.config.systemd.services.systemd-journal-upload.requires or [ ];
+        in
+        if lib.elem "victoria-collector-journal-upload-token.service" requires then
+          "echo OK > $out"
+        else
+          throw ''
+            systemd-journal-upload.service must `requires` its own
+            token-render oneshot -- a drop-in config directory under
+            /run/systemd/<unit>.conf.d/ is optional to systemd (unlike a
+            required EnvironmentFile=), so a failed render would
+            otherwise let the consuming unit start anyway, silently
+            uploading unauthenticated.
+          ''
+      );
+
   queue-option-takes-effect = pkgs.testers.nixosTest {
     name = "victoria-collector-queue-option";
 
