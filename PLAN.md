@@ -237,7 +237,10 @@ indexed by 0020.
       when disabled (nginx), logs/traces-only datasource combination
       (grafana), queue-option isolation + traces-exporter coverage
       (collector) -- all container-boot
-- [ ] 32. Final full `nix flake check -L` gate
+- [x] 32. Final full `nix flake check -L` gate -- eval-only at the time
+      (this environment lacked the `uid-range` Nix system-feature every
+      container-boot/nixosTest check needs, so all of them were
+      necessarily skipped, not run). See Phase 34 for genuine execution.
 - [x] 33. Fresh-agent re-review round 3, triage, final push -- 2
       independent agents, no shared context. Fixed 2 genuine bugs
       (extraReadUrlMap header-clobbering, same `//` class as the nginx
@@ -250,6 +253,35 @@ indexed by 0020.
       traces.enable, added update-docs.yml's missing concurrency group.
       Explicitly reverted one overly-broad fix (a requireAuthForWrites
       warning) after confirming it broke 9+ legitimate existing tests.
+- [x] 34. Real end-to-end verification -- every container-boot test in
+      this suite had been eval-only its entire history, blocked locally
+      by the missing `uid-range` Nix system-feature; enabled it on the
+      dev machine (separate commit, work-infrastructure repo:
+      auto-allocate-uids + cgroups experimental features, uid-range
+      added to system-features) and ran the real suite for the first
+      time. Found and fixed 2 genuine production bugs no amount of
+      eval-only testing could have caught:
+      - vmauth-render-config crash-looped forever whenever zero
+        credential options were configured ($CREDENTIALS_DIRECTORY
+        unbound under `set -u` -- systemd only exports it when at least
+        one LoadCredential= entry exists).
+      - Alloy's OTLP write-token auth header was missing the "Bearer "
+        prefix vmauth's bearer_token auth requires -- every real
+        collector export to a write-token-protected vmauth had been
+        silently failing with 401 since this code was written.
+      - systemd-journal-upload's rendered Header= drop-in was
+        root-600-only, unreadable by the real upstream unit's
+        DynamicUser+SupplementaryGroups=systemd-journal; fixed with
+        chgrp+640.
+      Also fixed ~10 test-methodology bugs the real run surfaced
+      (wrong OTLP path/format used by nearly every write-path test;
+      `nginx -T` needing -c for the real config; Host-header routing
+      for name-based virtualHosts; Grafana/vmauth readiness races with
+      no probe of their own; a cross-container test's vmauth left
+      loopback-only + firewalled; a wrong assumption about Grafana's
+      default-datasource auto-promotion). Confirmed clean: `nix flake
+      check -L` reports "all checks passed!" with zero remaining
+      failures of any kind.
 
 Each phase: gate with `nix flake check -L` (run detached, polled — never a
 single tool-call timeout for a full nspawn build) + nixfmt-rfc-style clean,
