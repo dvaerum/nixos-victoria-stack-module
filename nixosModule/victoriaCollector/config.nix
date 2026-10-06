@@ -48,11 +48,19 @@ let
   # so a file only created by the unit's own preStart never exists yet.
   # Same trap ADR 0012 already avoids for journal-upload; fixed here the
   # same way, a dedicated oneshot ordered strictly before alloy.service.
+  #
+  # Runs under its OWN DynamicUser, not root: per systemd.exec(5),
+  # EnvironmentFile= is read by the service manager itself (PID1), before
+  # the target process execs -- file ownership is irrelevant to that
+  # read, root bypasses normal permission checks regardless. Unlike
+  # journal-upload's oneshot (which writes under /run/systemd/, a
+  # root-owned 755 directory this unit has no write access to otherwise),
+  # there is no such requirement here -- running as root was an avoidable
+  # default, not a necessity (docs/decisions/0015, 0020).
   renderAlloyWriteToken = pkgs.writeShellApplication {
     name = "victoria-collector-alloy-write-token";
     text = ''
-      mkdir -p /run/alloy
-      env=/run/alloy/write-token.env
+      env=/run/alloy-write-token/write-token.env
       echo "VICTORIA_WRITE_TOKEN=$(cat "$CREDENTIALS_DIRECTORY/write-token")" > "$env"
       chmod 600 "$env"
     '';
@@ -72,7 +80,7 @@ in
         # config.alloy.nix) is still "Public preview" upstream -- this
         # flag is what those blocks actually need to be honored at all.
         extraFlags = [ "--stability.level=public-preview" ] ++ cfg.alloy.extraFlags;
-        environmentFile = lib.mkIf (cfg.writeTokenFile != null) "/run/alloy/write-token.env";
+        environmentFile = lib.mkIf (cfg.writeTokenFile != null) "/run/alloy-write-token/write-token.env";
       };
 
       environment.etc."alloy/config.alloy".text = configAlloyText;
@@ -82,6 +90,20 @@ in
       # doesn't change the unit file's own hash, so NixOS activation has
       # no reason to restart it.
       systemd.services.alloy.restartTriggers = [ configAlloyText ];
+
+      # DynamicUser implies ProtectSystem=strict (confirmed via
+      # systemd.exec(5)), which blocks writes anywhere not explicitly
+      # allow-listed via StateDirectory=/RuntimeDirectory=/
+      # ReadWritePaths=. The default queue.directory
+      # (/var/lib/alloy/queue) already sits inside alloy's own
+      # StateDirectory="alloy" (nixpkgs' own alloy module); anything
+      # outside that tree -- the exact "point it at a bigger disk" use
+      # case queue.directory's own docs invite -- needs an explicit
+      # ReadWritePaths entry or it fails silently at Alloy's own runtime,
+      # uncaught by Nix eval or systemd itself. See docs/decisions/0020.
+      systemd.services.alloy.serviceConfig.ReadWritePaths = lib.optional (
+        !(lib.hasPrefix "/var/lib/alloy/" (toString cfg.queue.directory))
+      ) (toString cfg.queue.directory);
 
       # Rendered by victoria-collector-alloy-write-token (see above) --
       # NOT this unit's own preStart, which runs too late to satisfy its
@@ -95,6 +117,23 @@ in
           RemainAfterExit = true;
           LoadCredential = [ "write-token:${cfg.writeTokenFile}" ];
           ExecStart = lib.getExe renderAlloyWriteToken;
+
+          # Own DynamicUser + its own RuntimeDirectory (deliberately NOT
+          # alloy.service's own "alloy" StateDirectory -- two different
+          # dynamic UIDs sharing one directory is its own hazard) --
+          # see the long comment on renderAlloyWriteToken above for why
+          # this doesn't need root the way journal-upload's oneshot does.
+          DynamicUser = true;
+          RuntimeDirectory = "alloy-write-token";
+          RuntimeDirectoryMode = "0700";
+
+          # Lighter hardening pass than the long-running services --
+          # this unit runs once per boot and exits, but the basics still
+          # cost nothing for a unit that handles a plaintext secret,
+          # however briefly (docs/decisions/0015).
+          NoNewPrivileges = true;
+          PrivateTmp = true;
+          ProtectHome = true;
         };
       };
     })
@@ -125,6 +164,18 @@ in
           RemainAfterExit = true;
           LoadCredential = [ "write-token:${cfg.writeTokenFile}" ];
           ExecStart = lib.getExe renderJournalUploadTokenHeader;
+
+          # Stays root -- confirmed, not assumed: /run/systemd is mode
+          # 755, owned root:root on a real machine, so writing a new
+          # subdirectory under it genuinely requires root (unlike the
+          # alloy write-token oneshot above, which doesn't).
+          # Lighter hardening pass than the long-running services --
+          # this unit runs once per boot and exits, but the basics still
+          # cost nothing for a unit that handles a plaintext secret,
+          # however briefly (docs/decisions/0015).
+          NoNewPrivileges = true;
+          PrivateTmp = true;
+          ProtectHome = true;
         };
       };
     })

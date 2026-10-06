@@ -63,16 +63,27 @@ in
     };
 
     hostType = mkOption {
-      type = types.str;
+      # Interpolated unescaped into generated Alloy config text
+      # (config.alloy.nix: value = "${cfg.hostType}") -- restricted to a
+      # safe charset rather than attempting to escape Alloy's own string-
+      # literal syntax at generation time. A value containing a `"` would
+      # otherwise break the generated syntax in a way Nix eval never
+      # catches (opaque string), only Alloy's own runtime parse would --
+      # a real, reproduced injection-style bug (docs/decisions/0020).
+      type = types.strMatching "[A-Za-z0-9_.-]+";
       example = "server";
       description = ''
-        A free-form label promoted onto every metric this host ships (as
-        the `host_type` label, via the gateway's own relabel config). Not
-        an enum deliberately -- this module has no opinion about what
-        values are meaningful; that's entirely a property of whatever
-        alerting rules the consumer writes on top (see
+        A free-form label promoted onto every metric AND trace this host
+        ships (as the `host_type` attribute, via the gateway's own
+        relabel config) -- restricted to `[A-Za-z0-9_.-]+` so it can
+        never break the generated Alloy config syntax it's embedded in.
+        Not an enum beyond that restriction -- this module has no opinion
+        about what values are meaningful; that's entirely a property of
+        whatever alerting rules the consumer writes on top (see
         docs/decisions -- this module takes no position on alerting, only
-        on getting the label onto the data).
+        on getting the label onto the data). NOT applied to logs: that
+        path goes through systemd-journal-upload directly, with no Alloy
+        pipeline to attach the label in.
       '';
     };
 

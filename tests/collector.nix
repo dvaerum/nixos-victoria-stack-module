@@ -12,6 +12,21 @@ let
 
   writeTokenFixture = pkgs.writeText "collector-test-write-token" "collector-test-write-token";
 
+  # Reusable eval-only harness for the collector module tree -- pure eval,
+  # no container boot needed. tests/lib.nix's own evalWith hardcodes the
+  # victoriaStack module only (Phase 30 generalizes this); this mirrors
+  # the same shape for victoriaCollector until that unification lands.
+  evalCollector =
+    extraModule:
+    import (pkgs.path + "/nixos/lib/eval-config.nix") {
+      inherit (pkgs) system;
+      modules = [
+        collectorModule
+        extraModule
+        { system.stateVersion = lib.trivial.release; }
+      ];
+    };
+
   # Pure eval, no container boot needed: confirms the https:// branch of
   # journaldWriteEndpoint actually renders the dummy-cert + CA-bundle
   # settings it's supposed to -- the one branch with no prior coverage
@@ -159,6 +174,107 @@ in
           "echo OK > $out"
         else
           throw "journal-upload https:// branch did not render the expected settings: ${builtins.toJSON upload}"
+      );
+
+  hostType-rejects-a-value-that-would-break-generated-alloy-syntax =
+    pkgs.runCommand "hostType-rejects-unsafe-characters" { }
+      (
+        let
+          hostTypeType = httpsEvaluated.options.services.victoriaCollector.hostType.type;
+          # A double-quote would break out of the generated Alloy string
+          # literal (value = "${cfg.hostType}") -- confirmed as the real,
+          # reproduced injection bug in docs/decisions/0020. A plain
+          # alphanumeric-ish value must still be accepted.
+          rejectsUnsafe = !(hostTypeType.check ''rack-1"infra'');
+          acceptsSafe = hostTypeType.check "server";
+        in
+        if rejectsUnsafe && acceptsSafe then
+          "echo OK > $out"
+        else
+          throw ''
+            hostType must reject values containing characters that break
+            generated Alloy syntax (e.g. a double-quote) while still
+            accepting ordinary labels. rejectsUnsafe=${builtins.toJSON rejectsUnsafe}
+            acceptsSafe=${builtins.toJSON acceptsSafe}
+          ''
+      );
+
+  hostType-attribute-applies-to-traces-not-only-metrics =
+    pkgs.runCommand "hostType-applies-to-traces" { }
+      (
+        let
+          evaluated = evalCollector {
+            services.victoriaCollector = {
+              traces.enable = true;
+              # metrics/logs deliberately left disabled -- isolates the
+              # traces-only rendering path.
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+            };
+          };
+          configText = evaluated.config.environment.etc."alloy/config.alloy".text;
+        in
+        if lib.hasInfix "host.type" configText then
+          "echo OK > $out"
+        else
+          throw ''
+            hostType's own option doc promises a fleet-identification label
+            that isn't scoped to metrics only -- but the traces-only
+            rendered Alloy config has no host.type attribute anywhere.
+          ''
+      );
+
+  queue-directory-outside-statedir-gets-readwritepaths =
+    pkgs.runCommand "queue-directory-outside-statedir-gets-readwritepaths" { }
+      (
+        let
+          evaluated = evalCollector {
+            services.victoriaCollector = {
+              metrics.enable = true;
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+              queue.directory = "/mnt/bigdisk/alloy-queue";
+            };
+          };
+          rwp = evaluated.config.systemd.services.alloy.serviceConfig.ReadWritePaths or [ ];
+        in
+        if lib.elem "/mnt/bigdisk/alloy-queue" rwp then
+          "echo OK > $out"
+        else
+          throw ''
+            queue.directory set outside alloy's own StateDirectory
+            (/var/lib/alloy) must be added to ReadWritePaths -- DynamicUser
+            implies ProtectSystem=strict, which blocks writes anywhere not
+            explicitly allow-listed. ReadWritePaths was: ${builtins.toJSON rwp}
+          ''
+      );
+
+  alloy-write-token-oneshot-does-not-run-as-root =
+    pkgs.runCommand "alloy-write-token-oneshot-does-not-run-as-root" { }
+      (
+        let
+          evaluated = evalCollector {
+            services.victoriaCollector = {
+              metrics.enable = true;
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+              writeTokenFile = "${writeTokenFixture}";
+            };
+          };
+          sc = evaluated.config.systemd.services.victoria-collector-alloy-write-token.serviceConfig;
+        in
+        if (sc.DynamicUser or false) == true then
+          "echo OK > $out"
+        else
+          throw ''
+            victoria-collector-alloy-write-token must run under its own
+            DynamicUser, not root -- EnvironmentFile= is read by the
+            service manager itself (systemd.exec(5)), not the target
+            process, so file ownership is irrelevant to alloy.service's
+            own EnvironmentFile= resolution. Unlike journal-upload's
+            oneshot (which genuinely needs root -- /run/systemd is
+            755 root:root), this one has no such requirement.
+          ''
       );
 
   write-token-file-is-a-plain-string-not-a-nix-path =

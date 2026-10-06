@@ -134,6 +134,22 @@ let
         endpoint = "127.0.0.1:4318"
       }
       output {
+        traces = [otelcol.processor.attributes.add_host_type_traces.input]
+      }
+    }
+
+    // host_type attribute on every trace span, same label this module
+    // already attaches to metrics -- a fleet-identification label that
+    // silently only covered one of two eligible signal types was more
+    // surprising than useful (docs/decisions/0020).
+    otelcol.processor.attributes "add_host_type_traces" {
+      action {
+        key    = "host.type"
+        value  = "${cfg.hostType}"
+        action = "upsert"
+      }
+
+      output {
         traces = [otelcol.processor.batch.default.input]
       }
     }
