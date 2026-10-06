@@ -48,6 +48,43 @@ let
             DynamicUser = true;
             Restart = "on-failure";
             RestartSec = 5;
+
+            # Hardening -- same general-purpose systemd profile applied
+            # across this module (docs/decisions/0015); no readiness
+            # check added (no documented HTTP health endpoint for the
+            # mcp-victoria* binaries to poll).
+            DeviceAllow = [ "/dev/null rw" ];
+            DevicePolicy = "strict";
+            LockPersonality = true;
+            MemoryDenyWriteExecute = true;
+            NoNewPrivileges = true;
+            PrivateDevices = true;
+            PrivateTmp = true;
+            PrivateUsers = true;
+            ProtectClock = true;
+            ProtectControlGroups = true;
+            ProtectHome = true;
+            ProtectHostname = true;
+            ProtectKernelLogs = true;
+            ProtectKernelModules = true;
+            ProtectKernelTunables = true;
+            ProtectProc = "invisible";
+            ProtectSystem = "full";
+            RemoveIPC = true;
+            RestrictAddressFamilies = [
+              "AF_INET"
+              "AF_INET6"
+              "AF_UNIX"
+            ];
+            RestrictNamespaces = true;
+            RestrictRealtime = true;
+            RestrictSUIDSGID = true;
+            SystemCallArchitectures = "native";
+            SystemCallFilter = [
+              "@system-service"
+              "~@privileged"
+              "mincore"
+            ];
           };
         };
 

@@ -32,6 +32,35 @@ in
 {
   # --- eval-only ---
 
+  vmauth-hardening-profile = pkgs.runCommand "vmauth-hardening-profile" { } (
+    let
+      evaluated = evalWith { services.victoriaStack.metrics.enable = true; };
+      sc = evaluated.config.systemd.services.vmauth.serviceConfig;
+      # Same shape as storage's mkHardeningCheck, minus LimitNOFILE/wait4x
+      # readiness -- no nixpkgs vmauth module exists to confirm a
+      # LimitNOFILE value against (checked: nixpkgs has no vmauth module
+      # at all), and vmauth has no documented HTTP health endpoint to
+      # poll (docs/decisions/0015).
+      hardeningChecks = {
+        "NoNewPrivileges" = (sc.NoNewPrivileges or null) == true;
+        "ProtectSystem" = (sc.ProtectSystem or null) == "full";
+        "PrivateDevices" = (sc.PrivateDevices or null) == true;
+        "MemoryDenyWriteExecute" = (sc.MemoryDenyWriteExecute or null) == true;
+        "RestrictAddressFamilies" =
+          (sc.RestrictAddressFamilies or null) == [
+            "AF_INET"
+            "AF_INET6"
+            "AF_UNIX"
+          ];
+      };
+      failed = lib.filterAttrs (_: ok: !ok) hardeningChecks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "vmauth's serviceConfig is missing expected hardening: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
   write-tier-tokens-use-auto-derived-ingest-map-regardless-of-override =
     pkgs.runCommand "vmauth-write-tier-ignores-openingestpaths-override" { }
       (
