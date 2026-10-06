@@ -11,11 +11,22 @@ let
   # emitted when at least one OTLP exporter needs it; logs' write path
   # goes through systemd-journal-upload instead, which doesn't use Alloy
   # at all (docs/decisions/0005).
+  #
+  # "Bearer " + ...: vmauth's bearer_token auth expects the standard
+  # `Authorization: Bearer <token>` header -- VICTORIA_WRITE_TOKEN itself
+  # holds just the raw token (matching its name), unlike
+  # systemd-journal-upload's own rendered Header= drop-in, which already
+  # bakes "Bearer " in at render time (config.nix). Found by actually
+  # running Alloy against a real vmauth for the first time (previously
+  # blocked locally by missing uid-range): every write got a real but
+  # silent 401, "Dropping data" -- confirmed by checking vmauth's own
+  # real bearer-token docs, which specify the "Bearer " prefix is part of
+  # the Authorization header value, not implied.
   authBlock = ''
     otelcol.auth.headers "write_token" {
       header {
         key   = "Authorization"
-        value = sys.env("VICTORIA_WRITE_TOKEN")
+        value = "Bearer " + sys.env("VICTORIA_WRITE_TOKEN")
       }
     }
   '';

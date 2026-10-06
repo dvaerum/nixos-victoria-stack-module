@@ -55,7 +55,23 @@ in
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.writeTokensFile = "${writeTokensFixture}";
+        # vmauth's listenAddress defaults to loopback-only (a deliberate
+        # security default, docs/architecture.md) -- a genuinely remote
+        # collector (this test's whole point: two separate containers)
+        # can never reach a loopback-bound vmauth at all, confirmed
+        # directly: without this, every export attempt timed out with
+        # "context deadline exceeded" even though ICMP/hostname
+        # resolution across the vlan worked fine (ping succeeded).
+        vmauth.listenAddress = "0.0.0.0:4204";
       };
+      # This module never opens any firewall port itself (deliberately
+      # infrastructure-agnostic, same reasoning as having no ACME/TLS
+      # opinion) -- a real remote-collector deployment needs the
+      # operator to open this themselves, so the test needs to too.
+      # Confirmed directly: listenAddress alone wasn't enough: still
+      # "context deadline exceeded" with 0.0.0.0:4204 and the default
+      # firewall still active.
+      networking.firewall.allowedTCPPorts = [ 4204 ];
     };
 
     containers.collector = {

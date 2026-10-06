@@ -4,6 +4,10 @@ let
   inherit (pkgs) lib;
   module = nixosModule.nixosModules.victoriaStack;
 
+  testLib = import ./lib.nix { inherit pkgs nixosModule; };
+  inherit (testLib) otlpMetricGenerator;
+  otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
+
   secretKeyFixture = pkgs.writeText "grafana-secret-key" "test-fixture-secret-key-not-real";
 
   # Pure eval, no container boot needed -- confirms the rendered nginx
@@ -147,18 +151,39 @@ in
       machine.wait_for_unit("nginx.service")
       machine.wait_for_unit("grafana.service")
       machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
+      # grafana.service being "active" doesn't mean Grafana's own HTTP
+      # server is listening yet -- confirmed directly: without this,
+      # the /grafana/ curl below raced Grafana's startup and got a 502
+      # from nginx often enough to fail the check.
+      machine.wait_for_open_port(3000)
+      # Same race for vmauth's own backend -- caught by the sibling test
+      # with grafana disabled (nothing else gave it enough of a head
+      # start), but latent here too without this.
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
 
-      # /grafana/ reaches Grafana through nginx.
-      machine.succeed("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
+      # /grafana/ reaches Grafana through nginx. wait_until_succeeds, not
+      # succeed: Grafana's HTTP port opens before its own startup
+      # migrations finish, so a one-shot request can still race it.
+      machine.wait_until_succeeds("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
 
       # /victoria/ reaches vmauth through nginx, which in turn reaches the
       # metrics backend -- confirmed via the open (auth-disabled) write
       # path, the simplest reachability check that doesn't need a
-      # credential.
+      # credential. Real OTLP protobuf, not plaintext: VictoriaMetrics'
+      # actual /opentelemetry/v1/metrics handler rejects both a bare
+      # "/opentelemetry" path and non-protobuf bodies (confirmed directly
+      # against a real instance -- see otlpMetricGenerator's own comment
+      # in tests/lib.nix).
       machine.succeed(
-          "curl -sf -X POST --data-binary 'victoria_stack_nginx_test_metric 1' "
-          "'http://127.0.0.1:80/victoria/opentelemetry'"
+          "${otlpMetric} victoria_stack_nginx_test_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
+          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' "
+          "--data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
       )
     '';
   };
@@ -182,7 +207,14 @@ in
       machine.wait_for_unit("nginx.service")
       machine.wait_for_open_port(80)
 
-      config_dump = machine.succeed("nginx -T 2>&1")
+      # "-T" with no "-c" silently dumps the nginx *binary's own
+      # compiled-in default config* (its stock example server block,
+      # server_name "localhost"), not the actual NixOS-rendered config
+      # the running service uses -- confirmed directly: without "-c",
+      # this assertion failed even though the domain genuinely was
+      # applied. NixOS's nginx module exposes the real config at
+      # /etc/nginx/nginx.conf (nixos/modules/services/web-servers/nginx).
+      config_dump = machine.succeed("${pkgs.nginx}/bin/nginx -T -c /etc/nginx/nginx.conf 2>&1")
       assert "victoria-stack-test.example.com" in config_dump, (
           "expected the configured domain to appear in nginx's own rendered config"
       )
@@ -221,20 +253,40 @@ in
       machine.wait_for_unit("nginx.service")
       machine.wait_for_unit("grafana.service")
       machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
+      # grafana.service being "active" doesn't mean Grafana's own HTTP
+      # server is listening yet -- see nginx-proxies-victoria-and-grafana-
+      # subpaths' own comment above (the same race, found here too).
+      machine.wait_for_open_port(3000)
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
 
-      config_dump = machine.succeed("nginx -T 2>&1")
+      config_dump = machine.succeed("${pkgs.nginx}/bin/nginx -T -c /etc/nginx/nginx.conf 2>&1")
       assert "victoria-stack-test.example.com" in config_dump, (
           "expected the configured domain to appear in nginx's own rendered config"
       )
 
       # Both locations must still coexist -- the exact combination that
       # triggered the `//`-clobbering bug (a custom option alongside
-      # grafana.enable = true).
-      machine.succeed("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
+      # grafana.enable = true). Setting `domain` makes the virtualHost
+      # name-based (nginx.nix only sets serverName when cfg.domain !=
+      # null) -- a request's Host header must match for nginx to route
+      # to it at all, confirmed directly: omitting -H "Host: ..." here
+      # failed with no error, just curl/grep finding nothing.
+      # wait_until_succeeds, not succeed: Grafana's HTTP port opens
+      # before its own startup migrations finish.
+      machine.wait_until_succeeds(
+          "curl -sf -H 'Host: victoria-stack-test.example.com' "
+          "'http://127.0.0.1:80/grafana/login' | grep -qi grafana"
+      )
       machine.succeed(
-          "curl -sf -X POST --data-binary 'victoria_stack_nginx_test_metric 1' "
-          "'http://127.0.0.1:80/victoria/opentelemetry'"
+          "${otlpMetric} victoria_stack_nginx_test_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
+          "curl -sf -X POST -H 'Host: victoria-stack-test.example.com' "
+          "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
       )
     '';
   };
@@ -256,13 +308,29 @@ in
       start_all()
       machine.wait_for_unit("nginx.service")
       machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
+      # vmauth.service being "active" doesn't mean it's actually
+      # listening yet -- unlike the 3 storage services, vmauth has no
+      # postStart readiness probe of its own (nixosModule/victoriaStack/
+      # vmauth.nix), so systemd marks it active the instant the process
+      # forks, not once it's bound its HTTP port. Confirmed directly:
+      # without wait_for_open_port(4204), nginx's proxy_pass raced it
+      # and got "502 Bad Gateway" (connection refused upstream) often
+      # enough to fail this check -- the one test in this file with no
+      # Grafana migration delay to incidentally cover for it.
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
 
       # /victoria/ must still work on its own (no grafana.nix location
       # merged in to clobber or interfere with it).
       machine.succeed(
-          "curl -sf -X POST --data-binary 'victoria_stack_nginx_test_metric 1' "
-          "'http://127.0.0.1:80/victoria/opentelemetry'"
+          "${otlpMetric} victoria_stack_nginx_test_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
+          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' "
+          "--data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
       )
 
       # /grafana/ must not exist at all when grafana.enable = false --

@@ -4,6 +4,10 @@ let
   module = nixosModule.nixosModules.default;
   example = import ../examples { };
 
+  testLib = import ./lib.nix { inherit pkgs nixosModule; };
+  inherit (testLib) otlpMetricGenerator;
+  otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
+
   # Same throwaway-fixture pattern as every other test group -- these
   # override the example's placeholder /run/secrets/... paths, nothing
   # else about the example's own shape changes.
@@ -65,11 +69,19 @@ in
       machine.wait_for_open_port(4204)
 
       # End-to-end: write through vmauth with the write-tier token,
-      # query back through vmauth with the read-tier token.
+      # query back through vmauth with the read-tier token. Real OTLP
+      # protobuf, not plaintext -- VictoriaMetrics' actual
+      # /opentelemetry/v1/metrics handler rejects both a bare
+      # "/opentelemetry" path and non-protobuf bodies (confirmed
+      # directly against a real instance -- see otlpMetricGenerator's
+      # own comment in tests/lib.nix).
+      machine.succeed(
+          "${otlpMetric} victoria_stack_full_test_metric 1 > /tmp/otlp.bin"
+      )
       machine.succeed(
           "curl -sf -X POST -H 'Authorization: Bearer full-test-write-token' "
-          "--data-binary 'victoria_stack_full_test_metric 1' "
-          "'http://127.0.0.1:4204/opentelemetry'"
+          "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
       machine.wait_until_succeeds(
           "curl -sf -H 'Authorization: Bearer full-test-read-token' "
@@ -78,7 +90,10 @@ in
       )
 
       # Grafana reachable through nginx, datasources provisioned.
-      machine.succeed("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
+      # wait_until_succeeds, not succeed: Grafana's HTTP port opens
+      # before its own startup migrations finish (confirmed directly --
+      # this raced and failed with a one-shot curl).
+      machine.wait_until_succeeds("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
       datasources = machine.succeed(
           "curl -sf -u admin:full-test-grafana-admin-password 'http://127.0.0.1:3000/api/datasources'"
       )

@@ -121,6 +121,54 @@ let
           Our own warnings were: ${builtins.toJSON ownWarnings}
         ''
     );
+
+  # VictoriaMetrics' real OTLP metrics endpoint (/opentelemetry/v1/metrics,
+  # the one vmauth's auto-open ingest route actually proxies to) rejects
+  # both the plaintext Prometheus-exposition body AND the bare
+  # "/opentelemetry" path (sans "/v1/metrics") that every test in this
+  # suite previously sent -- confirmed directly: VictoriaMetrics returns
+  # "unsupported path requested" and, separately, "json encoding isn't
+  # supported for opentelemetry format. Use protobuf encoding". Every
+  # `machine.succeed(curl .../opentelemetry')` write-path test was
+  # therefore broken from day one, just never caught until container-boot
+  # checks could actually execute (this environment's `uid-range`
+  # limitation, resolved separately). This generates a genuinely valid,
+  # minimal OTLP ExportMetricsServiceRequest protobuf payload at test run
+  # time (the timestamp must be current when the request is actually
+  # sent, not baked in at Nix build time) using nixpkgs'
+  # python3Packages.opentelemetry-proto -- confirmed against a real
+  # VictoriaMetrics instance, including that instant queries need
+  # `wait_until_succeeds` to tolerate -search.latencyOffset's ~30s
+  # default delay before "now"-relative queries see freshly-ingested data.
+  otlpMetricGenerator =
+    pkgs.writers.writePython3Bin "gen-otlp-metric"
+      {
+        libraries = [ pkgs.python3Packages.opentelemetry-proto ];
+      }
+      ''
+        import sys
+        import time
+        from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import (
+            ExportMetricsServiceRequest,
+        )
+        from opentelemetry.proto.common.v1.common_pb2 import AnyValue
+
+        metric_name = sys.argv[1]
+        metric_value = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
+
+        req = ExportMetricsServiceRequest()
+        rm = req.resource_metrics.add()
+        svc_name = AnyValue(string_value="victoria-stack-test")
+        rm.resource.attributes.add(key="service.name", value=svc_name)
+        sm = rm.scope_metrics.add()
+        m = sm.metrics.add()
+        m.name = metric_name
+        dp = m.gauge.data_points.add()
+        dp.time_unix_nano = time.time_ns()
+        dp.as_double = metric_value
+
+        sys.stdout.buffer.write(req.SerializeToString())
+      '';
 in
 {
   inherit
@@ -130,5 +178,6 @@ in
     mkNoAssertionsFireCheck
     mkWarningFiresCheck
     mkNoWarningsCheck
+    otlpMetricGenerator
     ;
 }

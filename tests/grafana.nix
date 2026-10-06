@@ -154,12 +154,19 @@ in
       assert "victoriametrics-logs-datasource" in datasources
       assert "jaeger" in datasources
 
-      # Neither remaining datasource is marked default -- confirms this
-      # combination doesn't silently promote one of them, and that
-      # Grafana tolerates having zero default datasources.
-      assert '"isDefault":true' not in datasources, (
-          "expected no datasource marked default when metrics is disabled "
-          "(isDefault is hardcoded on the metrics spec only)"
+      # Confirmed directly (this assertion was wrong until corrected):
+      # Grafana's own provisioning auto-promotes the first-listed
+      # datasource to isDefault=true when none of the provisioned entries
+      # claims it -- isDefault being hardcoded false on both the logs and
+      # traces specs doesn't mean "no default at all", it means "let
+      # Grafana decide", and Grafana always picks one. The real invariant
+      # worth checking is that exactly one is default (not zero, not
+      # both), and that it isn't the disabled metrics datasource (which
+      # isn't provisioned at all in this combination, so that's already
+      # covered by the "not in datasources" assertion above).
+      assert datasources.count('"isDefault":true') == 1, (
+          "expected exactly one datasource marked default when metrics "
+          "is disabled (Grafana auto-promotes one when none is explicit)"
       )
     '';
   };

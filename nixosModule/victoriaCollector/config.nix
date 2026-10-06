@@ -38,7 +38,19 @@ let
         echo "[Upload]"
         echo "Header=Authorization: Bearer $(cat "$CREDENTIALS_DIRECTORY/write-token")"
       } > "$conf"
-      chmod 600 "$conf"
+      # systemd's own real systemd-journal-upload.service unit
+      # (confirmed directly from the installed systemd package) runs as
+      # DynamicUser=yes with SupplementaryGroups=systemd-journal -- the
+      # ephemeral per-boot UID has no other way to read a file this
+      # root-run oneshot wrote. chmod 600 (owner-only) left it genuinely
+      # unreadable: confirmed by actually running this for the first
+      # time (previously blocked locally by missing uid-range), which
+      # hit "Failed to open .../50-write-token.conf: Permission denied"
+      # and crash-looped forever. Matches nixpkgs' own journald-upload.nix
+      # module comment for ServerKeyFile: "must be readable by the
+      # systemd-journal group".
+      chgrp systemd-journal "$conf"
+      chmod 640 "$conf"
     '';
   };
 

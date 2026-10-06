@@ -129,22 +129,35 @@ let
       pkgs.yq-go
     ];
     text = ''
+      # systemd only exports $CREDENTIALS_DIRECTORY when at least one
+      # LoadCredential= entry exists -- with none of adminPasswordFile/
+      # readTokensFile/writeTokensFile configured (a legitimate state,
+      # e.g. requireAuthForWrites = false with no credentials at all),
+      # it's entirely absent from the environment, not just empty. Under
+      # writeShellApplication's `set -u`, referencing it unguarded
+      # crashes with "CREDENTIALS_DIRECTORY: unbound variable" -- found
+      # by actually running this service in a container for the first
+      # time (previously blocked locally by missing uid-range). The
+      # `:-` default keeps every `-f "$dir/..."` check working the same
+      # as before when the directory IS set, while tolerating "not set
+      # at all" as the same as "no credential files present".
+      credentials_directory="''${CREDENTIALS_DIRECTORY:-}"
       users_json='[]'
 
-      if [ -f "$CREDENTIALS_DIRECTORY/admin-password" ]; then
-        admin_password=$(cat "$CREDENTIALS_DIRECTORY/admin-password")
+      if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/admin-password" ]; then
+        admin_password=$(cat "$credentials_directory/admin-password")
         users_json=$(jq --arg pw "$admin_password" --slurpfile urlmap "$READ_URL_MAP_FILE" \
           '. + [{username: "admin", password: $pw, url_map: $urlmap[0]}]' <<<"$users_json")
       fi
 
-      if [ -f "$CREDENTIALS_DIRECTORY/read-tokens" ]; then
-        read_tokens_json=$(yq -o=json '.tokens' "$CREDENTIALS_DIRECTORY/read-tokens")
+      if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/read-tokens" ]; then
+        read_tokens_json=$(yq -o=json '.tokens' "$credentials_directory/read-tokens")
         users_json=$(jq --argjson tokens "$read_tokens_json" --slurpfile urlmap "$READ_URL_MAP_FILE" \
           '. + ($tokens | map({bearer_token: ., url_map: $urlmap[0]}))' <<<"$users_json")
       fi
 
-      if [ -f "$CREDENTIALS_DIRECTORY/write-tokens" ]; then
-        write_tokens_json=$(yq -o=json '.tokens' "$CREDENTIALS_DIRECTORY/write-tokens")
+      if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/write-tokens" ]; then
+        write_tokens_json=$(yq -o=json '.tokens' "$credentials_directory/write-tokens")
         users_json=$(jq --argjson tokens "$write_tokens_json" --slurpfile urlmap "$WRITE_URL_MAP_FILE" \
           '. + ($tokens | map({bearer_token: ., url_map: $urlmap[0]}))' <<<"$users_json")
       fi

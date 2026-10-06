@@ -11,7 +11,9 @@ let
     mkWarningFiresCheck
     mkNoWarningsCheck
     evalWith
+    otlpMetricGenerator
     ;
+  otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
 
   # Plain test fixtures -- not sops-rendered (this module's own options are
   # secrets-backend-agnostic, see docs/decisions/0008; sops-nix integration
@@ -380,13 +382,28 @@ in
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(4201)
 
       # Open write path -- no credential at all, confirming
       # requireAuthForWrites = false genuinely leaves it unauthenticated.
+      # Real OTLP protobuf, not plaintext: VictoriaMetrics' actual
+      # /opentelemetry/v1/metrics handler rejects both a bare
+      # "/opentelemetry" path and non-protobuf bodies (confirmed directly
+      # against a real instance -- see otlpMetricGenerator's own comment
+      # in tests/lib.nix). wait_until_succeeds, not succeed: VictoriaMetrics'
+      # own -search.latencyOffset keeps freshly-ingested data invisible to
+      # "now"-relative instant queries for ~30s by default.
       machine.succeed(
-          "curl -sf -X POST --data-binary "
-          "'victoria_stack_vmauth_test_metric 1' "
-          "'http://127.0.0.1:4204/opentelemetry'"
+          "${otlpMetric} victoria_stack_vmauth_test_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
+          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' "
+          "--data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_vmauth_test_metric' "
+          "| grep -q victoria_stack_vmauth_test_metric"
       )
     '';
   };
@@ -436,6 +453,7 @@ in
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(4201)
 
       # No credential: the write path must now reject the request (default
       # requireAuthForWrites = true).
@@ -445,9 +463,16 @@ in
 
       # With a valid write-tier bearer token: must succeed.
       machine.succeed(
+          "${otlpMetric} victoria_stack_vmauth_write_token_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
           "curl -sf -X POST -H 'Authorization: Bearer write-token-one' "
-          "--data-binary 'victoria_stack_vmauth_test_metric 1' "
-          "'http://127.0.0.1:4204/opentelemetry'"
+          "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_vmauth_write_token_metric' "
+          "| grep -q victoria_stack_vmauth_write_token_metric"
       )
     '';
   };
@@ -586,6 +611,7 @@ in
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(4201)
 
       # Each tier's own route succeeds...
       machine.succeed(
@@ -597,9 +623,16 @@ in
           "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
       machine.succeed(
+          "${otlpMetric} victoria_stack_vmauth_all_tiers_test_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
           "curl -sf -H 'Authorization: Bearer write-token-one' "
-          "-X POST --data-binary 'victoria_stack_vmauth_all_tiers_test_metric 1' "
-          "'http://127.0.0.1:4204/opentelemetry'"
+          "-X POST -H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_vmauth_all_tiers_test_metric' "
+          "| grep -q victoria_stack_vmauth_all_tiers_test_metric"
       )
 
       # ...and no tier can reach outside its own scope, confirming the 3
@@ -696,9 +729,12 @@ in
       # Metrics: write via the auto-open ingest door, read via the
       # /metrics/ prefix with the admin credential.
       machine.succeed(
-          "curl -sf -X POST --data-binary "
-          "'victoria_stack_vmauth_e2e_metric 1' "
-          "'http://127.0.0.1:4204/opentelemetry'"
+          "${otlpMetric} victoria_stack_vmauth_e2e_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
+          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' "
+          "--data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
       machine.wait_until_succeeds(
           "curl -sf -u admin:admin-password-value "
