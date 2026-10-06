@@ -4,6 +4,9 @@ on:
   push:
     branches: ['**']
 
+permissions:
+  contents: write
+
 jobs:
   update-docs:
     runs-on: ubuntu-latest

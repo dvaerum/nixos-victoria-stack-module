@@ -28,8 +28,8 @@ docs/decisions/NNNN-*.md         — ADRs, terse, WHY only
 .github/workflows/
   ci.yml                          — nix flake check -L
   ci-stable.yml                   — dynamic current-stable nixpkgs override
-  update-flake.yml                — weekly nixpkgs bump
-  update-mcp-packages.yml         — weekly nix-update per MCP package
+  update-dependencies.yml         — weekly nixpkgs bump + MCP package bump
+                                    (two sequential jobs, docs/decisions/0018)
   update-docs.yml                 — regenerate + commit docs/options.md
 nixosModule/
   default.nix                     — nixosModules.default (both trees)
@@ -109,9 +109,10 @@ exposed directly via its own `listenAddress` when vmauth is off).
   collector->stack path included.
 - MCP servers: real `buildGoModule` packages (not fetchurl prebuilt
   binaries), `nix-update --flake <pkg> --build` compatible, version bumps
-  via a dedicated weekly CI workflow (not folded into the nixpkgs
-  `update-flake.yml` cron — these are pre-1.0 and can change runtime
-  behavior on a bump, unlike a pinned nixpkgs revision).
+  via a dedicated CI job (not folded into the nixpkgs bump job's own
+  commit -- these are pre-1.0 and can change runtime behavior on a bump,
+  unlike a pinned nixpkgs revision; both jobs share one workflow file
+  and schedule, sequenced via `needs:`, docs/decisions/0018).
 - `examples/default.nix` IS the `full` test group's config — one source of
   truth, not a docs example that quietly drifts from what's tested.
 

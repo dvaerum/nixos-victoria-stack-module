@@ -47,7 +47,7 @@ but are not independently verified as passing until either:
 
 - the host enables `auto-allocate-uids` and rebuilds, or
 - CI (which already enables this correctly in `ci.yml`/`ci-stable.yml`/
-  `update-flake.yml` via `cachix/install-nix-action@v27`'s
+  `update-dependencies.yml` via `cachix/install-nix-action@v27`'s
   `extra_nix_config`) runs them after a push.
 
 Push access is itself separately blocked as of this writing (see git log --
