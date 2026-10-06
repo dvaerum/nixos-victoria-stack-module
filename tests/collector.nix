@@ -117,6 +117,131 @@ in
     '';
   };
 
+  # Same cross-container shape as metrics-roundtrip-across-containers,
+  # for logs -- systemd-journal-upload (not Alloy) is the real client
+  # here, carrying the write token via its own Header= drop-in
+  # (config.nix), shipping the native systemd journal export wire
+  # format, not jsonline/OTLP.
+  logs-roundtrip-across-containers = pkgs.testers.nixosTest {
+    name = "victoria-collector-logs-roundtrip-across-containers";
+
+    containers.stack = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ stackModule ];
+      services.victoriaStack = {
+        logs.enable = true;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
+        vmauth.listenAddress = "0.0.0.0:4204";
+      };
+      networking.firewall.allowedTCPPorts = [ 4204 ];
+    };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        logs.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      stack.wait_for_unit("victorialogs.service")
+      collector.wait_for_unit("systemd-journal-upload.service")
+
+      stack.systemctl("start network-online.target")
+      collector.systemctl("start network-online.target")
+      stack.wait_for_unit("network-online.target")
+      collector.wait_for_unit("network-online.target")
+
+      collector.succeed("ping -c 1 stack")
+
+      # A distinctive marker message, shipped through the real journal
+      # (not synthesized at the HTTP layer) -- confirms the whole real
+      # path: logger -> journald -> systemd-journal-upload (carrying the
+      # write token) -> vmauth -> victorialogs.
+      collector.succeed(
+          "logger --tag victoria-collector-test 'victoria_stack_collector_logs_roundtrip_marker'"
+      )
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4202/select/logsql/query' "
+          "-d 'query=victoria_stack_collector_logs_roundtrip_marker' "
+          "| grep -q victoria_stack_collector_logs_roundtrip_marker",
+          timeout=120,
+      )
+    '';
+  };
+
+  # Same cross-container shape again, for traces -- Alloy's own local
+  # OTLP receiver (config.alloy.nix, tied to traces.enable) is the real
+  # ingress here: a real OTLP/HTTP payload sent to the collector's own
+  # receiver port, forwarded by Alloy's configured exporter (carrying the
+  # write token) to the stack's vmauth, landing in victoriatraces.
+  traces-roundtrip-across-containers = pkgs.testers.nixosTest {
+    name = "victoria-collector-traces-roundtrip-across-containers";
+
+    containers.stack = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ stackModule ];
+      services.victoriaStack = {
+        traces.enable = true;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
+        vmauth.listenAddress = "0.0.0.0:4204";
+      };
+      networking.firewall.allowedTCPPorts = [ 4204 ];
+    };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        traces.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      stack.wait_for_unit("victoriatraces.service")
+      collector.wait_for_unit("alloy.service")
+      collector.wait_for_open_port(4318)
+
+      stack.systemctl("start network-online.target")
+      collector.systemctl("start network-online.target")
+      stack.wait_for_unit("network-online.target")
+      collector.wait_for_unit("network-online.target")
+
+      collector.succeed("ping -c 1 stack")
+
+      collector.succeed(
+          "now=$(date +%s%N); "
+          "payload=$(cat <<JSON\n"
+          "{\"resourceSpans\":[{\"resource\":{\"attributes\":["
+          "{\"key\":\"service.name\",\"value\":{\"stringValue\":\"victoria_stack_collector_traces_roundtrip_service\"}}"
+          "]},\"scopeSpans\":[{\"spans\":[{"
+          "\"traceId\":\"00000000000000000000000000000004\","
+          "\"spanId\":\"0000000000000004\","
+          "\"name\":\"victoria_stack_collector_traces_roundtrip_span\","
+          "\"kind\":1,"
+          "\"startTimeUnixNano\":\"$now\","
+          "\"endTimeUnixNano\":\"$now\""
+          "}]}]}]}\nJSON\n); "
+          "curl -sf -X POST -H 'Content-Type: application/json' --data-binary \"$payload\" "
+          "'http://127.0.0.1:4318/v1/traces'"
+      )
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4203/select/jaeger/api/services' "
+          "| grep -q victoria_stack_collector_traces_roundtrip_service",
+          timeout=120,
+      )
+    '';
+  };
+
   per-signal-toggles-independent = pkgs.testers.nixosTest {
     name = "victoria-collector-per-signal-toggles-independent";
 

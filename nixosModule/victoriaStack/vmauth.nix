@@ -175,6 +175,24 @@ let
       credentials_directory="''${CREDENTIALS_DIRECTORY:-}"
       users_json='[]'
 
+      # yq succeeds (exit 0) even when the `tokens:` key is absent (yields
+      # JSON `null`) or isn't a list (e.g. a bare string) -- genuinely
+      # malformed YAML in a safe way, but jq's native failure on either
+      # shape downstream ("Cannot iterate over null (null)" / "...over
+      # string (...)") names neither the offending file nor what shape was
+      # expected. Confirmed live against both cases before writing this
+      # guard. Fail closed either way (the crash-loop is correct -- an
+      # operator typo must not silently serve zero tokens), just with a
+      # message that says which file and why.
+      validate_tokens_shape() {
+        local file="$1"
+        local tokens_json="$2"
+        if ! jq -e 'type == "array" and all(.[]; type == "string")' <<<"$tokens_json" >/dev/null; then
+          echo "vmauth-render-config: $file must contain a top-level 'tokens:' key whose value is a YAML list of strings (optionally with inline '#' comments) -- got: $tokens_json" >&2
+          exit 1
+        fi
+      }
+
       if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/admin-password" ]; then
         admin_password=$(cat "$credentials_directory/admin-password")
         users_json=$(jq --arg pw "$admin_password" --slurpfile urlmap "$READ_URL_MAP_FILE" \
@@ -183,12 +201,14 @@ let
 
       if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/read-tokens" ]; then
         read_tokens_json=$(yq -o=json '.tokens' "$credentials_directory/read-tokens")
+        validate_tokens_shape "$credentials_directory/read-tokens" "$read_tokens_json"
         users_json=$(jq --argjson tokens "$read_tokens_json" --slurpfile urlmap "$READ_URL_MAP_FILE" \
           '. + ($tokens | map({bearer_token: ., url_map: $urlmap[0]}))' <<<"$users_json")
       fi
 
       if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/write-tokens" ]; then
         write_tokens_json=$(yq -o=json '.tokens' "$credentials_directory/write-tokens")
+        validate_tokens_shape "$credentials_directory/write-tokens" "$write_tokens_json"
         users_json=$(jq --argjson tokens "$write_tokens_json" --slurpfile urlmap "$WRITE_URL_MAP_FILE" \
           '. + ($tokens | map({bearer_token: ., url_map: $urlmap[0]}))' <<<"$users_json")
       fi

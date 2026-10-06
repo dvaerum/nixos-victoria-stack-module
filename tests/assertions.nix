@@ -25,6 +25,23 @@ in
     };
   };
 
+  # vmauth.enable = true alone is not sufficient: vmauth.nix's own config
+  # block only activates when a backend is also enabled, so this
+  # configuration previously passed the (pre-Phase-36) assertion while
+  # producing no actual vmauth service for nginx to reverse-proxy to.
+  nginx-requires-vmauth-with-a-real-backend = mkAssertionFiresCheck {
+    name = "nginx-requires-vmauth-with-a-real-backend";
+    expectMessageSubstring = "vmauth";
+    module = {
+      services.victoriaStack = {
+        vmauth.enable = true;
+        nginx.enable = true;
+        # metrics/logs/traces all left at their default (disabled) --
+        # vmauth.enable = true here is structurally inert.
+      };
+    };
+  };
+
   mcp-requires-own-backend = mkAssertionFiresCheck {
     name = "mcp-requires-own-backend";
     expectMessageSubstring = "mcp";
@@ -117,5 +134,41 @@ in
         settings.security.secret_key = "$__file{${secretKeyFixture}}";
       };
     };
+  };
+
+  backend-tls-cert-requires-key = mkAssertionFiresCheck {
+    name = "backend-tls-cert-requires-key";
+    expectMessageSubstring = "certFile and .keyFile";
+    module = {
+      services.victoriaStack.vmauth.backendTls.certFile = "/run/fake-client-cert.pem";
+      # keyFile deliberately left unset -- an incomplete mTLS pair.
+    };
+  };
+
+  backend-tls-key-requires-cert = mkAssertionFiresCheck {
+    name = "backend-tls-key-requires-cert";
+    expectMessageSubstring = "certFile and .keyFile";
+    module = {
+      services.victoriaStack.vmauth.backendTls.keyFile = "/run/fake-client-key.pem";
+      # certFile deliberately left unset -- an incomplete mTLS pair.
+    };
+  };
+
+  # Control: both halves of the mTLS pair set together -- no assertion
+  # should fire.
+  backend-tls-cert-and-key-together-is-not-an-assertion-failure = mkNoAssertionsFireCheck {
+    name = "backend-tls-cert-and-key-together-is-not-an-assertion-failure";
+    module = {
+      services.victoriaStack.vmauth.backendTls = {
+        certFile = "/run/fake-client-cert.pem";
+        keyFile = "/run/fake-client-key.pem";
+      };
+    };
+  };
+
+  # Control: neither half set (the default) -- no assertion should fire.
+  backend-tls-neither-cert-nor-key-is-not-an-assertion-failure = mkNoAssertionsFireCheck {
+    name = "backend-tls-neither-cert-nor-key-is-not-an-assertion-failure";
+    module = { };
   };
 }

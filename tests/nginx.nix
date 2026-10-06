@@ -341,4 +341,62 @@ in
       assert status == "404", f"expected 404 for /grafana/ when grafana.enable = false, got {status!r}"
     '';
   };
+
+  # The 4th and last domain x grafana.enable combination (see the comment
+  # on nginx-custom-domain-with-grafana-enabled above): a custom domain
+  # with grafana.enable left off, confirmed via a real live request (not
+  # just a config-dump assertion like nginx-domain-sets-server-name) --
+  # setting `domain` makes the virtualHost name-based, so a request must
+  # carry the matching Host header to route at all, same as the
+  # grafana-enabled combination above.
+  nginx-custom-domain-with-grafana-disabled = pkgs.testers.nixosTest {
+    name = "victoria-stack-nginx-custom-domain-grafana-disabled";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        nginx = {
+          enable = true;
+          domain = "victoria-stack-test.example.com";
+        };
+        # grafana.enable left at its default (false).
+        vmauth.requireAuthForWrites = false;
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("nginx.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(80)
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
+
+      machine.succeed(
+          "${otlpMetric} victoria_stack_nginx_test_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
+          "curl -sf -X POST -H 'Host: victoria-stack-test.example.com' "
+          "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
+      )
+
+      # The default (no Host header / wrong Host) must NOT reach this
+      # virtualHost -- it's name-based now, not the catch-all default.
+      machine.fail(
+          "curl -sf -X POST --data-binary 'x 1' "
+          "'http://127.0.0.1:80/victoria/opentelemetry'"
+      )
+
+      # /grafana/ must not exist at all here either.
+      status = machine.succeed(
+          "curl -s -o /dev/null -w '%{http_code}' "
+          "-H 'Host: victoria-stack-test.example.com' "
+          "'http://127.0.0.1:80/grafana/login'"
+      )
+      assert status == "404", f"expected 404 for /grafana/ when grafana.enable = false, got {status!r}"
+    '';
+  };
 }

@@ -653,6 +653,96 @@ in
     '';
   };
 
+  # Every other test in this file exercises one option/feature at a time
+  # in isolation. This is the one real container-boot test combining
+  # everything vmauth has a knob for simultaneously -- 3 credential
+  # tiers, extraReadUrlMap (the escape hatch route), and
+  # extraHeaders/extraResponseHeaders -- confirming they genuinely
+  # compose rather than silently interfering with each other.
+  # backendTls is deliberately NOT included here: exercising it for real
+  # would require fabricating an HTTPS-speaking stand-in backend that
+  # doesn't otherwise exist in this stack, which wouldn't verify anything
+  # the module actually does in production -- it stays covered by its own
+  # eval-only test (vmauth.nix's backendTls-options-reach-ExecStart,
+  # addressed elsewhere in this file).
+  full-combination-all-tiers-plus-extra-routes-plus-headers = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-full-combination";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          readTokensFile = "${readTokensFixture}";
+          writeTokensFile = "${writeTokensFixture}";
+          extraRequestHeaders = [ "X-Full-Combo-Test: yes" ];
+          extraResponseHeaders = [ "X-Full-Combo-Response: yes" ];
+          extraReadUrlMap = [
+            {
+              src_paths = [ "/custom-escape-hatch" ];
+              drop_src_path_prefix_parts = 1;
+              url_prefix = [ "http://127.0.0.1:4201/api/v1/query" ];
+            }
+          ];
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(4201)
+
+      # All 3 tiers still independently work with every other feature
+      # configured at once.
+      machine.succeed(
+          "curl -sf -u admin:admin-password-value "
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+      )
+      machine.succeed(
+          "curl -sf -H 'Authorization: Bearer read-token-one' "
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+      )
+      machine.succeed(
+          "${otlpMetric} victoria_stack_vmauth_full_combo_test_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
+          "curl -sf -H 'Authorization: Bearer write-token-one' "
+          "-X POST -H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_vmauth_full_combo_test_metric' "
+          "| grep -q victoria_stack_vmauth_full_combo_test_metric"
+      )
+
+      # extraReadUrlMap's custom route is reachable, requires a real
+      # credential same as the built-in routes, and the response carries
+      # both the custom route's own header behavior and the
+      # module-wide extraResponseHeaders.
+      machine.succeed(
+          "curl -sf -u admin:admin-password-value "
+          "'http://127.0.0.1:4204/custom-escape-hatch?query=up'"
+      )
+      machine.fail("curl -sf 'http://127.0.0.1:4204/custom-escape-hatch?query=up'")
+      machine.succeed(
+          "curl -sfD - -u admin:admin-password-value "
+          "'http://127.0.0.1:4204/custom-escape-hatch?query=up' "
+          "| grep -qi '^X-Full-Combo-Response: yes'"
+      )
+      # extraRequestHeaders reaching the real outbound backend request
+      # (not just the generated config) isn't independently observable
+      # here -- VictoriaMetrics' own log doesn't surface custom request
+      # headers (confirmed empirically, not assumed). That it genuinely
+      # merges into the config is already covered by this file's
+      # extra-headers-are-inert-unless-configured eval-only check; this
+      # test's job is confirming the setting doesn't break anything when
+      # combined with everything else above, which it hasn't.
+    '';
+  };
+
   # requireAuthForWrites = true is the default, and vmauth auto-enables
   # the moment any backend is enabled -- so "backend enabled, nothing
   # else configured" (no writeTokensFile at all) is the single most
@@ -997,4 +1087,36 @@ in
             ${builtins.toJSON wildcardEntries}
           ''
       );
+
+  # yq parses a `tokens:` key that's absent or not a list without ever
+  # failing (exit 0, JSON `null` or a bare string) -- jq's own downstream
+  # failure on that shape ("Cannot iterate over null (null)") names
+  # neither the file nor the expected shape. Confirmed this crashes
+  # illegibly before vmauth-render-config's validate_tokens_shape guard
+  # was added; this test pins the NEW, legible failure mode.
+  malformed-read-tokens-file-fails-with-a-legible-error = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-malformed-read-tokens-legible-error";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.readTokensFile = "${pkgs.writeText "malformed-read-tokens.yaml" ''
+          not_tokens:
+            - this-key-is-wrong
+        ''}";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      # The service must still fail closed (a typo must not silently serve
+      # zero tokens) -- but legibly now, naming the file and expected shape.
+      machine.fail("systemctl is-active vmauth.service")
+      machine.succeed(
+          "journalctl -u vmauth.service --no-pager "
+          "| grep -q \"read-tokens must contain a top-level 'tokens:' key\""
+      )
+    '';
+  };
 }
