@@ -127,6 +127,20 @@ mechanism here would just be a worse version of something you already have:
   don't merge per-entry -- reconstruct all three yourself if you go this
   route.
 
+- **nginx TLS/HTTPS** (`services.victoriaStack.nginx.enable = true`):
+  this module has no ACME/TLS option of its own -- `nginx`'s own real
+  options already do this job well.
+  `services.nginx.virtualHosts."victoria-stack"` is a stable,
+  intentional extension point (docs/decisions/0022); add HTTPS directly
+  on it:
+
+  ```nix
+  services.nginx.virtualHosts."victoria-stack" = {
+    forceSSL = true;   # or addSSL = true to keep plain HTTP available too
+    enableACME = true; # or sslCertificate/sslCertificateKey/useACMEHost
+  };
+  ```
+
 ## License
 
 MIT, see [`LICENSE`](./LICENSE).

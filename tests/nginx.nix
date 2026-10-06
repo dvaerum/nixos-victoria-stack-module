@@ -5,8 +5,26 @@ let
   module = nixosModule.nixosModules.victoriaStack;
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) otlpMetricGenerator;
+  inherit (testLib) otlpMetricGenerator evalWith;
   otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
+
+  # Throwaway self-signed cert, mirroring victoriaCollector/config.nix's
+  # own dummyClientCert pattern -- generated at build time, not a secret.
+  # Unlike that pattern (a client cert vmauth never validates), this is
+  # a SERVER cert curl's own --cacert verification checks hostname
+  # against -- needs a real SAN for 127.0.0.1, not just a CN, confirmed
+  # directly: without it curl fails closed with exit 60 (cert verify
+  # failed) even though the cert chain itself is otherwise valid.
+  selfSignedCert =
+    pkgs.runCommand "victoria-stack-nginx-test-self-signed-cert"
+      { nativeBuildInputs = [ pkgs.openssl ]; }
+      ''
+        mkdir -p $out
+        openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
+          -subj "/CN=victoria-stack-nginx-test" \
+          -addext "subjectAltName=IP:127.0.0.1" \
+          -keyout $out/key.pem -out $out/cert.pem
+      '';
 
   secretKeyFixture = pkgs.writeText "grafana-secret-key" "test-fixture-secret-key-not-real";
 
@@ -397,6 +415,89 @@ in
           "'http://127.0.0.1:80/grafana/login'"
       )
       assert status == "404", f"expected 404 for /grafana/ when grafana.enable = false, got {status!r}"
+    '';
+  };
+
+  # docs/decisions/0022: "victoria-stack" is now a stable, documented
+  # extension point, not an incidental implementation detail -- pins the
+  # literal attribute name so a future accidental rename is caught
+  # immediately, the same protection every other stable-name contract in
+  # this project already gets (e.g. the systemd unit names documented in
+  # README.md's escape-hatches section).
+  virtual-host-name-is-the-stable-victoria-stack-key =
+    pkgs.runCommand "nginx-virtual-host-name-is-stable" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              nginx.enable = true;
+            };
+          };
+          hasStableName = evaluated.config.services.nginx.virtualHosts ? "victoria-stack";
+        in
+        if hasStableName then
+          "echo OK > $out"
+        else
+          throw ''
+            Expected services.nginx.virtualHosts."victoria-stack" to exist --
+            docs/decisions/0022 documents this exact name as a stable,
+            public extension point for operator-added TLS config.
+          ''
+      );
+
+  # The one real container-boot test for ADR 0022's whole point: an
+  # operator adding real nginx TLS config directly onto the stable
+  # virtualHost name, exactly as the README/ADR's own worked example
+  # shows -- confirming the composition genuinely works end to end, both
+  # protocols against the same backend, not just that it evaluates.
+  http-and-https-coexist-on-the-stable-name = pkgs.testers.nixosTest {
+    name = "victoria-stack-nginx-http-and-https-coexist";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        nginx.enable = true;
+        vmauth.requireAuthForWrites = false;
+      };
+      # Operator-added TLS config, directly on the stable virtualHost
+      # name -- not anything this module itself configures.
+      services.nginx.virtualHosts."victoria-stack" = {
+        addSSL = true; # keep plain HTTP working too, not forceSSL
+        sslCertificate = "${selfSignedCert}/cert.pem";
+        sslCertificateKey = "${selfSignedCert}/key.pem";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("nginx.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(80)
+      machine.wait_for_open_port(443)
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
+
+      machine.succeed(
+          "${otlpMetric} victoria_stack_nginx_tls_test_metric 1 > /tmp/otlp.bin"
+      )
+
+      # Plain HTTP still works, unaffected by the added TLS config.
+      machine.succeed(
+          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' "
+          "--data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
+      )
+
+      # HTTPS reaches the exact same backend through the same
+      # virtualHost/location configuration this module defines.
+      machine.succeed(
+          "curl -sf --cacert ${selfSignedCert}/cert.pem -X POST "
+          "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+          "'https://127.0.0.1:443/victoria/opentelemetry/v1/metrics'"
+      )
     '';
   };
 }

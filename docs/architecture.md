@@ -120,3 +120,8 @@ about vmauth being "the gateway" makes this happen automatically.
   entire purpose is being the externally-reachable front door, and even
   that requires `services.victoriaStack.nginx.enable = true` to exist at
   all.
+- **nginx speaks plain HTTP only, by design** — no server-side TLS
+  termination exists anywhere in this diagram. `services.nginx.
+  virtualHosts."victoria-stack"` is a stable extension point (ADR 0022)
+  an operator adds `forceSSL`/`enableACME` (or any other real nginx TLS
+  option) to directly; this module itself never does.
