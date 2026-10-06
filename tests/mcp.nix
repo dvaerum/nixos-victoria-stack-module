@@ -7,10 +7,10 @@ let
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
   inherit (testLib) evalWith;
 
-  # Same shape as storage.nix's mkHardeningCheck, minus LimitNOFILE/wait4x
-  # readiness -- neither applies here: no nixpkgs module to confirm a
-  # LimitNOFILE value against, and no documented HTTP health endpoint for
-  # vmauth or the mcp-victoria* binaries to poll (docs/decisions/0015).
+  # Same shape as storage.nix's mkHardeningCheck, minus LimitNOFILE --
+  # no nixpkgs module to confirm a LimitNOFILE value against here. The
+  # wait4x TCP-only readiness probe itself (mcp.nix) has its own
+  # dedicated eval check below, not folded into this one.
   mkMcpHardeningCheck =
     {
       name,
@@ -188,7 +188,7 @@ in
         logs.mcp.enable = true;
         traces.enable = true;
         traces.mcp.enable = true;
-        vmauth.requireAuthForWrites = false;
+        vmauth.adminPasswordFile = "${pkgs.writeText "mcp-test-admin-password" "mcp-test-admin-password-value"}";
       };
     };
 
@@ -200,23 +200,47 @@ in
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
 
-      # Reachable through vmauth's /mcp/<service> routes (no trailing
-      # slash, per each MCP binary's own fixed /mcp path). A malformed
-      # JSON-RPC body ({}) is expected to get a 4xx from the MCP server
-      # itself -- the assertion that matters is that vmauth's routing
-      # actually proxies through to a live backend (any HTTP status code
-      # at all) rather than failing at the vmauth hop (curl exit 7,
-      # reported as http_code "000"). Previously this used `|| true`,
-      # which discarded curl's result entirely and asserted nothing.
-      for route in ["metrics", "logs", "traces"]:
-          http_code = machine.succeed(
-              "curl -s -o /dev/null -w '%{http_code}' -X POST "
-              f"'http://127.0.0.1:4204/mcp/{route}' "
-              "-H 'Content-Type: application/json' -d '{}'"
+      # /mcp/* routes sit behind the read tier (vmauth.nix's readUrlMap),
+      # same as every other read-only route -- confirmed empirically
+      # before this fix: with no credential at all, vmauth rejects at
+      # 401 ("missing 'Authorization' request header") before ever
+      # reaching the backend, which the PREVIOUS version of this test
+      # mistook for "routing reached the backend" (it never did -- every
+      # route always got the exact same vmauth-local 401, proving
+      # nothing about the 3 individual backend connections).
+      no_cred_code = machine.succeed(
+          "curl -s -o /dev/null -w '%{http_code}' -X POST "
+          "'http://127.0.0.1:4204/mcp/metrics' -H 'Content-Type: application/json' -d '{}'"
+      )
+      assert no_cred_code == "401", f"expected 401 with no credential, got {no_cred_code!r}"
+
+      # With a real credential and a real MCP initialize handshake (not
+      # just a generic malformed body -- confirmed live that `{}` alone
+      # only ever gets a generic "Invalid session ID" 404 regardless of
+      # which backend answered, not a distinguishing response), each
+      # service's own serverInfo.name in the response proves this
+      # specific route reached this specific backend, not just "a"
+      # backend.
+      expected_names = {
+          "metrics": "VictoriaMetrics",
+          "logs": "VictoriaLogs",
+          "traces": "VictoriaTraces",
+      }
+      initialize_body = (
+          '{"jsonrpc":"2.0","id":1,"method":"initialize","params":'
+          '{"protocolVersion":"2024-11-05","capabilities":{},'
+          '"clientInfo":{"name":"victoria-stack-test","version":"1.0"}}}'
+      )
+      for route, expected_name in expected_names.items():
+          response = machine.succeed(
+              f"curl -sf -u admin:mcp-test-admin-password-value -X POST "
+              f"'http://127.0.0.1:4204/mcp/{route}' -H 'Content-Type: application/json' "
+              "-H 'Accept: application/json, text/event-stream' "
+              f"-d '{initialize_body}'"
           )
-          assert http_code != "000", (
-              f"/mcp/{route} through vmauth did not reach a backend "
-              f"(curl could not connect), got http_code={http_code!r}"
+          assert expected_name in response, (
+              f"/mcp/{route} through vmauth: expected serverInfo.name to "
+              f"contain {expected_name!r}, got: {response!r}"
           )
 
       # The MCP servers' own listenAddress stay loopback-only by default
@@ -227,6 +251,63 @@ in
       machine.wait_for_open_port(4207)
     '';
   };
+
+  # effectiveUrl (docs/decisions/0019), not listenAddress directly -- a
+  # future remoteUrl-style override only reaches mcp.nix's own backend
+  # connection through this seam; confirms it's genuinely honored, not
+  # just present in the option schema.
+  mcp-metrics-entrypoint-uses-effective-url =
+    pkgs.runCommand "mcp-metrics-entrypoint-uses-effective-url" { }
+      (
+        let
+          overrideUrl = "http://victoria-stack-test.example.invalid:9999";
+          evaluated = evalWith {
+            services.victoriaStack.metrics = {
+              enable = true;
+              mcp.enable = true;
+              effectiveUrl = lib.mkForce overrideUrl;
+            };
+          };
+          entrypoint =
+            evaluated.config.systemd.services.mcp-victoriametrics.environment.VM_INSTANCE_ENTRYPOINT;
+        in
+        if entrypoint == overrideUrl then
+          "echo OK > $out"
+        else
+          throw "VM_INSTANCE_ENTRYPOINT did not track metrics.effectiveUrl: expected ${overrideUrl}, got ${entrypoint}"
+      );
+
+  # vmauth's own `after=` must include each enabled MCP service -- without
+  # it, vmauth could start routing to /mcp/* before the corresponding
+  # mcp-victoria* unit (and its own wait4x readiness probe) has even
+  # begun, the same ordering gap already fixed for the 3 storage backends.
+  vmauth-after-includes-enabled-mcp-services =
+    pkgs.runCommand "vmauth-after-includes-enabled-mcp-services" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              metrics.mcp.enable = true;
+              logs.enable = true;
+              logs.mcp.enable = true;
+              traces.enable = true;
+              traces.mcp.enable = true;
+            };
+          };
+          after = evaluated.config.systemd.services.vmauth.after;
+          expected = [
+            "mcp-victoriametrics.service"
+            "mcp-victorialogs.service"
+            "mcp-victoriatraces.service"
+          ];
+          missing = lib.filter (e: !(lib.elem e after)) expected;
+        in
+        if missing == [ ] then
+          "echo OK > $out"
+        else
+          throw "vmauth.service's `after` is missing: ${builtins.toJSON missing}"
+      );
 
   mcp-reachable-directly-when-vmauth-off = pkgs.testers.nixosTest {
     name = "victoria-stack-mcp-direct-without-vmauth";

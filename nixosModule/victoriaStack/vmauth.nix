@@ -271,7 +271,15 @@ in
       ]
       ++ lib.optional topCfg.metrics.enable "victoriametrics.service"
       ++ lib.optional topCfg.logs.enable "victorialogs.service"
-      ++ lib.optional topCfg.traces.enable "victoriatraces.service";
+      ++ lib.optional topCfg.traces.enable "victoriatraces.service"
+      # The 3 MCP servers -- vmauth's own /mcp/* routing proxies directly
+      # to these, same ordering reasoning as the storage backends above.
+      # Each one's own postStart now has a real TCP readiness probe
+      # (mcp.nix), so `after` here means "actually listening", not just
+      # "systemd forked the process".
+      ++ lib.optional topCfg.metrics.mcp.enable "mcp-victoriametrics.service"
+      ++ lib.optional topCfg.logs.mcp.enable "mcp-victorialogs.service"
+      ++ lib.optional topCfg.traces.mcp.enable "mcp-victoriatraces.service";
       wantedBy = [ "multi-user.target" ];
 
       serviceConfig = {

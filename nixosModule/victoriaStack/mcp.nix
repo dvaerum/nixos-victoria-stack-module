@@ -21,7 +21,6 @@ let
       instanceType ? null, # only VM_INSTANCE_TYPE needs a value; VL/VT don't use this env var at all
       packagePath, # directory name under ../../packages
       binaryName,
-      backendListenAddress,
       backendUnit, # "victoriametrics.service" | "victorialogs.service" | "victoriatraces.service"
     }:
     {
@@ -35,11 +34,20 @@ let
           wantedBy = [ "multi-user.target" ];
 
           environment = {
-            "${envPrefix}_INSTANCE_ENTRYPOINT" = "http://${backendListenAddress}";
+            # effectiveUrl (docs/decisions/0019), not listenAddress
+            # directly -- this module's own documented seam for a future
+            # remote-backend option, read by vmauth.nix/grafana.nix/
+            # nginx.nix already; mcp.nix was a 4th consumer missed when
+            # that ADR was written, silently left pointing at the local
+            # listenAddress even if a future remoteUrl override changed
+            # effectiveUrl elsewhere. Already includes its own scheme, no
+            # "http://" prepend needed here.
+            "${envPrefix}_INSTANCE_ENTRYPOINT" = serviceCfg.effectiveUrl;
             MCP_SERVER_MODE = "http";
             MCP_LISTEN_ADDR = serviceCfg.mcp.listenAddress;
           }
           // lib.optionalAttrs (instanceType != null) {
+
             "${envPrefix}_INSTANCE_TYPE" = instanceType;
           }
           # MCP_LOG_LEVEL/MCP_LOG_FORMAT/MCP_DISABLED_TOOLS -- confirmed
@@ -55,6 +63,28 @@ let
             MCP_DISABLED_TOOLS = lib.concatStringsSep "," serviceCfg.mcp.disabledTools;
           };
 
+          # wait4x TCP-only (not wait4x http, unlike the 3 storage
+          # services' own postStart probes): confirmed no documented HTTP
+          # health endpoint exists for any of the 3 mcp-victoria*
+          # binaries, only a mere TCP accept is checkable. Without this,
+          # vmauth's own `after`/`wants` on this unit (vmauth.nix) only
+          # guaranteed this unit was started, not that it was actually
+          # listening yet -- the same class of race already fixed for
+          # vmauth itself against the storage services.
+          path = [ pkgs.wait4x ];
+          postStart =
+            let
+              isWildcard =
+                lib.hasPrefix "0.0.0.0:" serviceCfg.mcp.listenAddress
+                || lib.hasPrefix "[::]:" serviceCfg.mcp.listenAddress;
+              bindAddr =
+                if isWildcard then
+                  "127.0.0.1:${lib.last (lib.splitString ":" serviceCfg.mcp.listenAddress)}"
+                else
+                  serviceCfg.mcp.listenAddress;
+            in
+            "wait4x tcp ${bindAddr} --timeout 90s";
+
           serviceConfig = {
             ExecStart = "${serviceCfg.mcp.package}/bin/${binaryName}";
             DynamicUser = true;
@@ -62,9 +92,9 @@ let
             RestartSec = 5;
 
             # Hardening -- same general-purpose systemd profile applied
-            # across this module (docs/decisions/0015); no readiness
-            # check added (no documented HTTP health endpoint for the
-            # mcp-victoria* binaries to poll).
+            # across this module (docs/decisions/0015). Readiness is
+            # handled above via postStart's TCP-only wait4x probe, not
+            # here.
             DeviceAllow = [ "/dev/null rw" ];
             DevicePolicy = "strict";
             LockPersonality = true;
@@ -115,7 +145,6 @@ in
       instanceType = "single";
       packagePath = "mcp-victoriametrics";
       binaryName = "mcp-victoriametrics";
-      backendListenAddress = topCfg.metrics.listenAddress;
       backendUnit = "victoriametrics.service";
     })
     (mkMcpService {
@@ -124,7 +153,6 @@ in
       envPrefix = "VL";
       packagePath = "mcp-victorialogs";
       binaryName = "mcp-victorialogs";
-      backendListenAddress = topCfg.logs.listenAddress;
       backendUnit = "victorialogs.service";
     })
     (mkMcpService {
@@ -133,7 +161,6 @@ in
       envPrefix = "VT";
       packagePath = "mcp-victoriatraces";
       binaryName = "mcp-victoriatraces";
-      backendListenAddress = topCfg.traces.listenAddress;
       backendUnit = "victoriatraces.service";
     })
   ];
