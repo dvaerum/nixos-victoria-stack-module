@@ -684,9 +684,53 @@ in
         else
           throw ''
             traces.retentionPeriod's description must state the real
-            upstream default (7 days), not "effectively unbounded" --
-            that claim is only true for metrics/logs. Actual description:
-            ${description}
+            upstream default (7 days), not claim it's unbounded. Actual
+            description: ${description}
+          ''
+      );
+
+  # Phase 39: metrics' and logs' own descriptions had the exact same
+  # factually-wrong "effectively unbounded" claim traces' had (fixed in
+  # docs/decisions/0020, for traces only, at the time) -- confirmed via
+  # each binary's own --help: metrics defaults to 1 month, logs to 7
+  # days, neither to unbounded. Same pattern as the traces check above.
+  metrics-retention-period-doc-states-real-1-month-default =
+    pkgs.runCommand "metrics-retention-period-doc-states-real-1-month-default" { }
+      (
+        let
+          evaluated = evalWith { };
+          description = evaluated.options.services.victoriaStack.metrics.retentionPeriod.description;
+        in
+        if
+          lib.hasInfix "1 month" description
+          && !lib.hasInfix "effectively unbounded for this binary" description
+        then
+          "echo OK > $out"
+        else
+          throw ''
+            metrics.retentionPeriod's description must state the real
+            upstream default (1 month), not claim it's unbounded. Actual
+            description: ${description}
+          ''
+      );
+
+  logs-retention-period-doc-states-real-7-day-default =
+    pkgs.runCommand "logs-retention-period-doc-states-real-7-day-default" { }
+      (
+        let
+          evaluated = evalWith { };
+          description = evaluated.options.services.victoriaStack.logs.retentionPeriod.description;
+        in
+        if
+          lib.hasInfix "7 day" description
+          && !lib.hasInfix "effectively unbounded for this binary" description
+        then
+          "echo OK > $out"
+        else
+          throw ''
+            logs.retentionPeriod's description must state the real
+            upstream default (7 days), not claim it's unbounded. Actual
+            description: ${description}
           ''
       );
 

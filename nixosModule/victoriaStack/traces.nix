@@ -83,14 +83,16 @@ in
 
           serviceConfig = lib.mkMerge [
             {
-              # Unlike metrics/logs, victoria-traces' own default
-              # retentionPeriod is 7d, not unbounded -- confirmed from its
-              # own --help. cfg.retentionPeriod = null still means "don't
-              # pass the flag" (matching upstream's own default), not "force
-              # unbounded"; that's a deliberate, documented difference from
-              # metrics/logs captured in each service's own retentionPeriod
-              # description ("whatever the binary does when the flag is
-              # omitted").
+              # victoria-traces' own default retentionPeriod is 7d --
+              # confirmed from its own --help, same as metrics (1M) and
+              # logs (7d): none of the 3 storage binaries default to
+              # unbounded when the flag is omitted (docs/decisions/0020
+              # fixed this specifically for traces; Phase 39 fixed the
+              # same factually-wrong "unbounded" claim for metrics/logs).
+              # cfg.retentionPeriod = null still means "don't pass the
+              # flag" (matching upstream's own default), captured in each
+              # service's own retentionPeriod description ("whatever the
+              # binary does when the flag is omitted").
               ExecStart = lib.escapeShellArgs (
                 [
                   "${cfg.package}/bin/victoria-traces"

@@ -35,8 +35,12 @@ let
       binaryName,
       # The real, binary-specific behavior when retentionPeriod is omitted
       # -- NOT a shared claim across all three, since it genuinely differs
-      # (confirmed per-binary via --help, not assumed to match): metrics
-      # and logs default to unbounded; traces defaults to 7 days.
+      # (confirmed per-binary via each binary's own `-help` output, not
+      # assumed to match, nor assumed to match each other): metrics
+      # defaults to 1 month, logs to 7 days, traces to 7 days too (the
+      # same 7-day number, but confirmed independently per docs/decisions
+      # -- not assumed shared just because it's the same value). None of
+      # the three default to unbounded.
       retentionPeriodNullBehavior,
     }:
     {
@@ -238,7 +242,7 @@ in
       # operator decision, not any binary's own upstream default.
       defaultListenAddress = "127.0.0.1:4201";
       defaultMcpPort = 4205;
-      retentionPeriodNullBehavior = "effectively unbounded for this binary";
+      retentionPeriodNullBehavior = "a 1 month default for this binary, NOT unbounded";
     };
 
     logs = mkStorageServiceOptions {
@@ -246,7 +250,7 @@ in
       binaryName = "victoria-logs";
       defaultListenAddress = "127.0.0.1:4202";
       defaultMcpPort = 4206;
-      retentionPeriodNullBehavior = "effectively unbounded for this binary";
+      retentionPeriodNullBehavior = "a 7 day default for this binary, NOT unbounded";
     };
 
     traces = mkStorageServiceOptions {
@@ -254,11 +258,15 @@ in
       binaryName = "victoria-traces";
       defaultListenAddress = "127.0.0.1:4203";
       defaultMcpPort = 4207;
-      # Confirmed from victoria-traces' own --help/upstream docs: unlike
-      # metrics/logs, omitting -retentionPeriod does NOT mean unbounded --
-      # it defaults to 7 days. See traces.nix's own ExecStart comment and
-      # docs/decisions/0020.
-      retentionPeriodNullBehavior = "a 7 day default for this binary, NOT unbounded -- unlike metrics/logs";
+      # Confirmed from victoria-traces' own --help/upstream docs: omitting
+      # -retentionPeriod defaults to 7 days, same as logs (confirmed
+      # independently, not assumed shared just because it's the same
+      # value) -- metrics defaults to 1 month. None of the 3 default to
+      # unbounded. See traces.nix's own ExecStart comment and
+      # docs/decisions/0020 (which fixed this specifically for traces;
+      # Phase 39 fixed the same factually-wrong "unbounded" claim for
+      # metrics/logs).
+      retentionPeriodNullBehavior = "a 7 day default for this binary, NOT unbounded";
     };
 
     vmauth = {

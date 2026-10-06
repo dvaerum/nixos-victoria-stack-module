@@ -357,6 +357,42 @@ in
           ''
       );
 
+  # hostType's own option doc is explicit that this is NOT applied to
+  # logs (intentional design -- that path goes through
+  # systemd-journal-upload directly, with no Alloy pipeline to attach the
+  # label in, confirmed in config.nix's renderJournalUploadTokenHeader:
+  # the only thing it ever renders is the Authorization bearer token).
+  # This was previously an undocumented-but-believed fact with no
+  # regression test; confirms it directly, both that no Alloy config is
+  # even rendered for a logs-only host (needsAlloyOtlp = metrics.enable
+  # || traces.enable, config.nix) and that hostType has no other
+  # mechanism to reach logs at all.
+  hostType-is-genuinely-absent-for-logs-only =
+    pkgs.runCommand "hostType-is-genuinely-absent-for-logs-only" { }
+      (
+        let
+          evaluated = evalWithCollector {
+            services.victoriaCollector = {
+              logs.enable = true;
+              # metrics/traces deliberately left disabled.
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+            };
+          };
+          hasAlloyConfig = evaluated.config.environment.etc ? "alloy/config.alloy";
+        in
+        if !hasAlloyConfig then
+          "echo OK > $out"
+        else
+          throw ''
+            Expected no Alloy config to be rendered at all for a
+            logs-only host (needsAlloyOtlp = metrics.enable ||
+            traces.enable) -- hostType has no mechanism to reach logs,
+            by design, so there should be nothing here for it to have
+            reached.
+          ''
+      );
+
   alloy-tls-and-retry-options-are-inert-unless-configured =
     pkgs.runCommand "alloy-tls-and-retry-inert-unless-configured" { }
       (
