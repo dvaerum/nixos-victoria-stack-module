@@ -6,6 +6,12 @@ name: CI (current stable)
 # flake.lock/unstable pin (see flake.nix) is never touched. A failure
 # here means "breaks on stable," distinguishable at a glance from a
 # regular ci.yml failure.
+#
+# cancel-in-progress: true, same reasoning as ci.yml -- read-only, no
+# in-flight write to race.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
   push:

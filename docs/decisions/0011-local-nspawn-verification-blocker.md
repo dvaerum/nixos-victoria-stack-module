@@ -2,9 +2,9 @@
 
 ## Status
 
-Open / pending. Not a design decision -- an environmental constraint
-surfaced during Phase 3 implementation, recorded here because it affects
-which checks can be honestly claimed as locally verified.
+Resolved as of Phase 34. Kept as a record of the constraint and the
+decision not to route around it unilaterally, not because the blocker
+is still live.
 
 ## What's blocked
 
@@ -53,3 +53,15 @@ but are not independently verified as passing until either:
 Push access is itself separately blocked as of this writing (see git log --
 `gh auth login` / SSH key registration pending). Both are tracked as open
 items for the human operator, not guessed past.
+
+## Resolution (Phase 34)
+
+Both items resolved: `auto-allocate-uids` was enabled on the development
+machine's own NixOS configuration (a separate repo/commit, this project's
+own host, not routed around here), and push access was restored
+separately (a branch-name mismatch between local `master` and the
+remote's `main`, not a credential problem). Every container-boot check
+in the project ran for real for the first time as a result -- see
+PLAN.md's Phase 34 entry for what that first real run actually found (2
+genuine production bugs invisible to pure code review).
+

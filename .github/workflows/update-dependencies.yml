@@ -6,6 +6,17 @@ name: Update dependencies
 # pushing directly to master with no rebase: a long `nix flake check -L`
 # run on one could let the other's push land on a stale ref.
 # docs/decisions/0018.
+#
+# `concurrency:` below guards the OTHER overlap this same race shape
+# allows: workflow_dispatch firing while last week's scheduled run (or a
+# previous manual one) is still mid-flight, two runs of this SAME
+# workflow racing each other's push the same way. cancel-in-progress
+# stays false, same reasoning as update-docs.yml -- queue the newer run
+# behind the current one rather than cancelling a push that may already
+# be in flight.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 on:
   schedule:

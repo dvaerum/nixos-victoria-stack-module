@@ -89,6 +89,86 @@ in
           "| grep -q '\"value\"'"
       )
 
+      # Same end-to-end shape for logs: written directly against the
+      # backend's own port (vmauth's only real supported logs write path
+      # is systemd-journal-upload's own wire format, exercised for real
+      # elsewhere by tests/collector.nix's own cross-container roundtrip
+      # -- the read tier's own url_map is a closed allow-list under
+      # /select/* only, docs/decisions/0021), queried back through
+      # vmauth with the read-tier token.
+      machine.succeed(
+          "echo '{\"log\":{\"level\":\"info\",\"message\":\"victoria_stack_full_test_log\"}"
+          ",\"date\":\"0\",\"stream\":\"full-test\"}' | "
+          "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
+          "'http://127.0.0.1:4202/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf -H 'Authorization: Bearer full-test-read-token' "
+          "'http://127.0.0.1:4204/logs/select/logsql/query' -d 'query=victoria_stack_full_test_log' "
+          "| grep -q victoria_stack_full_test_log"
+      )
+
+      # Same end-to-end shape for traces: written through vmauth's
+      # write-tier token (the auto-open OTLP ingest door every signal
+      # type gets, nixosModule/victoriaStack/vmauth.nix), queried back
+      # through vmauth with the read-tier token (Jaeger API).
+      machine.succeed(
+          "now=$(date +%s%N); "
+          "payload=$(cat <<JSON\n"
+          "{\"resourceSpans\":[{\"resource\":{\"attributes\":["
+          "{\"key\":\"service.name\",\"value\":{\"stringValue\":\"victoria_stack_full_test_service\"}}"
+          "]},\"scopeSpans\":[{\"spans\":[{"
+          "\"traceId\":\"00000000000000000000000000000005\","
+          "\"spanId\":\"0000000000000005\","
+          "\"name\":\"victoria_stack_full_test_span\","
+          "\"kind\":1,"
+          "\"startTimeUnixNano\":\"$now\","
+          "\"endTimeUnixNano\":\"$now\""
+          "}]}]}]}\nJSON\n); "
+          "curl -sf -X POST -H 'Authorization: Bearer full-test-write-token' "
+          "-H 'Content-Type: application/json' --data-binary \"$payload\" "
+          "'http://127.0.0.1:4204/insert/opentelemetry/v1/traces'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf -H 'Authorization: Bearer full-test-read-token' "
+          "'http://127.0.0.1:4204/traces/select/jaeger/api/services' "
+          "| grep -q victoria_stack_full_test_service"
+      )
+
+      # At least one real MCP tool call, not just the initialize
+      # handshake -- confirmed live (mcp-victoriametrics is a stateful,
+      # session-based MCP server): initialize first to obtain a session
+      # ID, then tools/call against the real "query" tool, retrieving
+      # the exact metric this test itself wrote above through the
+      # write-tier token earlier.
+      machine.succeed(
+          "curl -sD /tmp/mcp-headers.txt -u admin:full-test-admin-password -X POST "
+          "'http://127.0.0.1:4204/mcp/metrics' -H 'Content-Type: application/json' "
+          "-H 'Accept: application/json, text/event-stream' "
+          "-d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":"
+          "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},"
+          "\"clientInfo\":{\"name\":\"full-stack-test\",\"version\":\"1\"}}}' "
+          "-o /tmp/mcp-init.json"
+      )
+      mcp_session_id = machine.succeed(
+          "grep -i mcp-session-id /tmp/mcp-headers.txt | sed 's/.*: //' | tr -d '\\r\\n'"
+      )
+      mcp_tool_call_body = (
+          '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":'
+          '{"name":"query","arguments":{"query":"victoria_stack_full_test_metric"}}}'
+      )
+      mcp_result = machine.succeed(
+          f"curl -sf -u admin:full-test-admin-password -X POST "
+          f"'http://127.0.0.1:4204/mcp/metrics' -H 'Content-Type: application/json' "
+          f"-H 'Accept: application/json, text/event-stream' "
+          f"-H 'Mcp-Session-Id: {mcp_session_id}' "
+          f"-d '{mcp_tool_call_body}'"
+      )
+      assert "victoria_stack_full_test_metric" in mcp_result, (
+          f"expected the MCP query tool's real result to contain the "
+          f"metric this test wrote: {mcp_result!r}"
+      )
+
       # Grafana reachable through nginx, datasources provisioned.
       # wait_until_succeeds, not succeed: Grafana's HTTP port opens
       # before its own startup migrations finish (confirmed directly --

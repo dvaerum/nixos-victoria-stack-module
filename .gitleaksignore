@@ -1,8 +1,13 @@
 docs/decisions/0021-vmauth-read-tier-allow-list.md:curl-auth-header:45
 docs/decisions/0021-vmauth-read-tier-allow-list.md:curl-auth-header:49
+tests/full.nix:curl-auth-header:102
+tests/full.nix:curl-auth-header:128
+tests/full.nix:curl-auth-header:133
 tests/full.nix:curl-auth-header:82
 tests/full.nix:curl-auth-header:87
-tests/full.nix:curl-auth-user:95
+tests/full.nix:curl-auth-user:145
+tests/full.nix:curl-auth-user:161
+tests/full.nix:curl-auth-user:175
 tests/grafana.nix:curl-auth-user:130
 tests/grafana.nix:curl-auth-user:160
 tests/grafana.nix:curl-auth-user:198

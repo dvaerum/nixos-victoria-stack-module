@@ -150,32 +150,24 @@ of this project's current scope.
 - [x] 0. SETUP: this file + ADRs, committed first
 - [x] 1. Scaffolding: flake.nix, CI workflows, LICENSE, empty module entrypoints
 - [x] 2. `assertions` test group (red first)
-- [~] 3. `storage`: metrics (implemented, eval-only checks green; 3
-      container-boot checks implemented but NOT locally verifiable --
-      this dev machine's Nix daemon lacks `uid-range` system feature;
-      needs `nix.settings.auto-allocate-uids` enabled on the host, or CI
-      verification once push access is restored. See
-      docs/decisions/0011-local-nspawn-verification-blocker.md)
-- [~] 4. `storage`: logs (same status as metrics -- implemented,
-      eval-only checks green, container-boot checks pending
-      docs/decisions/0011)
-- [~] 5. `storage`: traces (same status as metrics -- implemented,
-      eval-only checks green, container-boot checks pending
-      docs/decisions/0011)
-- [~] 6. `vmauth` (same status -- implemented, eval-only check green,
-      5 container-boot checks pending docs/decisions/0011)
-- [~] 7. `grafana` (implemented, 3 container-boot checks pending
-      docs/decisions/0011 -- no eval-only checks in this group, all 3
-      confirmed failing only for the known reason)
-- [~] 8. `nginx` (implemented, 2 container-boot checks pending
-      docs/decisions/0011)
-- [~] 9. `mcp`: 3 real buildGoModule packages built + wiring implemented
-      (2 container-boot checks pending docs/decisions/0011)
-- [~] 10. `victoriaCollector` (implemented, including the cross-container
-      metrics-roundtrip test; 3 container-boot checks pending
-      docs/decisions/0011)
-- [~] 11. `full` / `examples` assembly (implemented, 1 container-boot
-      check pending docs/decisions/0011)
+- [x] 3. `storage`: metrics (implemented; all checks, including
+      container-boot, confirmed genuinely green -- see Phase 34, which
+      resolved the uid-range blocker this entry originally noted)
+- [x] 4. `storage`: logs (same status as metrics)
+- [x] 5. `storage`: traces (same status as metrics)
+- [x] 6. `vmauth` (same status -- all 5 container-boot checks confirmed
+      green as of Phase 34)
+- [x] 7. `grafana` (all 3 container-boot checks confirmed green as of
+      Phase 34)
+- [x] 8. `nginx` (both container-boot checks confirmed green as of
+      Phase 34)
+- [x] 9. `mcp`: 3 real buildGoModule packages built + wiring implemented
+      (both container-boot checks confirmed green as of Phase 34)
+- [x] 10. `victoriaCollector` (including the cross-container
+      metrics-roundtrip test; all 3 container-boot checks confirmed
+      green as of Phase 34)
+- [x] 11. `full` / `examples` assembly (the 1 container-boot check
+      confirmed green as of Phase 34)
 - [x] 12. docs: `generate-doc.nix` + `docs/options.md`, README
 - [x] 13. `update-mcp-packages.yml` workflow
 - [x] 14. Two independent fresh-agent critical reviews

@@ -1,5 +1,16 @@
 name: CI
 
+# cancel-in-progress: true, unlike the push-capable workflows (0018,
+# update-docs.yml) -- this job only ever reads/checks, never pushes, so
+# there's no in-flight write a newer run could race or clobber.
+# Superseding an older run with a newer commit's result is strictly
+# better: cheaper (no wasted CI minutes on a result nobody will read)
+# and faster (the newer run's result is what actually matters for a
+# PR/branch).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main, master]

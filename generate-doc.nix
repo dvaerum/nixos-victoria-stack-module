@@ -1,5 +1,10 @@
-# Just run this nix program with: nix-build generate-doc.nix
-
+# Run via the flake, not directly: `nix build .#optionsDoc` (what
+# update-docs.yml actually does) -- that resolves `pkgs` from this
+# project's own pinned flake.lock nixpkgs. The `pkgs ? import <nixpkgs>
+# {}` default below only exists as a fallback for a bare
+# `nix-build generate-doc.nix` invocation outside the flake, which pulls
+# from NIX_PATH/channels instead and is NOT what produces the real,
+# reproducible docs/options.md CI commits.
 {
   pkgs ? import <nixpkgs> { },
   ...
