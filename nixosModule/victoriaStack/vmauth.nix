@@ -77,6 +77,11 @@ let
   openIngestPathsFile = pkgs.writeText "vmauth-open-ingest-paths.json" (
     builtins.toJSON cfg.openIngestPaths
   );
+  # Deliberately NEVER cfg.openIngestPaths -- write-tier bearer tokens are
+  # a credentialed tier (docs/decisions/0003) and must stay reachable
+  # regardless of how the unauthenticated/open door is sized. Always
+  # derived straight from autoOpenIngestPaths; see docs/decisions/0014.
+  writeUrlMapFile = pkgs.writeText "vmauth-write-url-map.json" (builtins.toJSON autoOpenIngestPaths);
 
   # Renders /run/vmauth/config.json at service start from: the two
   # Nix-known (non-secret) url_map JSON files above, plus whichever of
@@ -109,7 +114,7 @@ let
 
       if [ -f "$CREDENTIALS_DIRECTORY/write-tokens" ]; then
         write_tokens_json=$(yq -o=json '.tokens' "$CREDENTIALS_DIRECTORY/write-tokens")
-        users_json=$(jq --argjson tokens "$write_tokens_json" --slurpfile urlmap "$OPEN_INGEST_PATHS_FILE" \
+        users_json=$(jq --argjson tokens "$write_tokens_json" --slurpfile urlmap "$WRITE_URL_MAP_FILE" \
           '. + ($tokens | map({bearer_token: ., url_map: $urlmap[0]}))' <<<"$users_json")
       fi
 
@@ -142,6 +147,18 @@ in
     );
     services.victoriaStack.vmauth.openIngestPaths = lib.mkDefault autoOpenIngestPaths;
 
+    # requireAuthForWrites = false already grants unauthenticated write
+    # access to every enabled backend's ingest path -- a write-tier token
+    # configured in that same state provides no additional protection
+    # (two settings that genuinely contradict each other, not a generic
+    # "you might not understand security" nag -- docs/decisions/0014).
+    warnings = lib.optional (!cfg.requireAuthForWrites && cfg.writeTokensFile != null) ''
+      services.victoriaStack.vmauth.writeTokensFile is set, but
+      requireAuthForWrites = false already permits unauthenticated writes --
+      the configured write tokens provide no additional protection for the
+      write path in this configuration.
+    '';
+
     systemd.services.vmauth = {
       description = "vmauth -- auth/routing gateway in front of VictoriaMetrics/Logs/Traces";
       after = [
@@ -161,6 +178,7 @@ in
         Environment = [
           "READ_URL_MAP_FILE=${readUrlMapFile}"
           "OPEN_INGEST_PATHS_FILE=${openIngestPathsFile}"
+          "WRITE_URL_MAP_FILE=${writeUrlMapFile}"
           "REQUIRE_AUTH_FOR_WRITES=${lib.boolToString cfg.requireAuthForWrites}"
         ];
 

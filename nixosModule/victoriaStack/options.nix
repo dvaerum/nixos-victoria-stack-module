@@ -256,12 +256,15 @@ in
         type = types.listOf types.attrs;
         default = [ ];
         description = ''
-          vmauth `url_map` entries for the unauthenticated-write case
+          vmauth `url_map` entries for the unauthenticated-write case only
           (`requireAuthForWrites = false`). Auto-derived from whichever of
-          metrics/logs/traces is enabled; override to `[ ]` to close
-          writes entirely even with `requireAuthForWrites = false` (has no
-          effect when `requireAuthForWrites = true`, since those paths
-          require the write-tier credential regardless of this list).
+          metrics/logs/traces is enabled; override to `[ ]` to close the
+          anonymous write door entirely, even with `requireAuthForWrites
+          = false`. Has NO effect on write-tier bearer tokens
+          (`writeTokensFile`) either way -- those always route via the
+          same auto-derivation, independent of this option, since a
+          credentialed tier must stay reachable regardless of how the
+          anonymous door is sized (docs/decisions/0003, 0014).
         '';
       };
 

@@ -6,7 +6,12 @@ let
   module = nixosModule.nixosModules.victoriaStack;
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) mkNoAssertionsFireCheck evalWith;
+  inherit (testLib)
+    mkNoAssertionsFireCheck
+    mkWarningFiresCheck
+    mkNoWarningsCheck
+    evalWith
+    ;
 
   # Plain test fixtures -- not sops-rendered (this module's own options are
   # secrets-backend-agnostic, see docs/decisions/0008; sops-nix integration
@@ -26,6 +31,42 @@ let
 in
 {
   # --- eval-only ---
+
+  write-tier-tokens-use-auto-derived-ingest-map-regardless-of-override =
+    pkgs.runCommand "vmauth-write-tier-ignores-openingestpaths-override" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              # The one guard with no prior test coverage (docs/decisions/0013
+              # review, finding #4): overriding this to [] must NOT also starve
+              # authenticated write-tier tokens -- it only ever sizes the
+              # unauthenticated/open door. See docs/decisions/0014.
+              vmauth.openIngestPaths = [ ];
+              vmauth.writeTokensFile = "${writeTokensFixture}";
+            };
+          };
+          envVars = evaluated.config.systemd.services.vmauth.serviceConfig.Environment;
+          writeUrlMapVar = lib.findFirst (lib.hasPrefix "WRITE_URL_MAP_FILE=") null envVars;
+          parsed =
+            if writeUrlMapVar == null then
+              null
+            else
+              builtins.fromJSON (builtins.readFile (lib.removePrefix "WRITE_URL_MAP_FILE=" writeUrlMapVar));
+        in
+        if writeUrlMapVar != null && parsed != [ ] then
+          "echo OK > $out"
+        else
+          throw ''
+            write-tier bearer tokens must route via an always-on ingest map
+            derived from autoOpenIngestPaths, independent of
+            services.victoriaStack.vmauth.openIngestPaths's own override --
+            WRITE_URL_MAP_FILE was ${
+              if writeUrlMapVar == null then "missing entirely" else "empty despite metrics.enable = true"
+            }, even though openIngestPaths was overridden to [] in this test.
+          ''
+      );
 
   secret-options-are-plain-strings-not-nix-paths =
     pkgs.runCommand "vmauth-secret-options-are-plain-strings-not-nix-paths" { }
@@ -74,6 +115,32 @@ in
       # with nginx (which asserts vmauth.enable) in valid-configuration-no-assertions
       # already (tests/assertions.nix), so this check instead confirms the
       # auto-enabled value directly.
+    };
+  };
+
+  redundant-write-token-while-writes-already-open-warns = mkWarningFiresCheck {
+    name = "redundant-write-token-while-writes-already-open-warns";
+    expectMessageSubstring = "writeTokensFile";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          requireAuthForWrites = false;
+          writeTokensFile = "${writeTokensFixture}";
+        };
+      };
+    };
+  };
+
+  # Control: writeTokensFile alone (requireAuthForWrites left at its true
+  # default) is the normal, non-redundant configuration -- must NOT warn.
+  write-token-without-open-writes-does-not-warn = mkNoWarningsCheck {
+    name = "write-token-without-open-writes-does-not-warn";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
+      };
     };
   };
 
