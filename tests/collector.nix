@@ -666,4 +666,59 @@ in
       assert 'otelcol.exporter.otlphttp "traces"' in config_text
     '';
   };
+
+  # Phase 40: same-host ordering fix -- both services that export to a
+  # (possibly co-located) vmauth gateway now carry after/wants on it.
+  # A plain unit name is a safe no-op on a collector-only host where
+  # vmauth.service doesn't exist at all (confirmed empirically: systemd
+  # silently ignores an After=/Wants= target with no matching unit).
+  journal-upload-and-alloy-order-after-vmauth =
+    pkgs.runCommand "journal-upload-and-alloy-order-after-vmauth" { }
+      (
+        let
+          evaluated = evalWithCollector {
+            services.victoriaCollector = {
+              logs.enable = true;
+              metrics.enable = true;
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+            };
+          };
+          journalUpload = evaluated.config.systemd.services.systemd-journal-upload;
+          alloy = evaluated.config.systemd.services.alloy;
+          checks = {
+            "journal-upload after vmauth" = lib.elem "vmauth.service" journalUpload.after;
+            "journal-upload wants vmauth" = lib.elem "vmauth.service" journalUpload.wants;
+            "alloy after vmauth" = lib.elem "vmauth.service" alloy.after;
+            "alloy wants vmauth" = lib.elem "vmauth.service" alloy.wants;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "missing same-host ordering: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # Phase 40: cross-host fix -- a collector with an intermittent network
+  # (e.g. a laptop) must retry systemd-journal-upload forever, never hit
+  # a permanent start-limit stop requiring a manual `systemctl
+  # reset-failed`. startLimitIntervalSec = 0 disables that ceiling
+  # entirely (systemd.service(5)).
+  journal-upload-start-limit-disabled = pkgs.runCommand "journal-upload-start-limit-disabled" { } (
+    let
+      evaluated = evalWithCollector {
+        services.victoriaCollector = {
+          logs.enable = true;
+          writeEndpoint = "http://127.0.0.1:4204";
+          hostType = "server";
+        };
+      };
+      startLimit = evaluated.config.systemd.services.systemd-journal-upload.startLimitIntervalSec;
+    in
+    if startLimit == 0 then
+      "echo OK > $out"
+    else
+      throw "expected systemd-journal-upload.service's startLimitIntervalSec to be 0 (disabled), got ${toString startLimit}"
+  );
 }

@@ -103,6 +103,19 @@ in
       # no reason to restart it.
       systemd.services.alloy.restartTriggers = [ configAlloyText ];
 
+      # Same-host ordering fix: if victoriaStack is composed on this same
+      # host (the all-in-one single-machine deployment shape), vmauth
+      # could otherwise still be starting (or not yet listening) when
+      # alloy's own first export attempt fires. A plain unit name here is
+      # a safe no-op on a collector-only host where no such unit exists
+      # at all -- systemd silently ignores an After=/Wants= target that
+      # isn't defined, confirmed behavior, not assumed. Cross-host
+      # collector/stack splits (this project's other real deployment
+      # shape) get no benefit from this -- see the startLimitIntervalSec
+      # fix below for that case instead.
+      systemd.services.alloy.after = [ "vmauth.service" ];
+      systemd.services.alloy.wants = [ "vmauth.service" ];
+
       # DynamicUser implies ProtectSystem=strict (confirmed via
       # systemd.exec(5)), which blocks writes anywhere not explicitly
       # allow-listed via StateDirectory=/RuntimeDirectory=/
@@ -205,6 +218,26 @@ in
       systemd.services.systemd-journal-upload.requires = lib.mkIf (cfg.writeTokenFile != null) [
         "victoria-collector-journal-upload-token.service"
       ];
+
+      # Same-host ordering fix, same reasoning as alloy's above -- a safe
+      # no-op on a collector-only host where vmauth.service doesn't exist.
+      systemd.services.systemd-journal-upload.after = [ "vmauth.service" ];
+      systemd.services.systemd-journal-upload.wants = [ "vmauth.service" ];
+
+      # Cross-host fix: a collector on a laptop or anything else with an
+      # intermittent network has no ordering fix available -- the gateway
+      # genuinely isn't reachable yet, for an unbounded amount of time,
+      # not a brief same-host startup race. systemd's own default
+      # StartLimitIntervalSec/StartLimitBurst (nixpkgs' systemd-journal-
+      # upload.service ships its own escalating Restart=/RestartSec=
+      # backoff up to 60s, untouched here) would eventually hit the
+      # permanent-stop ceiling and require a manual `systemctl
+      # reset-failed` -- wrong for a host that's expected to go offline
+      # and come back on its own schedule. 0 disables the ceiling
+      # entirely (systemd.service(5): "If set to 0, the limiting of start
+      # rate is disabled"), confirmed a real top-level NixOS option, not
+      # hidden in unitConfig.
+      systemd.services.systemd-journal-upload.startLimitIntervalSec = 0;
     })
   ];
 }
