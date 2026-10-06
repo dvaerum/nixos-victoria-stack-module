@@ -16,12 +16,20 @@ let
   # `system.stateVersion`, bootloader, etc.) -- callers filter to just our
   # own module's own messages (all of which start with
   # "services.victoriaStack") rather than demanding a literal empty list.
-  evalWith =
-    extraModule:
+  #
+  # Generalized to accept which module tree(s) to evaluate against --
+  # previously hardcoded to victoriaStack only, which meant
+  # tests/collector.nix had to roll its own near-identical ad-hoc harness
+  # the moment it needed an eval-only check (confirmed real drift, not
+  # hypothetical: two parallel copies of this exact function existed
+  # before this unification). `evalWith`/`evalWithCollector` below are
+  # both just `mkEvalWith` applied to a different base module list --
+  # one definition, not two to keep in sync by hand.
+  mkEvalWith =
+    baseModules: extraModule:
     import (pkgs.path + "/nixos/lib/eval-config.nix") {
       inherit (pkgs) system;
-      modules = [
-        nixosModule.nixosModules.victoriaStack
+      modules = baseModules ++ [
         extraModule
         {
           # Silences the stateVersion warning noise, nothing more --
@@ -30,6 +38,9 @@ let
         }
       ];
     };
+
+  evalWith = mkEvalWith [ nixosModule.nixosModules.victoriaStack ];
+  evalWithCollector = mkEvalWith [ nixosModule.nixosModules.victoriaCollector ];
 
   ownMessages = lib.filter (lib.hasInfix "services.victoriaStack");
 
@@ -114,6 +125,7 @@ in
 {
   inherit
     evalWith
+    evalWithCollector
     mkAssertionFiresCheck
     mkNoAssertionsFireCheck
     mkWarningFiresCheck

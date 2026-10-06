@@ -5,27 +5,19 @@ let
   stackModule = nixosModule.nixosModules.victoriaStack;
   collectorModule = nixosModule.nixosModules.victoriaCollector;
 
+  testLib = import ./lib.nix { inherit pkgs nixosModule; };
+  # Shared with every other test group (Phase 30 unification) -- this
+  # file used to roll its own near-identical ad-hoc eval harness here,
+  # confirmed real drift from tests/lib.nix's victoriaStack-only
+  # evalWith, not hypothetical.
+  inherit (testLib) evalWithCollector;
+
   writeTokensFixture = pkgs.writeText "collector-test-write-tokens.yaml" ''
     tokens:
       - collector-test-write-token # test fixture, not real
   '';
 
   writeTokenFixture = pkgs.writeText "collector-test-write-token" "collector-test-write-token";
-
-  # Reusable eval-only harness for the collector module tree -- pure eval,
-  # no container boot needed. tests/lib.nix's own evalWith hardcodes the
-  # victoriaStack module only (Phase 30 generalizes this); this mirrors
-  # the same shape for victoriaCollector until that unification lands.
-  evalCollector =
-    extraModule:
-    import (pkgs.path + "/nixos/lib/eval-config.nix") {
-      inherit (pkgs) system;
-      modules = [
-        collectorModule
-        extraModule
-        { system.stateVersion = lib.trivial.release; }
-      ];
-    };
 
   # Pure eval, no container boot needed: confirms the https:// branch of
   # journaldWriteEndpoint actually renders the dummy-cert + CA-bundle
@@ -203,7 +195,7 @@ in
     pkgs.runCommand "hostType-applies-to-traces" { }
       (
         let
-          evaluated = evalCollector {
+          evaluated = evalWithCollector {
             services.victoriaCollector = {
               traces.enable = true;
               # metrics/logs deliberately left disabled -- isolates the
@@ -228,7 +220,7 @@ in
     pkgs.runCommand "alloy-tls-and-retry-inert-unless-configured" { }
       (
         let
-          unset = evalCollector {
+          unset = evalWithCollector {
             services.victoriaCollector = {
               metrics.enable = true;
               traces.enable = true;
@@ -236,7 +228,7 @@ in
               hostType = "server";
             };
           };
-          set = evalCollector {
+          set = evalWithCollector {
             services.victoriaCollector = {
               metrics.enable = true;
               traces.enable = true;
@@ -283,7 +275,7 @@ in
     pkgs.runCommand "queue-directory-outside-statedir-gets-readwritepaths" { }
       (
         let
-          evaluated = evalCollector {
+          evaluated = evalWithCollector {
             services.victoriaCollector = {
               metrics.enable = true;
               writeEndpoint = "http://127.0.0.1:4204";
@@ -308,7 +300,7 @@ in
     pkgs.runCommand "alloy-write-token-oneshot-does-not-run-as-root" { }
       (
         let
-          evaluated = evalCollector {
+          evaluated = evalWithCollector {
             services.victoriaCollector = {
               metrics.enable = true;
               writeEndpoint = "http://127.0.0.1:4204";
