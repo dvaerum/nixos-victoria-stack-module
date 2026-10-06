@@ -116,6 +116,20 @@ let
         '';
       };
 
+      effectiveUrl = mkOption {
+        type = types.str;
+        internal = true;
+        description = ''
+          Internal: the base URL consumers (vmauth, Grafana) actually
+          connect to for this backend. Always `http://''${listenAddress}`
+          today (set via mkDefault in ${name}.nix), funneled through one
+          option specifically so that external/remote-backend support
+          (docs/decisions/0019 -- explicitly out of scope for now) only
+          ever needs to override ONE definition per service later,
+          instead of every consumer call site across the module tree.
+        '';
+      };
+
       retentionPeriod = mkOption {
         type = types.nullOr types.str;
         default = null;

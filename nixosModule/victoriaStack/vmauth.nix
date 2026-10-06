@@ -16,21 +16,27 @@ let
   # itself strips nothing; whatever fronts vmauth, e.g. nginx, is
   # responsible for any further prefix stripping of its own, same
   # separation of concerns as deployment-a's real deployment).
+  #
+  # Read via each backend's own effectiveUrl (docs/decisions/0019), not
+  # listenAddress directly -- MCP's own listenAddress stays a direct
+  # read: those proxies are tightly coupled to a co-located backend by
+  # construction, not a meaningful target for future remote-backend
+  # support the way the 3 storage services are.
   readUrlMap =
     lib.optional topCfg.metrics.enable {
       src_paths = [ "/metrics/.*" ];
       drop_src_path_prefix_parts = 1;
-      url_prefix = "http://${topCfg.metrics.listenAddress}/";
+      url_prefix = "${topCfg.metrics.effectiveUrl}/";
     }
     ++ lib.optional topCfg.logs.enable {
       src_paths = [ "/logs/.*" ];
       drop_src_path_prefix_parts = 1;
-      url_prefix = "http://${topCfg.logs.listenAddress}/";
+      url_prefix = "${topCfg.logs.effectiveUrl}/";
     }
     ++ lib.optional topCfg.traces.enable {
       src_paths = [ "/traces/.*" ];
       drop_src_path_prefix_parts = 1;
-      url_prefix = "http://${topCfg.traces.listenAddress}/";
+      url_prefix = "${topCfg.traces.effectiveUrl}/";
     }
     # MCP servers: drop 2 parts ("mcp" + the service name) so the backend
     # sees exactly "/mcp" -- the one fixed path every mcp-victoria* binary
@@ -62,15 +68,15 @@ let
   autoOpenIngestPaths =
     lib.optional topCfg.metrics.enable {
       src_paths = [ "/opentelemetry.*" ];
-      url_prefix = "http://${topCfg.metrics.listenAddress}/";
+      url_prefix = "${topCfg.metrics.effectiveUrl}/";
     }
     ++ lib.optional topCfg.logs.enable {
       src_paths = [ "/insert/journald.*" ];
-      url_prefix = "http://${topCfg.logs.listenAddress}/";
+      url_prefix = "${topCfg.logs.effectiveUrl}/";
     }
     ++ lib.optional topCfg.traces.enable {
       src_paths = [ "/insert/opentelemetry/v1/traces.*" ];
-      url_prefix = "http://${topCfg.traces.listenAddress}/";
+      url_prefix = "${topCfg.traces.effectiveUrl}/";
     };
 
   readUrlMapFile = pkgs.writeText "vmauth-read-url-map.json" (builtins.toJSON readUrlMap);

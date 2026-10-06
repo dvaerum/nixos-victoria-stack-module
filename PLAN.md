@@ -120,6 +120,21 @@ exposed directly via its own `listenAddress` when vmauth is off).
 Vendored Grafana dashboards, default alerting rules, migrating
 `deployment-a`/`deployment-b` onto the new module.
 
+**External/remote backends** (docs/decisions/0019): `vmauth`/`grafana`/
+`nginx` assume every enabled signal's storage service is co-located on
+the same host -- there is no way to point any of them at an
+externally-hosted Victoria* backend instead. Not ruled out forever;
+revisitable if someone needs/commits it. A structural seam
+(`effectiveUrl`, docs/decisions/0019) is already in place so adding this
+later only touches one definition per service, not every consumer call
+site.
+
+**Multi-instance/clustering** (docs/decisions/0019): every storage
+service only ever builds single-node CLI flags -- no
+`vminsert`/`vmselect`/`vmstorage` cluster-component wiring exists or is
+planned. Single-node only, today; not ruled out forever, just not part
+of this project's current scope.
+
 ## Task list / phase order
 
 - [x] 0. SETUP: this file + ADRs, committed first

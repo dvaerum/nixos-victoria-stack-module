@@ -130,6 +130,28 @@ in
           throw "port defaults drifted from docs/decisions/0017's sequential scheme: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
+  # docs/decisions/0019's structural seam: consumers (vmauth, Grafana)
+  # must read effectiveUrl, never listenAddress directly -- this is the
+  # one place a future remoteUrl feature would need to override.
+  effective-url-is-internal-and-derived-from-listen-address =
+    pkgs.runCommand "effective-url-is-internal-and-derived" { }
+      (
+        let
+          evaluated = evalWith { services.victoriaStack.metrics.enable = true; };
+          opt = evaluated.options.services.victoriaStack.metrics.effectiveUrl;
+          checks = {
+            "marked internal (excluded from generated docs)" = opt.internal or false;
+            "derived from listenAddress by default" =
+              evaluated.config.services.victoriaStack.metrics.effectiveUrl == "http://127.0.0.1:4201";
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "effectiveUrl structural seam broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
   metrics-hardening-profile-and-readiness = mkHardeningCheck {
     name = "metrics-hardening-profile-and-readiness";
     serviceName = "victoriametrics";

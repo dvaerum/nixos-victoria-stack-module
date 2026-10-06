@@ -14,21 +14,21 @@ let
       name = "VictoriaMetrics";
       type = "victoriametrics-metrics-datasource";
       uid = "victoriametrics-ds";
-      url = "http://${topCfg.metrics.listenAddress}";
+      url = topCfg.metrics.effectiveUrl; # docs/decisions/0019
       isDefault = true;
     }
     ++ lib.optional topCfg.logs.enable {
       name = "VictoriaLogs";
       type = "victoriametrics-logs-datasource";
       uid = "victorialogs-ds";
-      url = "http://${topCfg.logs.listenAddress}";
+      url = topCfg.logs.effectiveUrl;
       isDefault = false;
     }
     ++ lib.optional topCfg.traces.enable {
       name = "VictoriaTraces";
       type = "jaeger";
       uid = "victoriatraces-ds";
-      url = "http://${topCfg.traces.listenAddress}/select/jaeger";
+      url = "${topCfg.traces.effectiveUrl}/select/jaeger";
       isDefault = false;
     };
 in

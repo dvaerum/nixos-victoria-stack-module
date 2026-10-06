@@ -14,6 +14,9 @@ in
     lib.mkMerge [
       {
         services.victoriaStack.logs.package = lib.mkDefault pkgs.victorialogs;
+        # docs/decisions/0019's structural seam -- consumers (vmauth,
+        # Grafana) read this, never cfg.listenAddress directly.
+        services.victoriaStack.logs.effectiveUrl = lib.mkDefault "http://${cfg.listenAddress}";
       }
 
       {
