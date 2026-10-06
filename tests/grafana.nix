@@ -117,4 +117,50 @@ in
       assert "jaeger" not in datasources
     '';
   };
+
+  # Reverse of the above: metrics disabled, logs+traces enabled. isDefault
+  # is hardcoded true only on the metrics datasource spec
+  # (nixosModule/victoriaStack/grafana.nix) -- when metrics is absent, no
+  # datasource is marked default at all. Previously untested whether that
+  # combination still provisions correctly (declarativePlugins only pulls
+  # in the metrics/logs plugins conditionally; this confirms Grafana
+  # starts cleanly and both remaining datasources are present without the
+  # metrics plugin/datasource in the mix).
+  logs-and-traces-datasources-without-metrics = pkgs.testers.nixosTest {
+    name = "victoria-stack-grafana-logs-and-traces-without-metrics";
+
+    containers.machine = {
+      imports = [
+        module
+        grafanaConsumerConfig
+      ];
+      services.victoriaStack = {
+        # metrics deliberately left disabled.
+        logs.enable = true;
+        traces.enable = true;
+        grafana.enable = true;
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("grafana.service")
+      machine.wait_for_open_port(3000)
+
+      datasources = machine.succeed(
+          "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"
+      )
+      assert "victoriametrics-metrics-datasource" not in datasources
+      assert "victoriametrics-logs-datasource" in datasources
+      assert "jaeger" in datasources
+
+      # Neither remaining datasource is marked default -- confirms this
+      # combination doesn't silently promote one of them, and that
+      # Grafana tolerates having zero default datasources.
+      assert '"isDefault":true' not in datasources, (
+          "expected no datasource marked default when metrics is disabled "
+          "(isDefault is hardcoded on the metrics spec only)"
+      )
+    '';
+  };
 }

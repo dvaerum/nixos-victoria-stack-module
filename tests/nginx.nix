@@ -188,4 +188,89 @@ in
       )
     '';
   };
+
+  # Previously only 2 of the 4 domain x grafana.enable combinations were
+  # covered (default-domain+grafana-off implicitly via other tests, and
+  # default-domain+grafana-on via nginx-proxies-victoria-and-grafana-subpaths
+  # above). The critical `//`-clobbering bug found during the grill-me
+  # review (docs/decisions/0016) specifically manifested only when BOTH
+  # a custom option AND grafana.enable were set together -- so the
+  # remaining 2 combinations are not redundant with the ones above.
+  nginx-custom-domain-with-grafana-enabled = pkgs.testers.nixosTest {
+    name = "victoria-stack-nginx-custom-domain-with-grafana";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana.enable = true;
+        nginx = {
+          enable = true;
+          domain = "victoria-stack-test.example.com";
+        };
+        vmauth.requireAuthForWrites = false;
+      };
+      services.grafana = {
+        enable = true;
+        settings.security.secret_key = "$__file{${secretKeyFixture}}";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("nginx.service")
+      machine.wait_for_unit("grafana.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(80)
+
+      config_dump = machine.succeed("nginx -T 2>&1")
+      assert "victoria-stack-test.example.com" in config_dump, (
+          "expected the configured domain to appear in nginx's own rendered config"
+      )
+
+      # Both locations must still coexist -- the exact combination that
+      # triggered the `//`-clobbering bug (a custom option alongside
+      # grafana.enable = true).
+      machine.succeed("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
+      machine.succeed(
+          "curl -sf -X POST --data-binary 'victoria_stack_nginx_test_metric 1' "
+          "'http://127.0.0.1:80/victoria/opentelemetry'"
+      )
+    '';
+  };
+
+  nginx-grafana-disabled-has-no-grafana-location = pkgs.testers.nixosTest {
+    name = "victoria-stack-nginx-grafana-disabled-no-location";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        nginx.enable = true;
+        # grafana.enable left at its default (false).
+        vmauth.requireAuthForWrites = false;
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("nginx.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(80)
+
+      # /victoria/ must still work on its own (no grafana.nix location
+      # merged in to clobber or interfere with it).
+      machine.succeed(
+          "curl -sf -X POST --data-binary 'victoria_stack_nginx_test_metric 1' "
+          "'http://127.0.0.1:80/victoria/opentelemetry'"
+      )
+
+      # /grafana/ must not exist at all when grafana.enable = false --
+      # nginx should 404, not proxy to a Grafana that was never started.
+      status = machine.succeed(
+          "curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:80/grafana/login'"
+      )
+      assert status == "404", f"expected 404 for /grafana/ when grafana.enable = false, got {status!r}"
+    '';
+  };
 }

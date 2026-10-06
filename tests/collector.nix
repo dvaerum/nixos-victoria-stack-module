@@ -370,4 +370,91 @@ in
       assert "/var/lib/alloy/custom-queue" in config_text
     '';
   };
+
+  # The test above only ever set both queue options together -- never
+  # confirmed either is independently inert/effective on its own (the
+  # other staying at its documented default), nor that the option
+  # actually reaches the traces exporter's own sending_queue block (a
+  # second, separate occurrence in config.alloy.nix -- the metrics
+  # exporter and traces exporter each render their own).
+  queue-max-size-bytes-alone-takes-effect = pkgs.testers.nixosTest {
+    name = "victoria-collector-queue-max-size-bytes-alone";
+
+    containers.collector = {
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        writeEndpoint = "http://127.0.0.1:4204";
+        hostType = "server";
+        queue.maxSizeBytes = 999999999;
+        # queue.directory left at its default.
+      };
+    };
+
+    testScript = ''
+      start_all()
+      collector.wait_for_unit("alloy.service")
+      config_text = collector.succeed("cat /etc/alloy/config.alloy")
+      assert "999999999" in config_text
+      assert "/var/lib/alloy/queue" in config_text, (
+          "expected queue.directory's default to still render when only "
+          "maxSizeBytes is overridden"
+      )
+    '';
+  };
+
+  queue-directory-alone-takes-effect = pkgs.testers.nixosTest {
+    name = "victoria-collector-queue-directory-alone";
+
+    containers.collector = {
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        writeEndpoint = "http://127.0.0.1:4204";
+        hostType = "server";
+        queue.directory = "/var/lib/alloy/directory-only-queue";
+        # queue.maxSizeBytes left at its default (1GiB).
+      };
+    };
+
+    testScript = ''
+      start_all()
+      collector.wait_for_unit("alloy.service")
+      config_text = collector.succeed("cat /etc/alloy/config.alloy")
+      assert "/var/lib/alloy/directory-only-queue" in config_text
+      assert "1073741824" in config_text, (
+          "expected queue.maxSizeBytes's default (1GiB) to still render "
+          "when only directory is overridden"
+      )
+    '';
+  };
+
+  queue-option-applies-to-traces-exporter-too = pkgs.testers.nixosTest {
+    name = "victoria-collector-queue-option-traces-exporter";
+
+    containers.collector = {
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        traces.enable = true;
+        writeEndpoint = "http://127.0.0.1:4204";
+        hostType = "server";
+        queue.maxSizeBytes = 555555555;
+      };
+    };
+
+    testScript = ''
+      start_all()
+      collector.wait_for_unit("alloy.service")
+      config_text = collector.succeed("cat /etc/alloy/config.alloy")
+      # Both exporters render their own sending_queue block from the same
+      # cfg.queue.maxSizeBytes -- with only traces enabled, this confirms
+      # the traces exporter's own occurrence picks it up too, not just
+      # the metrics one exercised by the tests above.
+      assert config_text.count("555555555") >= 1, (
+          "expected the traces exporter's sending_queue to render the "
+          "overridden queue.maxSizeBytes"
+      )
+      assert 'otelcol.exporter.otlphttp "traces"' in config_text
+    '';
+  };
 }

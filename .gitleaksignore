@@ -15,6 +15,7 @@ tests/vmauth.nix:curl-auth-user:561
 tests/grafana.nix:curl-auth-user:51
 tests/grafana.nix:curl-auth-user:83
 tests/grafana.nix:curl-auth-user:113
+tests/grafana.nix:curl-auth-user:151
 tests/full.nix:curl-auth-header:70
 tests/full.nix:curl-auth-header:75
 tests/full.nix:curl-auth-user:81
