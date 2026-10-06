@@ -465,6 +465,113 @@ in
     '';
   };
 
+  # Reverse of write_token_cannot_read above, and the admin-password
+  # equivalent of both -- renderConfig only ever gives the admin user
+  # READ_URL_MAP_FILE (nixosModule/victoriaStack/vmauth.nix), so neither
+  # a read-tier token nor the admin Basic Auth credential should be able
+  # to reach a write path. Previously only the write->read direction was
+  # tested, not read->write or admin->write.
+  read-token-and-admin-password-cannot-write = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-read-and-admin-cannot-write";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          readTokensFile = "${readTokensFixture}";
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+
+      machine.fail(
+          "curl -sf -H 'Authorization: Bearer read-token-one' "
+          "-X POST --data-binary 'victoria_stack_vmauth_test_metric 1' "
+          "'http://127.0.0.1:4204/opentelemetry'"
+      )
+      machine.fail(
+          "curl -sf -u admin:admin-password-value "
+          "-X POST --data-binary 'victoria_stack_vmauth_test_metric 1' "
+          "'http://127.0.0.1:4204/opentelemetry'"
+      )
+
+      # Confirm both credentials still work on their actual intended
+      # (read) path -- the write rejection above isn't masking a config
+      # that broke reads entirely.
+      machine.succeed(
+          "curl -sf -H 'Authorization: Bearer read-token-one' "
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+      )
+      machine.succeed(
+          "curl -sf -u admin:admin-password-value "
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+      )
+    '';
+  };
+
+  # All 3 credential tiers configured simultaneously -- each individual
+  # tier is tested in isolation elsewhere, but never together in one
+  # config, which is the realistic production shape (docs/decisions/0003
+  # describes exactly this 3-tier setup).
+  all-three-credential-tiers-coexist = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-all-three-tiers-coexist";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          readTokensFile = "${readTokensFixture}";
+          writeTokensFile = "${writeTokensFixture}";
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+
+      # Each tier's own route succeeds...
+      machine.succeed(
+          "curl -sf -u admin:admin-password-value "
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+      )
+      machine.succeed(
+          "curl -sf -H 'Authorization: Bearer read-token-one' "
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+      )
+      machine.succeed(
+          "curl -sf -H 'Authorization: Bearer write-token-one' "
+          "-X POST --data-binary 'victoria_stack_vmauth_all_tiers_test_metric 1' "
+          "'http://127.0.0.1:4204/opentelemetry'"
+      )
+
+      # ...and no tier can reach outside its own scope, confirming the 3
+      # tiers don't interfere with or widen each other when all present
+      # at once.
+      machine.fail(
+          "curl -sf -u admin:admin-password-value "
+          "-X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
+      )
+      machine.fail(
+          "curl -sf -H 'Authorization: Bearer read-token-one' "
+          "-X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
+      )
+      machine.fail(
+          "curl -sf -H 'Authorization: Bearer write-token-one' "
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+      )
+    '';
+  };
+
   no-op-without-any-backend-enabled = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-no-op-without-backend";
 

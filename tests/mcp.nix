@@ -184,6 +184,10 @@ in
       services.victoriaStack = {
         metrics.enable = true;
         metrics.mcp.enable = true;
+        logs.enable = true;
+        logs.mcp.enable = true;
+        traces.enable = true;
+        traces.mcp.enable = true;
         vmauth.requireAuthForWrites = false;
       };
     };
@@ -191,16 +195,36 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("mcp-victoriametrics.service")
+      machine.wait_for_unit("mcp-victorialogs.service")
+      machine.wait_for_unit("mcp-victoriatraces.service")
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
 
-      # Reachable through vmauth's /mcp/metrics route (no trailing slash,
-      # per the MCP binary's own fixed /mcp path).
-      machine.succeed("curl -sf -X POST 'http://127.0.0.1:4204/mcp/metrics' -H 'Content-Type: application/json' -d '{}' || true")
-      # The MCP server's own listenAddress stays loopback-only by default
+      # Reachable through vmauth's /mcp/<service> routes (no trailing
+      # slash, per each MCP binary's own fixed /mcp path). A malformed
+      # JSON-RPC body ({}) is expected to get a 4xx from the MCP server
+      # itself -- the assertion that matters is that vmauth's routing
+      # actually proxies through to a live backend (any HTTP status code
+      # at all) rather than failing at the vmauth hop (curl exit 7,
+      # reported as http_code "000"). Previously this used `|| true`,
+      # which discarded curl's result entirely and asserted nothing.
+      for route in ["metrics", "logs", "traces"]:
+          http_code = machine.succeed(
+              "curl -s -o /dev/null -w '%{http_code}' -X POST "
+              f"'http://127.0.0.1:4204/mcp/{route}' "
+              "-H 'Content-Type: application/json' -d '{}'"
+          )
+          assert http_code != "000", (
+              f"/mcp/{route} through vmauth did not reach a backend "
+              f"(curl could not connect), got http_code={http_code!r}"
+          )
+
+      # The MCP servers' own listenAddress stay loopback-only by default
       # -- not directly reachable from outside without vmauth routing or
       # an explicit listenAddress override (checked separately below).
       machine.wait_for_open_port(4205)
+      machine.wait_for_open_port(4206)
+      machine.wait_for_open_port(4207)
     '';
   };
 

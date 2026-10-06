@@ -319,6 +319,24 @@ in
 
       owner = machine.succeed("stat -c %U /data/victoria/metrics").strip()
       assert owner == "victoriametrics", f"expected /data/victoria/metrics owned by victoriametrics, got {owner!r}"
+      group = machine.succeed("stat -c %G /data/victoria/metrics").strip()
+      assert group == "victoriametrics", f"expected /data/victoria/metrics group-owned by victoriametrics, got {group!r}"
+
+      # User+ownership alone doesn't prove the service can actually write
+      # to and read from that directory -- a real ingest/query roundtrip
+      # against the static-user + custom-dataDir combination specifically
+      # (the default-dynamicUser combination already has its own
+      # roundtrip test above; this confirms the same path isn't broken
+      # by the static-user/custom-dataDir option combination).
+      machine.succeed(
+          "curl -sf -X POST --data-binary "
+          "'victoria_stack_static_user_test_metric{label=\"roundtrip\"} 7' "
+          "'http://127.0.0.1:4201/api/v1/import/prometheus'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_static_user_test_metric' "
+          "| grep -q victoria_stack_static_user_test_metric"
+      )
     '';
   };
 
@@ -458,6 +476,19 @@ in
 
       owner = machine.succeed("stat -c %U /data/victoria/logs").strip()
       assert owner == "victorialogs", f"expected /data/victoria/logs owned by victorialogs, got {owner!r}"
+      group = machine.succeed("stat -c %G /data/victoria/logs").strip()
+      assert group == "victorialogs", f"expected /data/victoria/logs group-owned by victorialogs, got {group!r}"
+
+      machine.succeed(
+          "echo '{\"log\":{\"level\":\"info\",\"message\":\"victoria_stack_static_user_test_log\"}" 
+          ",\"date\":\"0\",\"stream\":\"roundtrip\"}' | "
+          "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
+          "'http://127.0.0.1:4202/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4202/select/logsql/query' -d 'query=victoria_stack_static_user_test_log' "
+          "| grep -q victoria_stack_static_user_test_log"
+      )
     '';
   };
 
@@ -630,6 +661,29 @@ in
 
       owner = machine.succeed("stat -c %U /data/victoria/traces").strip()
       assert owner == "victoriatraces", f"expected /data/victoria/traces owned by victoriatraces, got {owner!r}"
+      group = machine.succeed("stat -c %G /data/victoria/traces").strip()
+      assert group == "victoriatraces", f"expected /data/victoria/traces group-owned by victoriatraces, got {group!r}"
+
+      machine.succeed(
+          "now=$(date +%s%N); "
+          "payload=$(cat <<JSON\n"
+          "{\"resourceSpans\":[{\"resource\":{\"attributes\":["
+          "{\"key\":\"service.name\",\"value\":{\"stringValue\":\"victoria_stack_static_user_test_service\"}}"
+          "]},\"scopeSpans\":[{\"spans\":[{"
+          "\"traceId\":\"00000000000000000000000000000002\","
+          "\"spanId\":\"0000000000000002\","
+          "\"name\":\"victoria_stack_static_user_test_span\","
+          "\"kind\":1,"
+          "\"startTimeUnixNano\":\"$now\","
+          "\"endTimeUnixNano\":\"$now\""
+          "}]}]}]}\nJSON\n); "
+          "curl -sf -X POST -H 'Content-Type: application/json' --data-binary \"$payload\" "
+          "'http://127.0.0.1:4203/insert/opentelemetry/v1/traces'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4203/select/jaeger/api/services' "
+          "| grep -q victoria_stack_static_user_test_service"
+      )
     '';
   };
 
