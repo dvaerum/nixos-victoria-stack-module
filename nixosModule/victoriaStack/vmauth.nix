@@ -14,12 +14,25 @@ let
   # vmauth's own `headers`/`response_headers` url_map keys -- applied
   # uniformly to every entry this module builds (read, write, and MCP
   # routes alike) when configured, omitted entirely otherwise.
-  extraHeadersAttrs =
-    lib.optionalAttrs (cfg.extraRequestHeaders != [ ]) { headers = cfg.extraRequestHeaders; }
+  #
+  # Concatenates onto any headers an entry already carries (e.g. a
+  # user-supplied extraReadUrlMap entry with its own route-specific
+  # header) rather than overwriting via `//` -- an earlier version used
+  # `entry // extraHeadersAttrs`, which silently discarded any
+  # pre-existing `headers`/`response_headers` key on the entry the
+  # moment the module-wide default was also configured, with no error or
+  # warning. The entry's own values are listed last (closer to "more
+  # specific wins" for any name vmauth treats as last-value-wins).
+  withExtraHeaders = map (
+    entry:
+    entry
+    // lib.optionalAttrs (cfg.extraRequestHeaders != [ ]) {
+      headers = cfg.extraRequestHeaders ++ (entry.headers or [ ]);
+    }
     // lib.optionalAttrs (cfg.extraResponseHeaders != [ ]) {
-      response_headers = cfg.extraResponseHeaders;
-    };
-  withExtraHeaders = map (entry: entry // extraHeadersAttrs);
+      response_headers = cfg.extraResponseHeaders ++ (entry.response_headers or [ ]);
+    }
+  );
 
   # Each enabled backend's own native read API, reached via vmauth as
   # /metrics/*, /logs/*, /traces/* -- src_paths are POST-STRIP (vmauth
@@ -170,6 +183,16 @@ in
     # configured in that same state provides no additional protection
     # (two settings that genuinely contradict each other, not a generic
     # "you might not understand security" nag -- docs/decisions/0014).
+    #
+    # Deliberately NOT also warning on the inverse (requireAuthForWrites
+    # = true, the default, with writeTokensFile unset): tried this during
+    # review, reverted immediately -- it fired on every "just enable a
+    # backend, nothing else configured" setup (9+ existing tests), which
+    # is a legitimate, common shape (writes happen directly against the
+    # backend's own listenAddress, never through vmauth at all). Unlike
+    # the case below, there's no way to tell "forgot to configure this"
+    # apart from "never intended to write through vmauth" from the
+    # config alone -- not a genuine contradiction, so no warning.
     warnings = lib.optional (!cfg.requireAuthForWrites && cfg.writeTokensFile != null) ''
       services.victoriaStack.vmauth.writeTokensFile is set, but
       requireAuthForWrites = false already permits unauthenticated writes --

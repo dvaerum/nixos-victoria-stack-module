@@ -50,6 +50,48 @@ let
         ''
     );
 
+  # Previously only the IPv4 wildcard (0.0.0.0) substitution was
+  # exercised (indirectly, via the default listenAddress never being a
+  # wildcard in any other test) -- the IPv6 wildcard form ([::]) is an
+  # equally legitimate -httpListenAddr value but was never confirmed to
+  # get the same loopback substitution in the readiness probe. Found
+  # during Round 2 review: the substitution condition only checked for
+  # the IPv4 prefix, so [::]:PORT fell through to probing the wildcard
+  # address itself as a destination, unlike the documented/tested
+  # 0.0.0.0 case.
+  mkWildcardReadinessCheck =
+    {
+      name,
+      serviceName, # "victoriametrics" | "victorialogs" | "victoriatraces"
+      serviceAttr, # "metrics" | "logs" | "traces"
+    }:
+    pkgs.runCommand name { } (
+      let
+        ipv4 = evalWith {
+          services.victoriaStack.${serviceAttr} = {
+            enable = true;
+            listenAddress = "0.0.0.0:19998";
+          };
+        };
+        ipv6 = evalWith {
+          services.victoriaStack.${serviceAttr} = {
+            enable = true;
+            listenAddress = "[::]:19998";
+          };
+        };
+        postStart = evaluated: evaluated.config.systemd.services.${serviceName}.postStart;
+        checks = {
+          "IPv4 wildcard substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (postStart ipv4);
+          "IPv6 wildcard substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (postStart ipv6);
+        };
+        failed = lib.filterAttrs (_: ok: !ok) checks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "${serviceName}'s wildcard-listenAddress readiness substitution broken: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
+
   # Previously untested for all 3 storage services: retentionPeriod,
   # extraOptions, and a listenAddress override all reaching ExecStart /
   # effectiveUrl correctly. One shared check applied per service rather
@@ -85,6 +127,38 @@ let
         "echo OK > $out"
       else
         throw "${serviceName}'s ExecStart is missing: ${builtins.toJSON (builtins.attrNames failed)}\n${execStart}"
+    );
+
+  # Shared across all 3 storage services -- previously only metrics had
+  # this coverage, even though manageTmpfiles/the tmpfiles-rule code path
+  # is identical (copy-pasted) across metrics.nix/logs.nix/traces.nix.
+  mkManageTmpfilesCheck =
+    {
+      name,
+      serviceAttr, # "metrics" | "logs" | "traces"
+      dataDir,
+      expectRule, # true: default (manageTmpfiles unset) should render a rule;
+      # false: manageTmpfiles = false should suppress it entirely
+    }:
+    pkgs.runCommand name { } (
+      let
+        evaluated = evalWith {
+          services.victoriaStack.${serviceAttr} = {
+            enable = true;
+            inherit dataDir;
+            dynamicUser = false;
+          }
+          // lib.optionalAttrs (!expectRule) { manageTmpfiles = false; };
+        };
+        rules = evaluated.config.systemd.tmpfiles.rules;
+        hasRule = lib.any (lib.hasInfix dataDir) rules;
+      in
+      if hasRule == expectRule then
+        "echo OK > $out"
+      else if expectRule then
+        throw "manageTmpfiles defaults to true -- expected a tmpfiles rule for ${dataDir}"
+      else
+        throw "manageTmpfiles = false must suppress the every-boot tmpfiles ownership rule entirely for ${dataDir}"
     );
 in
 {
@@ -189,6 +263,24 @@ in
           throw "effectiveUrl structural seam broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
+  metrics-wildcard-readiness-substitutes-loopback = mkWildcardReadinessCheck {
+    name = "metrics-wildcard-readiness-substitutes-loopback";
+    serviceName = "victoriametrics";
+    serviceAttr = "metrics";
+  };
+
+  logs-wildcard-readiness-substitutes-loopback = mkWildcardReadinessCheck {
+    name = "logs-wildcard-readiness-substitutes-loopback";
+    serviceName = "victorialogs";
+    serviceAttr = "logs";
+  };
+
+  traces-wildcard-readiness-substitutes-loopback = mkWildcardReadinessCheck {
+    name = "traces-wildcard-readiness-substitutes-loopback";
+    serviceName = "victoriatraces";
+    serviceAttr = "traces";
+  };
+
   # Previously untested for all 3 storage services: retentionPeriod,
   # extraOptions, and a listenAddress override all reaching ExecStart /
   # effectiveUrl correctly. One shared check applied per service rather
@@ -220,44 +312,47 @@ in
     expectLimitNOFILE = true; # same as nixpkgs' own victoriametrics module
   };
 
-  metrics-manage-tmpfiles-default-true-rule-present =
-    pkgs.runCommand "metrics-manage-tmpfiles-default-true-rule-present" { }
-      (
-        let
-          evaluated = evalWith {
-            services.victoriaStack.metrics = {
-              enable = true;
-              dataDir = "/data/victoria/metrics";
-              dynamicUser = false;
-            };
-          };
-          rules = evaluated.config.systemd.tmpfiles.rules;
-        in
-        if lib.any (lib.hasInfix "/data/victoria/metrics") rules then
-          "echo OK > $out"
-        else
-          throw "manageTmpfiles defaults to true -- expected a tmpfiles rule for the custom dataDir"
-      );
+  metrics-manage-tmpfiles-default-true-rule-present = mkManageTmpfilesCheck {
+    name = "metrics-manage-tmpfiles-default-true-rule-present";
+    serviceAttr = "metrics";
+    dataDir = "/data/victoria/metrics";
+    expectRule = true;
+  };
 
-  metrics-manage-tmpfiles-false-rule-absent =
-    pkgs.runCommand "metrics-manage-tmpfiles-false-rule-absent" { }
-      (
-        let
-          evaluated = evalWith {
-            services.victoriaStack.metrics = {
-              enable = true;
-              dataDir = "/data/victoria/metrics";
-              dynamicUser = false;
-              manageTmpfiles = false;
-            };
-          };
-          rules = evaluated.config.systemd.tmpfiles.rules;
-        in
-        if !(lib.any (lib.hasInfix "/data/victoria/metrics") rules) then
-          "echo OK > $out"
-        else
-          throw "manageTmpfiles = false must suppress the every-boot tmpfiles ownership rule entirely"
-      );
+  metrics-manage-tmpfiles-false-rule-absent = mkManageTmpfilesCheck {
+    name = "metrics-manage-tmpfiles-false-rule-absent";
+    serviceAttr = "metrics";
+    dataDir = "/data/victoria/metrics";
+    expectRule = false;
+  };
+
+  logs-manage-tmpfiles-default-true-rule-present = mkManageTmpfilesCheck {
+    name = "logs-manage-tmpfiles-default-true-rule-present";
+    serviceAttr = "logs";
+    dataDir = "/data/victoria/logs";
+    expectRule = true;
+  };
+
+  logs-manage-tmpfiles-false-rule-absent = mkManageTmpfilesCheck {
+    name = "logs-manage-tmpfiles-false-rule-absent";
+    serviceAttr = "logs";
+    dataDir = "/data/victoria/logs";
+    expectRule = false;
+  };
+
+  traces-manage-tmpfiles-default-true-rule-present = mkManageTmpfilesCheck {
+    name = "traces-manage-tmpfiles-default-true-rule-present";
+    serviceAttr = "traces";
+    dataDir = "/data/victoria/traces";
+    expectRule = true;
+  };
+
+  traces-manage-tmpfiles-false-rule-absent = mkManageTmpfilesCheck {
+    name = "traces-manage-tmpfiles-false-rule-absent";
+    serviceAttr = "traces";
+    dataDir = "/data/victoria/traces";
+    expectRule = false;
+  };
 
   # --- container-boot: real systemd unit behavior ---
 

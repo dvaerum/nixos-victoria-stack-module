@@ -63,12 +63,19 @@ dedicated ADR.
   nudge.
 
 ## New options added (vmauth / alloy / mcp — inert unless configured)
-Concurrency/rate limiting, backend TLS, IP allow/deny lists, custom
-header injection, and load-balancing/failover backend lists for vmauth;
-OTLP exporter TLS/CA-trust and `sending_queue` retry/backoff tuning for
-Alloy; `logLevel`/`logFormat`/`disabledTools` passthrough for each MCP
-service. Every one of these defaults to leaving the underlying flag
-unset entirely when not configured, so behavior matches whatever
+Concurrency/rate limiting, backend TLS, and custom header injection for
+vmauth; OTLP exporter TLS/CA-trust and `sending_queue` retry/backoff
+tuning for Alloy; `logLevel`/`logFormat`/`disabledTools` passthrough for
+each MCP service. Every one of these defaults to leaving the underlying
+flag unset entirely when not configured, so behavior matches whatever
 vmauth/Alloy/the MCP binaries already default to — consistent with ADR
 0002's "opt-in everything" philosophy.
+
+IP allow/deny lists and load-balancing/failover backend lists for
+vmauth were considered during this same review and explicitly NOT
+added — see ADR 0019's addendum for why (IP filters are an
+Enterprise-only vmauth feature that would silently no-op on the OSS
+package; load-balancing needs more than one backend instance per
+signal, the same "more than one backend" shape already deferred under
+clustering).
 </content>

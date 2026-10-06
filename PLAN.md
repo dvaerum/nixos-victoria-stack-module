@@ -46,7 +46,9 @@ tests/{default,assertions,storage,vmauth,grafana,nginx,mcp,collector,full}.nix
 services.victoriaStack = {
   metrics = { enable; package; dataDir; dynamicUser; listenAddress;
               retentionPeriod; extraOptions; suppressDynamicUserWarning;
-              mcp = { enable; package; listenAddress; }; };
+              manageTmpfiles;  # default true; escape hatch, no warning when false
+              mcp = { enable; package; listenAddress;
+                      logLevel; logFormat; disabledTools; }; };
   logs    = { <same shape>; mcp = { ... }; };
   traces  = { <same shape>; mcp = { ... }; };
 
@@ -60,6 +62,11 @@ services.victoriaStack = {
     adminPasswordFile;     # plain scalar secret
     openIngestPaths;       # auto-derived list, overridable to [ ]
     extraReadUrlMap;       # escape hatch
+    maxConcurrentRequests; maxConcurrentPerUserRequests;  # inert unless set
+    backendTls = { insecureSkipVerify; caFile; certFile; keyFile; };  # inert unless set
+    extraRequestHeaders; extraResponseHeaders;  # inert unless set
+    # IP allow/deny lists and load-balancing/failover were considered and
+    # explicitly NOT added -- see ADR 0019's addendum.
   };
 
   grafana.enable;          # opt-in datasource wiring ONLY; services.grafana.* untouched,
@@ -72,9 +79,11 @@ services.victoriaCollector = {
   metrics.enable; logs.enable; traces.enable;   # independent, OTLP receiver tied to traces
   writeEndpoint; journaldWriteEndpoint;
   writeTokenFile;
-  hostType;                # free-form str, no enum
+  hostType;                # strMatching "[A-Za-z0-9_.-]+", not free-form
   queue = { maxSizeBytes; directory; };  # default 1GiB / /var/lib/alloy/queue
   alloy.package; alloy.extraFlags;
+  alloy.tlsCaFile; alloy.tlsInsecureSkipVerify;  # inert unless set
+  alloy.retryOnFailure = { initialInterval; maxInterval; maxElapsedTime; };  # inert unless set
   trustedCertificateFile;
 };
 ```

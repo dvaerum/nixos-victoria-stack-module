@@ -55,12 +55,13 @@
     settings.security.admin_password = "$__file{/run/secrets/victoria/grafana-admin-password}";
   };
 
-  # Self-monitoring: this host collects its own metrics/logs the same way
-  # every other fleet host would, just over loopback to its own vmauth
-  # instead of a remote one.
+  # Self-monitoring: this host collects its own metrics/logs/traces the
+  # same way every other fleet host would, just over loopback to its own
+  # vmauth instead of a remote one.
   services.victoriaCollector = {
     metrics.enable = true;
     logs.enable = true;
+    traces.enable = true;
     writeEndpoint = "http://127.0.0.1:4204"; # vmauth's default port, docs/decisions/0017
     writeTokenFile = "/run/secrets/victoria/collector-write-token";
     hostType = "server";

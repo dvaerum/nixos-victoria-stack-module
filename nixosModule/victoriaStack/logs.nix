@@ -64,8 +64,17 @@ in
           path = [ pkgs.wait4x ];
           postStart =
             let
+              # Both the IPv4 (0.0.0.0) and IPv6 ([::]) wildcard forms are
+              # legitimate -httpListenAddr values -- probing the wildcard
+              # address itself as a *destination* is unreliable across
+              # kernels/configurations, so both substitute to loopback.
+              # lib.last (lib.splitString ":" ...) extracts the port
+              # correctly either way: splitString splits on every ":",
+              # and the port is always the final fragment regardless of
+              # how many colons appear in the host part before it.
+              isWildcard = lib.hasPrefix "0.0.0.0:" cfg.listenAddress || lib.hasPrefix "[::]:" cfg.listenAddress;
               bindAddr =
-                if lib.hasPrefix "0.0.0.0:" cfg.listenAddress then
+                if isWildcard then
                   "127.0.0.1:${lib.last (lib.splitString ":" cfg.listenAddress)}"
                 else
                   cfg.listenAddress;

@@ -239,6 +239,54 @@ in
           throw "extraRequestHeaders/extraResponseHeaders broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
+  # extraReadUrlMap (the escape hatch for arbitrary extra read routes)
+  # had zero test coverage at all -- confirmed via grep before writing
+  # this. Covers both: the route itself reaches READ_URL_MAP_FILE, and
+  # (the actual regression this fixes) a route-specific `headers` entry
+  # survives combination with a module-wide extraRequestHeaders default
+  # instead of being silently overwritten by `//` (an earlier version of
+  # withExtraHeaders did exactly that).
+  extra-read-url-map-entry-headers-combine-with-module-default =
+    pkgs.runCommand "vmauth-extra-read-url-map-headers-combine" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              vmauth = {
+                extraRequestHeaders = [ "TenantID: global-default" ];
+                extraReadUrlMap = [
+                  {
+                    src_paths = [ "/custom-route/.*" ];
+                    url_prefix = "http://127.0.0.1:9999/";
+                    headers = [ "X-Custom-Route: yes" ];
+                  }
+                ];
+              };
+            };
+          };
+          readUrlMapVar =
+            lib.findFirst (lib.hasPrefix "READ_URL_MAP_FILE=") null
+              evaluated.config.systemd.services.vmauth.serviceConfig.Environment;
+          readUrlMap = builtins.fromJSON (
+            builtins.readFile (lib.removePrefix "READ_URL_MAP_FILE=" readUrlMapVar)
+          );
+          customEntry = lib.findFirst (e: e.src_paths == [ "/custom-route/.*" ]) null readUrlMap;
+          checks = {
+            "custom route reaches READ_URL_MAP_FILE at all" = customEntry != null;
+            "custom route's own header survives" = lib.elem "X-Custom-Route: yes" (customEntry.headers or [ ]);
+            "module-wide default header is also present (combined, not replaced)" =
+              lib.elem "TenantID: global-default"
+                (customEntry.headers or [ ]);
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "extraReadUrlMap header combination broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
   secret-options-are-plain-strings-not-nix-paths =
     pkgs.runCommand "vmauth-secret-options-are-plain-strings-not-nix-paths" { }
       (
@@ -572,6 +620,137 @@ in
     '';
   };
 
+  # requireAuthForWrites = true is the default, and vmauth auto-enables
+  # the moment any backend is enabled -- so "backend enabled, nothing
+  # else configured" (no writeTokensFile at all) is the single most
+  # common shape a new user hits, not an edge case. Confirms the write
+  # path genuinely, consistently rejects every request in that default
+  # state (never silently falls back to open) -- the counterpart to
+  # write-paths-require-write-token-by-default above, which always
+  # configured a writeTokensFile; this is the "never configured one"
+  # case, deliberately left unwarned (docs/decisions/0020 -- too many
+  # legitimate setups write directly to the backend, bypassing vmauth
+  # entirely, for this to be a safe-to-assume mistake).
+  write-paths-reject-everything-when-no-write-tokens-file-configured = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-no-write-tokens-file-rejects-all-writes";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        # requireAuthForWrites left at its true default; writeTokensFile
+        # deliberately left unset.
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+
+      machine.fail(
+          "curl -sf -X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
+      )
+      # Confirms there is no credential of any form (correctly-shaped or
+      # not) that could open the write path in this state.
+      machine.fail(
+          "curl -sf -H 'Authorization: Bearer anything-at-all' "
+          "-X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
+      )
+    '';
+  };
+
+  # vmauth builds symmetric url_map entries for all 3 signal types
+  # (nixosModule/victoriaStack/vmauth.nix), but every other container
+  # test in this file -- and the only real HTTP assertions in
+  # tests/full.nix -- exclusively exercise the metrics route. A regex
+  # typo or wrong drop_src_path_prefix_parts specific to logs or traces
+  # routing would pass every existing test while being completely broken
+  # for 2 of the 3 signal types in production. This test genuinely
+  # exercises all 3 through vmauth's actual routing+auth, not just
+  # metrics.
+  all-three-signal-types-reachable-end-to-end-through-vmauth = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-all-signal-types-end-to-end";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        logs.enable = true;
+        traces.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          requireAuthForWrites = false;
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_unit("victorialogs.service")
+      machine.wait_for_unit("victoriatraces.service")
+      machine.wait_for_open_port(4204)
+
+      # Metrics: write via the auto-open ingest door, read via the
+      # /metrics/ prefix with the admin credential.
+      machine.succeed(
+          "curl -sf -X POST --data-binary "
+          "'victoria_stack_vmauth_e2e_metric 1' "
+          "'http://127.0.0.1:4204/opentelemetry'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf -u admin:admin-password-value "
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=victoria_stack_vmauth_e2e_metric' "
+          "| grep -q victoria_stack_vmauth_e2e_metric"
+      )
+
+      # Logs: the /logs/ read-tier prefix is a generic path-stripping
+      # passthrough (vmauth routes on path only, not HTTP method), so the
+      # admin credential can also reach the backend's own jsonline-insert
+      # endpoint through it -- confirms the "logs" prefix's
+      # drop_src_path_prefix_parts genuinely lands on the backend's root,
+      # not just that GET queries happen to work.
+      machine.succeed(
+          "echo '{\"log\":{\"level\":\"info\",\"message\":\"victoria_stack_vmauth_e2e_log\"}"
+          ",\"date\":\"0\",\"stream\":\"roundtrip\"}' | "
+          "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
+          "-u admin:admin-password-value "
+          "'http://127.0.0.1:4204/logs/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf -u admin:admin-password-value "
+          "'http://127.0.0.1:4204/logs/select/logsql/query' -d 'query=victoria_stack_vmauth_e2e_log' "
+          "| grep -q victoria_stack_vmauth_e2e_log"
+      )
+
+      # Traces: write via the auto-open OTLP ingest door, read via the
+      # /traces/ prefix (Jaeger API) with the admin credential.
+      machine.succeed(
+          "now=$(date +%s%N); "
+          "payload=$(cat <<JSON\n"
+          "{\"resourceSpans\":[{\"resource\":{\"attributes\":["
+          "{\"key\":\"service.name\",\"value\":{\"stringValue\":\"victoria_stack_vmauth_e2e_service\"}}"
+          "]},\"scopeSpans\":[{\"spans\":[{"
+          "\"traceId\":\"00000000000000000000000000000003\","
+          "\"spanId\":\"0000000000000003\","
+          "\"name\":\"victoria_stack_vmauth_e2e_span\","
+          "\"kind\":1,"
+          "\"startTimeUnixNano\":\"$now\","
+          "\"endTimeUnixNano\":\"$now\""
+          "}]}]}]}\nJSON\n); "
+          "curl -sf -X POST -H 'Content-Type: application/json' --data-binary \"$payload\" "
+          "'http://127.0.0.1:4204/insert/opentelemetry/v1/traces'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf -u admin:admin-password-value "
+          "'http://127.0.0.1:4204/traces/select/jaeger/api/services' "
+          "| grep -q victoria_stack_vmauth_e2e_service"
+      )
+    '';
+  };
+
   no-op-without-any-backend-enabled = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-no-op-without-backend";
 
@@ -588,4 +767,50 @@ in
       machine.fail("systemctl status vmauth.service")
     '';
   };
+
+  # vmauth.package is the only one of the 4 independent .package options
+  # (metrics/logs/traces/vmauth, ADR 0007) that had never been confirmed
+  # to actually reach ExecStart, nor had its nontrivial conditional
+  # default (mkDefault, tracking metrics' own package when metrics is
+  # enabled, falling back to pkgs.victoriametrics otherwise) been tested
+  # in either branch.
+  #
+  # lib.hasPrefix, not lib.hasInfix: a regex needle carrying store-path
+  # context makes builtins.match refuse to compile ("is not allowed to
+  # refer to a store path") -- confirmed by hitting it directly. ExecStart
+  # always starts with "${package}/bin/vmauth ...", so a prefix check
+  # (plain string-length comparison, no regex) is both sufficient and safe.
+  package-override-takes-effect = pkgs.runCommand "vmauth-package-override-takes-effect" { } (
+    let
+      overridePackage = pkgs.hello; # any derivation with a /bin -- content irrelevant, only the store path is checked
+      evaluated = evalWith {
+        services.victoriaStack = {
+          metrics.enable = true;
+          vmauth.package = overridePackage;
+        };
+      };
+      execStart = evaluated.config.systemd.services.vmauth.serviceConfig.ExecStart;
+    in
+    if lib.hasPrefix "${overridePackage}/bin/vmauth" execStart then
+      "echo OK > $out"
+    else
+      throw "vmauth's ExecStart did not resolve through the overridden package: ${execStart}"
+  );
+
+  package-default-falls-back-to-upstream-victoriametrics-without-metrics-enabled =
+    pkgs.runCommand "vmauth-package-default-fallback" { }
+      (
+        let
+          # metrics disabled, logs enabled instead -- exercises the
+          # "else pkgs.victoriametrics" branch of vmauth's own package
+          # default, never exercised by any other test (every other test
+          # enables metrics, which always takes the "if" branch).
+          evaluated = evalWith { services.victoriaStack.logs.enable = true; };
+          execStart = evaluated.config.systemd.services.vmauth.serviceConfig.ExecStart;
+        in
+        if lib.hasPrefix "${pkgs.victoriametrics}/bin/vmauth" execStart then
+          "echo OK > $out"
+        else
+          throw "vmauth's package fallback (no metrics enabled) did not resolve to pkgs.victoriametrics: ${execStart}"
+      );
 }

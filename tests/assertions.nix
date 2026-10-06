@@ -36,6 +36,32 @@ in
     };
   };
 
+  # The logs/traces copies of the same assertion
+  # (nixosModule/victoriaStack/assertions.nix) had zero coverage -- only
+  # the metrics variant was ever tested, even though all 3 are
+  # structurally identical (copy-pasted) per-service assertions.
+  logs-mcp-requires-own-backend = mkAssertionFiresCheck {
+    name = "logs-mcp-requires-own-backend";
+    expectMessageSubstring = "mcp";
+    module = {
+      services.victoriaStack.logs = {
+        enable = false;
+        mcp.enable = true;
+      };
+    };
+  };
+
+  traces-mcp-requires-own-backend = mkAssertionFiresCheck {
+    name = "traces-mcp-requires-own-backend";
+    expectMessageSubstring = "mcp";
+    module = {
+      services.victoriaStack.traces = {
+        enable = false;
+        mcp.enable = true;
+      };
+    };
+  };
+
   # Control: nginx + vmauth both on, mcp + its own backend both on -- no
   # assertion should fire.
   valid-configuration-no-assertions = mkNoAssertionsFireCheck {

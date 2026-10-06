@@ -167,6 +167,13 @@ let
             disabled and that's what you want. Requires this service's own
             `enable = true` -- there is nothing for the MCP server to proxy
             to otherwise (see docs/decisions/0002-opt-in-everything.md).
+
+            When reached through vmauth (e.g. `/mcp/metrics`,
+            `/mcp/logs`, `/mcp/traces`): request it with NO trailing
+            slash -- vmauth strips exactly 2 path parts before
+            forwarding, which only lands on the MCP binary's own fixed
+            `/mcp` path (not `/mcp/`) when the original request has none
+            either.
           '';
         };
 
@@ -414,7 +421,11 @@ in
           automatically) naming which host/purpose it's for. See
           docs/decisions/0003-vmauth-two-credential-tiers.md. Required
           when `requireAuthForWrites = true` and at least one storage
-          service is enabled.
+          service is enabled -- left unset in that combination, every
+          write/ingest path through vmauth rejects every request with no
+          credential able to open it (vmauth itself starts and reports
+          healthy regardless, so this fails silently until writes are
+          actually attempted).
         '';
       };
 
