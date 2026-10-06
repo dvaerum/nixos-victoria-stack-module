@@ -40,7 +40,7 @@ let
         system.stateVersion = lib.trivial.release;
         services.victoriaCollector = {
           logs.enable = true;
-          journaldWriteEndpoint = "https://victoria-stack.example.invalid:8880";
+          journaldWriteEndpoint = "https://victoria-stack.example.invalid:4204";
           hostType = "server";
         };
       }
@@ -71,7 +71,7 @@ in
       imports = [ collectorModule ];
       services.victoriaCollector = {
         metrics.enable = true;
-        writeEndpoint = "http://stack:8880";
+        writeEndpoint = "http://stack:4204";
         writeTokenFile = "${writeTokenFixture}";
         hostType = "server";
       };
@@ -103,7 +103,7 @@ in
       # the backend AT ALL through vmauth's authenticated write path is
       # the actual thing this test cares about).
       stack.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:8428/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
           timeout=120,
       )
     '';
@@ -117,7 +117,7 @@ in
       services.victoriaCollector = {
         logs.enable = true;
         # metrics/traces deliberately left disabled.
-        writeEndpoint = "http://127.0.0.1:8880";
+        writeEndpoint = "http://127.0.0.1:4204";
         hostType = "server";
       };
     };
@@ -144,7 +144,7 @@ in
       services.victoriaCollector = {
         traces.enable = true;
         # metrics/logs deliberately left disabled.
-        writeEndpoint = "http://127.0.0.1:8880";
+        writeEndpoint = "http://127.0.0.1:4204";
         hostType = "server";
       };
     };
@@ -167,7 +167,7 @@ in
             (upload ? ServerKeyFile)
             (upload ? ServerCertificateFile)
             (upload.TrustedCertificateFile == "/etc/ssl/certs/ca-certificates.crt")
-            (upload.URL == "https://victoria-stack.example.invalid:8880/insert/journald")
+            (upload.URL == "https://victoria-stack.example.invalid:4204/insert/journald")
           ];
         in
         if builtins.all (x: x) checks then
@@ -306,7 +306,7 @@ in
       imports = [ collectorModule ];
       services.victoriaCollector = {
         metrics.enable = true;
-        writeEndpoint = "http://127.0.0.1:8880";
+        writeEndpoint = "http://127.0.0.1:4204";
         hostType = "server";
         queue = {
           maxSizeBytes = 123456789;

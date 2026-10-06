@@ -103,6 +103,33 @@ in
     };
   };
 
+  # Permanent regression guard for docs/decisions/0017's sequential
+  # renumbering -- catches an accidental revert/drift back to any
+  # individual binary's own upstream default, or vmauth/mcp's old
+  # project-chosen numbers.
+  port-defaults-match-the-sequential-scheme =
+    pkgs.runCommand "port-defaults-match-sequential-scheme" { }
+      (
+        let
+          evaluated = evalWith { };
+          c = evaluated.config.services.victoriaStack;
+          expected = {
+            "metrics.listenAddress" = c.metrics.listenAddress == "127.0.0.1:4201";
+            "logs.listenAddress" = c.logs.listenAddress == "127.0.0.1:4202";
+            "traces.listenAddress" = c.traces.listenAddress == "127.0.0.1:4203";
+            "vmauth.listenAddress" = c.vmauth.listenAddress == "127.0.0.1:4204";
+            "metrics.mcp.listenAddress" = c.metrics.mcp.listenAddress == "127.0.0.1:4205";
+            "logs.mcp.listenAddress" = c.logs.mcp.listenAddress == "127.0.0.1:4206";
+            "traces.mcp.listenAddress" = c.traces.mcp.listenAddress == "127.0.0.1:4207";
+          };
+          failed = lib.filterAttrs (_: ok: !ok) expected;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "port defaults drifted from docs/decisions/0017's sequential scheme: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
   metrics-hardening-profile-and-readiness = mkHardeningCheck {
     name = "metrics-hardening-profile-and-readiness";
     serviceName = "victoriametrics";
@@ -164,7 +191,7 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("victoriametrics.service")
-      machine.wait_for_open_port(8428)
+      machine.wait_for_open_port(4201)
 
       # Prometheus exposition-format ingest -- the simplest real write path
       # VictoriaMetrics' own HTTP API supports natively, no extra tooling
@@ -172,13 +199,13 @@ in
       machine.succeed(
           "curl -sf -X POST --data-binary "
           "'victoria_stack_test_metric{label=\"roundtrip\"} 42' "
-          "'http://127.0.0.1:8428/api/v1/import/prometheus'"
+          "'http://127.0.0.1:4201/api/v1/import/prometheus'"
       )
 
       # VictoriaMetrics ingestion is not synchronous-to-query -- give it a
       # moment before asserting the value is queryable.
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:8428/api/v1/query?query=victoria_stack_test_metric' "
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_test_metric' "
           "| grep -q '\"value\":\\[.*,\"42\"\\]'"
       )
     '';
@@ -199,7 +226,7 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("victoriametrics.service")
-      machine.wait_for_open_port(8428)
+      machine.wait_for_open_port(4201)
 
       # Confirm it's genuinely running as the static user, not DynamicUser,
       # and that the custom dataDir is real and owned correctly -- the
@@ -307,7 +334,7 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("victorialogs.service")
-      machine.wait_for_open_port(9428)
+      machine.wait_for_open_port(4202)
 
       # JSON stream (ndjson) ingest -- VictoriaLogs' own HTTP API
       # (/insert/jsonline), confirmed from its real data-ingestion docs
@@ -316,11 +343,11 @@ in
           "echo '{\"log\":{\"level\":\"info\",\"message\":\"victoria_stack_test_log_roundtrip\"}" 
           ",\"date\":\"0\",\"stream\":\"roundtrip\"}' | "
           "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
-          "'http://127.0.0.1:9428/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
+          "'http://127.0.0.1:4202/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
       )
 
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:9428/select/logsql/query' -d 'query=victoria_stack_test_log_roundtrip' "
+          "curl -sf 'http://127.0.0.1:4202/select/logsql/query' -d 'query=victoria_stack_test_log_roundtrip' "
           "| grep -q victoria_stack_test_log_roundtrip"
       )
     '';
@@ -341,7 +368,7 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("victorialogs.service")
-      machine.wait_for_open_port(9428)
+      machine.wait_for_open_port(4202)
 
       user = machine.succeed(
           "systemctl show victorialogs.service --property=User --value"
@@ -467,7 +494,7 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("victoriatraces.service")
-      machine.wait_for_open_port(10428)
+      machine.wait_for_open_port(4203)
 
       # Minimal valid OTLP/HTTP JSON ExportTraceServiceRequest -- confirmed
       # from VictoriaTraces' own docs: it accepts OTLP natively and exposes
@@ -488,11 +515,11 @@ in
           "\"endTimeUnixNano\":\"$now\""
           "}]}]}]}\nJSON\n); "
           "curl -sf -X POST -H 'Content-Type: application/json' --data-binary \"$payload\" "
-          "'http://127.0.0.1:10428/insert/opentelemetry/v1/traces'"
+          "'http://127.0.0.1:4203/insert/opentelemetry/v1/traces'"
       )
 
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:10428/select/jaeger/api/services' "
+          "curl -sf 'http://127.0.0.1:4203/select/jaeger/api/services' "
           "| grep -q victoria_stack_test_service"
       )
     '';
@@ -513,7 +540,7 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("victoriatraces.service")
-      machine.wait_for_open_port(10428)
+      machine.wait_for_open_port(4203)
 
       user = machine.succeed(
           "systemctl show victoriatraces.service --property=User --value"

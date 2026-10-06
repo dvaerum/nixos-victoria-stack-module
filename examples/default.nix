@@ -61,7 +61,7 @@
   services.victoriaCollector = {
     metrics.enable = true;
     logs.enable = true;
-    writeEndpoint = "http://127.0.0.1:8880";
+    writeEndpoint = "http://127.0.0.1:4204"; # vmauth's default port, docs/decisions/0017
     writeTokenFile = "/run/secrets/victoria/collector-write-token";
     hostType = "server";
   };

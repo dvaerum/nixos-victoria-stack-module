@@ -81,7 +81,7 @@ The Alloy package to use\. Defaults to pkgs\.grafana-alloy, set via mkDefault in
 package
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -105,7 +105,7 @@ list of string
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -113,18 +113,22 @@ list of string
 
 
 
-A free-form label promoted onto every metric this host ships (as
-the ` host_type ` label, via the gateway’s own relabel config)\. Not
-an enum deliberately – this module has no opinion about what
-values are meaningful; that’s entirely a property of whatever
-alerting rules the consumer writes on top (see
+A free-form label promoted onto every metric AND trace this host
+ships (as the ` host_type ` attribute, via the gateway’s own
+relabel config) – restricted to ` [A-Za-z0-9_.-]+ ` so it can
+never break the generated Alloy config syntax it’s embedded in\.
+Not an enum beyond that restriction – this module has no opinion
+about what values are meaningful; that’s entirely a property of
+whatever alerting rules the consumer writes on top (see
 docs/decisions – this module takes no position on alerting, only
-on getting the label onto the data)\.
+on getting the label onto the data)\. NOT applied to logs: that
+path goes through systemd-journal-upload directly, with no Alloy
+pipeline to attach the label in\.
 
 
 
 *Type:*
-string
+string matching the pattern \[A-Za-z0-9_\.-]+
 
 
 
@@ -135,7 +139,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -165,7 +169,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -197,7 +201,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -229,7 +233,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -253,7 +257,7 @@ absolute path
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -282,7 +286,7 @@ signed integer
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -320,7 +324,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -346,7 +350,7 @@ absolute path
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -373,7 +377,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -381,16 +385,21 @@ string
 
 
 
-Path to a file containing exactly one bearer token (no YAML
-structure needed at this end – that’s vmauth’s own
-` writeTokensFile ` list on the gateway side) authorizing this host’s
-write traffic\. Required whenever the gateway’s own
-` requireAuthForWrites ` is ` true ` (the default)\.
+Path (as a plain string, NOT a Nix path literal – interpolating a
+real Nix path forces a Nix-store copy at eval time, which either
+crashes if the file doesn’t exist yet on the build machine, the
+normal case, since it lands at runtime via LoadCredential= (see
+docs/decisions/0008/0020), or leaks the plaintext secret into the
+world-readable store if it does) to a file containing exactly one
+bearer token (no YAML structure needed at this end – that’s
+vmauth’s own ` writeTokensFile ` list on the gateway side)
+authorizing this host’s write traffic\. Required whenever the
+gateway’s own ` requireAuthForWrites ` is ` true ` (the default)\.
 
 
 
 *Type:*
-null or absolute path
+null or string
 
 
 
@@ -401,7 +410,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaCollector/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaCollector/options.nix)
 
 
 
@@ -437,7 +446,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -469,7 +478,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -485,7 +494,7 @@ The victoria-logs package to use\. Defaults to pkgs\.victorialogs, set via mkDef
 package
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -515,7 +524,7 @@ absolute path
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -547,7 +556,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -582,7 +591,7 @@ list of string
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -606,11 +615,43 @@ string
 *Default:*
 
 ```nix
-"127.0.0.1:9428"
+"127.0.0.1:4202"
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.manageTmpfiles
+
+
+
+Whether this module re-asserts ` dataDir `’s ownership/mode (via
+` systemd.tmpfiles.rules `) on every boot, when ` dynamicUser = false ` (the static-user branch)\. The default is self-healing:
+it catches drift or manual mistakes automatically, which is
+central to why the static-user path works at all for an
+externally-managed mount (docs/decisions/0001)\. Set to ` false `
+to manage the directory’s ownership/mode entirely yourself
+outside this module – a plain escape hatch for a real reason
+this module can’t anticipate, not a config mismatch, so there is
+deliberately no warning attached to disabling it\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -642,7 +683,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -658,7 +699,7 @@ The mcp-victorialogs package to use\. Defaults to this flake’s own packages\.m
 package
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -683,11 +724,11 @@ string
 *Default:*
 
 ```nix
-"127.0.0.1:8882"
+"127.0.0.1:4206"
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -697,7 +738,7 @@ string
 
 How long to retain data for\. ` null ` (the default) means
 whatever victoria-logs itself does when the flag is omitted
-entirely (effectively unbounded for these binaries) – matching
+entirely (effectively unbounded for this binary) – matching
 upstream’s own default rather than imposing an opinionated one\.
 
 
@@ -722,7 +763,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -750,7 +791,7 @@ false
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -782,7 +823,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -798,7 +839,7 @@ The victoria-metrics package to use\. Defaults to pkgs\.victoriametrics, set via
 package
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -828,7 +869,7 @@ absolute path
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -860,7 +901,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -895,7 +936,7 @@ list of string
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -919,11 +960,43 @@ string
 *Default:*
 
 ```nix
-"127.0.0.1:8428"
+"127.0.0.1:4201"
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.metrics\.manageTmpfiles
+
+
+
+Whether this module re-asserts ` dataDir `’s ownership/mode (via
+` systemd.tmpfiles.rules `) on every boot, when ` dynamicUser = false ` (the static-user branch)\. The default is self-healing:
+it catches drift or manual mistakes automatically, which is
+central to why the static-user path works at all for an
+externally-managed mount (docs/decisions/0001)\. Set to ` false `
+to manage the directory’s ownership/mode entirely yourself
+outside this module – a plain escape hatch for a real reason
+this module can’t anticipate, not a config mismatch, so there is
+deliberately no warning attached to disabling it\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -955,7 +1028,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -971,7 +1044,7 @@ The mcp-victoriametrics package to use\. Defaults to this flake’s own packages
 package
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -996,11 +1069,11 @@ string
 *Default:*
 
 ```nix
-"127.0.0.1:8881"
+"127.0.0.1:4205"
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1010,7 +1083,7 @@ string
 
 How long to retain data for\. ` null ` (the default) means
 whatever victoria-metrics itself does when the flag is omitted
-entirely (effectively unbounded for these binaries) – matching
+entirely (effectively unbounded for this binary) – matching
 upstream’s own default rather than imposing an opinionated one\.
 
 
@@ -1035,7 +1108,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1063,7 +1136,7 @@ false
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1098,7 +1171,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1125,7 +1198,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1157,7 +1230,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1173,7 +1246,7 @@ The victoria-traces package to use\. Defaults to pkgs\.victoriatraces, set via m
 package
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1203,7 +1276,7 @@ absolute path
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1235,7 +1308,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1270,7 +1343,7 @@ list of string
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1294,11 +1367,43 @@ string
 *Default:*
 
 ```nix
-"127.0.0.1:10428"
+"127.0.0.1:4203"
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.traces\.manageTmpfiles
+
+
+
+Whether this module re-asserts ` dataDir `’s ownership/mode (via
+` systemd.tmpfiles.rules `) on every boot, when ` dynamicUser = false ` (the static-user branch)\. The default is self-healing:
+it catches drift or manual mistakes automatically, which is
+central to why the static-user path works at all for an
+externally-managed mount (docs/decisions/0001)\. Set to ` false `
+to manage the directory’s ownership/mode entirely yourself
+outside this module – a plain escape hatch for a real reason
+this module can’t anticipate, not a config mismatch, so there is
+deliberately no warning attached to disabling it\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+true
+```
+
+*Declared by:*
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1330,7 +1435,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1346,7 +1451,7 @@ The mcp-victoriatraces package to use\. Defaults to this flake’s own packages\
 package
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1371,11 +1476,11 @@ string
 *Default:*
 
 ```nix
-"127.0.0.1:8883"
+"127.0.0.1:4207"
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1385,7 +1490,7 @@ string
 
 How long to retain data for\. ` null ` (the default) means
 whatever victoria-traces itself does when the flag is omitted
-entirely (effectively unbounded for these binaries) – matching
+entirely (a 7 day default for this binary, NOT unbounded – unlike metrics/logs) – matching
 upstream’s own default rather than imposing an opinionated one\.
 
 
@@ -1410,7 +1515,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1438,7 +1543,7 @@ false
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1468,7 +1573,7 @@ false
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1484,7 +1589,7 @@ The victoriametrics package vmauth’s binary is bundled in\. Defaults (via mkDe
 package
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1492,14 +1597,16 @@ package
 
 
 
-Path to a file containing the plaintext password for vmauth’s
-Basic Auth “admin” user (read + MCP paths, same access as any
-` readTokensFile ` entry, just a different credential type)\.
+Path (as a plain string – see ` writeTokensFile `’s description
+for why not a Nix path literal) to a file containing the
+plaintext password for vmauth’s Basic Auth “admin” user (read +
+MCP paths, same access as any ` readTokensFile ` entry, just a
+different credential type)\.
 
 
 
 *Type:*
-null or absolute path
+null or string
 
 
 
@@ -1510,7 +1617,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1534,7 +1641,7 @@ list of (attribute set)
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1562,7 +1669,7 @@ string
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1582,11 +1689,11 @@ string
 *Default:*
 
 ```nix
-"127.0.0.1:8880"
+"127.0.0.1:4204"
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1594,12 +1701,14 @@ string
 
 
 
-vmauth ` url_map ` entries for the unauthenticated-write case
+vmauth ` url_map ` entries for the unauthenticated-write case only
 (` requireAuthForWrites = false `)\. Auto-derived from whichever of
-metrics/logs/traces is enabled; override to ` [ ] ` to close
-writes entirely even with ` requireAuthForWrites = false ` (has no
-effect when ` requireAuthForWrites = true `, since those paths
-require the write-tier credential regardless of this list)\.
+metrics/logs/traces is enabled; override to ` [ ] ` to close the
+anonymous write door entirely, even with ` requireAuthForWrites = false `\. Has NO effect on write-tier bearer tokens
+(` writeTokensFile `) either way – those always route via the
+same auto-derivation, independent of this option, since a
+credentialed tier must stay reachable regardless of how the
+anonymous door is sized (docs/decisions/0003, 0014)\.
 
 
 
@@ -1615,7 +1724,7 @@ list of (attribute set)
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1623,15 +1732,17 @@ list of (attribute set)
 
 
 
-Path to a YAML file (typically sops-nix rendered) containing a
-` tokens: ` list of bearer tokens authorized for read + MCP paths\.
-Deliberately a SEPARATE file from ` writeTokensFile ` – see
+Path (as a plain string – see ` writeTokensFile `’s description
+for why not a Nix path literal) to a YAML file (typically
+sops-nix rendered) containing a ` tokens: ` list of bearer tokens
+authorized for read + MCP paths\. Deliberately a SEPARATE file
+from ` writeTokensFile ` – see
 docs/decisions/0003-vmauth-two-credential-tiers\.md for why\.
 
 
 
 *Type:*
-null or absolute path
+null or string
 
 
 
@@ -1642,7 +1753,7 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1671,7 +1782,7 @@ true
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 
 
@@ -1679,9 +1790,15 @@ true
 
 
 
-Path to a YAML file (typically sops-nix rendered) containing a
-` tokens: ` list of bearer tokens authorized for the write/ingest
-paths only\. Each entry may carry an inline ` # ` comment (stripped
+Path (as a plain string, NOT a Nix path literal – interpolating
+a real Nix path forces a Nix-store copy at eval time, which
+either crashes if the file doesn’t exist yet on the build
+machine (the normal case: it lands at runtime via
+LoadCredential=, see docs/decisions/0008/0020) or leaks the
+plaintext secret into the world-readable store if it does) to a
+YAML file (typically sops-nix rendered) containing a ` tokens: `
+list of bearer tokens authorized for the write/ingest paths
+only\. Each entry may carry an inline ` # ` comment (stripped
 automatically) naming which host/purpose it’s for\. See
 docs/decisions/0003-vmauth-two-credential-tiers\.md\. Required
 when ` requireAuthForWrites = true ` and at least one storage
@@ -1690,7 +1807,7 @@ service is enabled\.
 
 
 *Type:*
-null or absolute path
+null or string
 
 
 
@@ -1701,6 +1818,6 @@ null
 ```
 
 *Declared by:*
- - [/nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/q0x26mk1py4wj3s05h0sx7s2dnah180p-source/nixosModule/victoriaStack/options.nix)
+ - [/nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options\.nix](file:///nix/store/w414fqvhf2l4ng57px86fkw87ax1nyr8-source/nixosModule/victoriaStack/options.nix)
 
 

@@ -163,24 +163,26 @@ in
     metrics = mkStorageServiceOptions {
       name = "victoriametrics";
       binaryName = "victoria-metrics";
-      defaultListenAddress = "127.0.0.1:8428";
-      defaultMcpPort = 8881;
+      # docs/decisions/0017: sequential 4201-4207 scheme, an explicit
+      # operator decision, not any binary's own upstream default.
+      defaultListenAddress = "127.0.0.1:4201";
+      defaultMcpPort = 4205;
       retentionPeriodNullBehavior = "effectively unbounded for this binary";
     };
 
     logs = mkStorageServiceOptions {
       name = "victorialogs";
       binaryName = "victoria-logs";
-      defaultListenAddress = "127.0.0.1:9428";
-      defaultMcpPort = 8882;
+      defaultListenAddress = "127.0.0.1:4202";
+      defaultMcpPort = 4206;
       retentionPeriodNullBehavior = "effectively unbounded for this binary";
     };
 
     traces = mkStorageServiceOptions {
       name = "victoriatraces";
       binaryName = "victoria-traces";
-      defaultListenAddress = "127.0.0.1:10428";
-      defaultMcpPort = 8883;
+      defaultListenAddress = "127.0.0.1:4203";
+      defaultMcpPort = 4207;
       # Confirmed from victoria-traces' own --help/upstream docs: unlike
       # metrics/logs, omitting -retentionPeriod does NOT mean unbounded --
       # it defaults to 7 days. See traces.nix's own ExecStart comment and
@@ -207,7 +209,7 @@ in
 
       listenAddress = mkOption {
         type = types.str;
-        default = "127.0.0.1:8880";
+        default = "127.0.0.1:4204"; # docs/decisions/0017
         description = "Address vmauth listens on.";
       };
 

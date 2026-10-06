@@ -189,14 +189,14 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("vmauth.service")
-      machine.wait_for_open_port(8880)
+      machine.wait_for_open_port(4204)
 
       # Open write path -- no credential at all, confirming
       # requireAuthForWrites = false genuinely leaves it unauthenticated.
       machine.succeed(
           "curl -sf -X POST --data-binary "
           "'victoria_stack_vmauth_test_metric 1' "
-          "'http://127.0.0.1:8880/opentelemetry'"
+          "'http://127.0.0.1:4204/opentelemetry'"
       )
     '';
   };
@@ -220,12 +220,12 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("vmauth.service")
-      machine.wait_for_open_port(8880)
+      machine.wait_for_open_port(4204)
 
       machine.fail(
           "curl -sf -X POST --data-binary "
           "'victoria_stack_vmauth_test_metric 1' "
-          "'http://127.0.0.1:8880/opentelemetry'"
+          "'http://127.0.0.1:4204/opentelemetry'"
       )
     '';
   };
@@ -245,19 +245,19 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("vmauth.service")
-      machine.wait_for_open_port(8880)
+      machine.wait_for_open_port(4204)
 
       # No credential: the write path must now reject the request (default
       # requireAuthForWrites = true).
       machine.fail(
-          "curl -sf -X POST --data-binary 'x 1' 'http://127.0.0.1:8880/opentelemetry'"
+          "curl -sf -X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
       )
 
       # With a valid write-tier bearer token: must succeed.
       machine.succeed(
           "curl -sf -X POST -H 'Authorization: Bearer write-token-one' "
           "--data-binary 'victoria_stack_vmauth_test_metric 1' "
-          "'http://127.0.0.1:8880/opentelemetry'"
+          "'http://127.0.0.1:4204/opentelemetry'"
       )
     '';
   };
@@ -277,19 +277,19 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("vmauth.service")
-      machine.wait_for_open_port(8880)
+      machine.wait_for_open_port(4204)
 
       # A write-tier token must NOT grant read access -- the whole point
       # of splitting the two tiers (docs/decisions/0003).
       machine.fail(
           "curl -sf -H 'Authorization: Bearer write-token-one' "
-          "'http://127.0.0.1:8880/metrics/api/v1/query?query=up'"
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
 
       # A read-tier token must succeed on the same read path.
       machine.succeed(
           "curl -sf -H 'Authorization: Bearer read-token-one' "
-          "'http://127.0.0.1:8880/metrics/api/v1/query?query=up'"
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
     '';
   };
@@ -308,17 +308,17 @@ in
     testScript = ''
       start_all()
       machine.wait_for_unit("vmauth.service")
-      machine.wait_for_open_port(8880)
+      machine.wait_for_open_port(4204)
 
       # No credential at all: must be rejected.
       machine.fail(
-          "curl -sf 'http://127.0.0.1:8880/metrics/api/v1/query?query=up'"
+          "curl -sf 'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
 
       # Basic Auth with the admin password: must succeed.
       machine.succeed(
           "curl -sf -u admin:admin-password-value "
-          "'http://127.0.0.1:8880/metrics/api/v1/query?query=up'"
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
     '';
   };

@@ -91,15 +91,15 @@ in
       start_all()
       machine.wait_for_unit("mcp-victoriametrics.service")
       machine.wait_for_unit("vmauth.service")
-      machine.wait_for_open_port(8880)
+      machine.wait_for_open_port(4204)
 
       # Reachable through vmauth's /mcp/metrics route (no trailing slash,
       # per the MCP binary's own fixed /mcp path).
-      machine.succeed("curl -sf -X POST 'http://127.0.0.1:8880/mcp/metrics' -H 'Content-Type: application/json' -d '{}' || true")
+      machine.succeed("curl -sf -X POST 'http://127.0.0.1:4204/mcp/metrics' -H 'Content-Type: application/json' -d '{}' || true")
       # The MCP server's own listenAddress stays loopback-only by default
       # -- not directly reachable from outside without vmauth routing or
       # an explicit listenAddress override (checked separately below).
-      machine.wait_for_open_port(8881)
+      machine.wait_for_open_port(4205)
     '';
   };
 
@@ -114,7 +114,7 @@ in
           metrics.enable = true;
           metrics.mcp = {
             enable = true;
-            listenAddress = "0.0.0.0:8881";
+            listenAddress = "0.0.0.0:4205";
           };
           vmauth.enable = lib.mkForce false;
         };
@@ -126,7 +126,7 @@ in
       # vmauth must not even exist/start -- confirmed separately in the
       # vmauth test group's own no-op check; here the point is that mcp
       # itself works fine standalone.
-      machine.wait_for_open_port(8881)
+      machine.wait_for_open_port(4205)
     '';
   };
 }

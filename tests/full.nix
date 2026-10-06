@@ -62,18 +62,18 @@ in
 
       machine.wait_for_open_port(80)
       machine.wait_for_open_port(3000)
-      machine.wait_for_open_port(8880)
+      machine.wait_for_open_port(4204)
 
       # End-to-end: write through vmauth with the write-tier token,
       # query back through vmauth with the read-tier token.
       machine.succeed(
           "curl -sf -X POST -H 'Authorization: Bearer full-test-write-token' "
           "--data-binary 'victoria_stack_full_test_metric 1' "
-          "'http://127.0.0.1:8880/opentelemetry'"
+          "'http://127.0.0.1:4204/opentelemetry'"
       )
       machine.wait_until_succeeds(
           "curl -sf -H 'Authorization: Bearer full-test-read-token' "
-          "'http://127.0.0.1:8880/metrics/api/v1/query?query=victoria_stack_full_test_metric' "
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=victoria_stack_full_test_metric' "
           "| grep -q '\"value\"'"
       )
 

@@ -82,7 +82,7 @@ in
       datasources = machine.succeed(
           "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"
       )
-      assert "127.0.0.1:8428" in datasources, (
+      assert "127.0.0.1:4201" in datasources, (
           f"expected the metrics datasource URL to point directly at "
           f"victoriametrics' own loopback address, not vmauth: {datasources!r}"
       )
