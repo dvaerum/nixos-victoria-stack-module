@@ -742,18 +742,21 @@ in
           "| grep -q victoria_stack_vmauth_e2e_metric"
       )
 
-      # Logs: the /logs/ read-tier prefix is a generic path-stripping
-      # passthrough (vmauth routes on path only, not HTTP method), so the
-      # admin credential can also reach the backend's own jsonline-insert
-      # endpoint through it -- confirms the "logs" prefix's
-      # drop_src_path_prefix_parts genuinely lands on the backend's root,
-      # not just that GET queries happen to work.
+      # Logs: written directly against the backend's own port, bypassing
+      # vmauth entirely -- vmauth's only real supported write path for
+      # logs is systemd-journal-upload's own wire format (exercised by
+      # the dedicated collector cross-container tests elsewhere); the
+      # read tier's own url_map is a closed allow-list under /select/*
+      # only (docs/decisions/0021) and genuinely cannot reach
+      # /insert/jsonline -- confirmed by
+      # read-tier-is-genuinely-read-only above. This test's own goal is
+      # proving vmauth's READ routing works for all 3 signals, not
+      # re-proving every possible write path.
       machine.succeed(
           "echo '{\"log\":{\"level\":\"info\",\"message\":\"victoria_stack_vmauth_e2e_log\"}"
           ",\"date\":\"0\",\"stream\":\"roundtrip\"}' | "
           "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
-          "-u admin:admin-password-value "
-          "'http://127.0.0.1:4204/logs/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
+          "'http://127.0.0.1:4202/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
       )
       machine.wait_until_succeeds(
           "curl -sf -u admin:admin-password-value "
@@ -848,5 +851,150 @@ in
           "echo OK > $out"
         else
           throw "vmauth's package fallback (no metrics enabled) did not resolve to pkgs.victoriametrics: ${execStart}"
+      );
+
+  # docs/decisions/0021 -- the read tier (readTokensFile/adminPasswordFile)
+  # was a blanket passthrough to each backend's ENTIRE native HTTP API, not
+  # a read-only route set. Verified live before this fix: a read-token
+  # could POST to /api/v1/import (write arbitrary data) and
+  # /api/v1/admin/tsdb/delete_series (permanently delete data) through
+  # vmauth's own "read" credential. This is the regression guard: confirms
+  # the read tier can reach real read endpoints but NOT real write/
+  # destructive ones, for all 3 backends, with both credential types
+  # (admin password and read token) that share the exact same url_map.
+  read-tier-is-genuinely-read-only = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-read-tier-is-genuinely-read-only";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        logs.enable = true;
+        traces.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          readTokensFile = "${readTokensFixture}";
+          requireAuthForWrites = false; # only to seed real data directly against each backend below, not exercised through the read tier itself
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_unit("victorialogs.service")
+      machine.wait_for_unit("victoriatraces.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(4201)
+      machine.wait_for_open_port(4202)
+      machine.wait_for_open_port(4203)
+
+      # Seed real data directly against each backend (bypassing vmauth
+      # entirely -- this test is about vmauth's own routing restrictions,
+      # not re-proving each backend's own ingest API).
+      machine.succeed(
+          "curl -sf -X POST --data-binary "
+          "'victoria_stack_readonly_probe_metric 1' "
+          "'http://127.0.0.1:4201/api/v1/import/prometheus'"
+      )
+      machine.succeed(
+          "echo '{\"log\":{\"level\":\"info\",\"message\":\"victoria_stack_readonly_probe_log\"}"
+          ",\"date\":\"0\",\"stream\":\"roundtrip\"}' | "
+          "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
+          "'http://127.0.0.1:4202/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
+      )
+
+      for cred in ["-u admin:admin-password-value", "-H 'Authorization: Bearer read-token-one'"]:
+          # --- metrics: real read endpoints still work ---
+          machine.wait_until_succeeds(
+              f"curl -sf {cred} 'http://127.0.0.1:4204/metrics/api/v1/query"
+              "?query=victoria_stack_readonly_probe_metric' "
+              "| grep -q victoria_stack_readonly_probe_metric"
+          )
+          machine.succeed(
+              f"curl -sf {cred} -d 'match[]=victoria_stack_readonly_probe_metric' "
+              "'http://127.0.0.1:4204/metrics/api/v1/series'"
+          )
+          machine.succeed(
+              f"curl -sf {cred} 'http://127.0.0.1:4204/metrics/api/v1/labels'"
+          )
+          # --- metrics: real write/destructive endpoints are rejected ---
+          machine.fail(
+              f"curl -sf {cred} -X POST --data-binary "
+              "'{\"metric\":{\"__name__\":\"victoria_stack_should_never_land\"},"
+              "\"values\":[1],\"timestamps\":[0]}' "
+              "'http://127.0.0.1:4204/metrics/api/v1/import'"
+          )
+          machine.fail(
+              f"curl -sf {cred} -X POST --data-binary "
+              "'match[]=victoria_stack_readonly_probe_metric' "
+              "'http://127.0.0.1:4204/metrics/api/v1/admin/tsdb/delete_series'"
+          )
+
+          # --- logs: real read endpoint still works ---
+          machine.wait_until_succeeds(
+              f"curl -sf {cred} 'http://127.0.0.1:4204/logs/select/logsql/query' "
+              "-d 'query=victoria_stack_readonly_probe_log' "
+              "| grep -q victoria_stack_readonly_probe_log"
+          )
+          # --- logs: real write endpoint is rejected ---
+          machine.fail(
+              f"curl -sf {cred} -X POST -H 'Content-Type: application/stream+json' "
+              "--data-binary '{\"log\":{\"level\":\"info\",\"message\":\"x\"},"
+              "\"date\":\"0\",\"stream\":\"x\"}' "
+              "'http://127.0.0.1:4204/logs/insert/jsonline"
+              "?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
+          )
+
+          # --- traces: real read endpoint still works ---
+          machine.succeed(
+              f"curl -sf {cred} 'http://127.0.0.1:4204/traces/select/jaeger/api/services'"
+          )
+          # --- traces: real write endpoint is rejected ---
+          machine.fail(
+              f"curl -sf {cred} -X POST -H 'Content-Type: application/json' "
+              "--data-binary '{{}}' "
+              "'http://127.0.0.1:4204/traces/insert/opentelemetry/v1/traces'"
+          )
+    '';
+  };
+
+  # Closed-world assertion: pins the literal src_paths list for each
+  # backend's read-tier route, so a future accidental widening back
+  # toward a wildcard (e.g. "/metrics/.*") is caught immediately, not
+  # just "still passes because the specific endpoints above still work".
+  read-tier-url-map-is-a-closed-allow-list-not-a-wildcard =
+    pkgs.runCommand "vmauth-read-tier-closed-allow-list" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              logs.enable = true;
+              traces.enable = true;
+            };
+          };
+          readUrlMapVar =
+            lib.findFirst (lib.hasPrefix "READ_URL_MAP_FILE=") null
+              evaluated.config.systemd.services.vmauth.serviceConfig.Environment;
+          readUrlMap = builtins.fromJSON (
+            builtins.readFile (lib.removePrefix "READ_URL_MAP_FILE=" readUrlMapVar)
+          );
+          wildcardEntries = lib.filter (
+            e:
+            lib.any (
+              p: lib.hasSuffix ".*" p && !(lib.hasInfix "/select/" p) && !(lib.hasInfix "/export" p)
+            ) e.src_paths
+          ) readUrlMap;
+        in
+        if wildcardEntries == [ ] then
+          "echo OK > $out"
+        else
+          throw ''
+            Expected every metrics read-tier src_paths entry to be a closed
+            allow-list (specific endpoints), not a broad wildcard -- found:
+            ${builtins.toJSON wildcardEntries}
+          ''
       );
 }

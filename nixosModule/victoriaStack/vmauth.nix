@@ -45,19 +45,50 @@ let
   # read: those proxies are tightly coupled to a co-located backend by
   # construction, not a meaningful target for future remote-backend
   # support the way the 3 storage services are.
+  #
+  # Curated allow-lists, NOT a blanket "/metrics/.*"-style passthrough
+  # (docs/decisions/0021): a blanket passthrough let a read-tier
+  # credential reach /api/v1/import (write arbitrary data) and
+  # /api/v1/admin/tsdb/delete_series (permanently delete data) --
+  # verified live, a real, severe privilege-escalation bug. Fails
+  # closed: a future backend release's new endpoint not yet added here
+  # is rejected by default, not silently allowed (the opposite failure
+  # mode of the bug this fixes). New legitimate read endpoints need this
+  # list updated -- use extraReadUrlMap as an interim escape hatch.
   readUrlMap = withExtraHeaders (
     lib.optional topCfg.metrics.enable {
-      src_paths = [ "/metrics/.*" ];
+      # Confirmed from VictoriaMetrics' own "Reads" API docs, and this
+      # exact set (query/query_range/series/labels/label values) is also
+      # vmauth's own official per-tenant-authorization example -- not
+      # improvised. /api/v1/export* is a genuine read (dumps data out,
+      # distinct from /api/v1/import*, the write path); /federate is
+      # Prometheus's own federation read endpoint.
+      src_paths = [
+        "/metrics/api/v1/query"
+        "/metrics/api/v1/query_range"
+        "/metrics/api/v1/series"
+        "/metrics/api/v1/labels"
+        "/metrics/api/v1/label/.+/values"
+        "/metrics/api/v1/export.*"
+        "/metrics/federate"
+      ];
       drop_src_path_prefix_parts = 1;
       url_prefix = "${topCfg.metrics.effectiveUrl}/";
     }
     ++ lib.optional topCfg.logs.enable {
-      src_paths = [ "/logs/.*" ];
+      # VictoriaLogs' entire read API lives under /select/* -- confirmed
+      # from its own HTTP API docs: /insert/* is the completely separate,
+      # never-overlapping write namespace. One regex is both correct and
+      # already a closed allow-list here, unlike metrics' API shape.
+      src_paths = [ "/logs/select/.*" ];
       drop_src_path_prefix_parts = 1;
       url_prefix = "${topCfg.logs.effectiveUrl}/";
     }
     ++ lib.optional topCfg.traces.enable {
-      src_paths = [ "/traces/.*" ];
+      # Same reasoning as logs -- VictoriaTraces' own docs: it "provides
+      # the same HTTP endpoints that VictoriaLogs provides" plus the
+      # Jaeger API, both also under /select/*.
+      src_paths = [ "/traces/select/.*" ];
       drop_src_path_prefix_parts = 1;
       url_prefix = "${topCfg.traces.effectiveUrl}/";
     }
