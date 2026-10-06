@@ -34,6 +34,23 @@ let
 in
 {
   config = lib.mkIf cfg.enable {
+    # The only reason to reach for this module's own grafana.enable
+    # instead of plain services.grafana.enable directly is the
+    # auto-wired datasource provisioning above -- with zero backends
+    # enabled, datasourceSpecs is empty and that auto-wiring delivers
+    # nothing, unlike e.g. requireAuthForWrites+no-token or
+    # manageTmpfiles=false, which both have a real alternative deployment
+    # shape behind them. Still technically works (Grafana starts fine
+    # with no provisioned datasources), so a warning, not an assertion.
+    warnings = lib.optional (datasourceSpecs == [ ]) ''
+      services.victoriaStack.grafana.enable is set, but none of
+      metrics/logs/traces.enable is -- this leaves datasourceSpecs empty,
+      so no datasource is actually provisioned into Grafana. The only
+      thing services.victoriaStack.grafana.enable does beyond plain
+      services.grafana.enable is this auto-wiring; with no backend
+      enabled there is nothing for it to wire up.
+    '';
+
     # Neither VictoriaMetrics nor VictoriaLogs is what Grafana's built-in
     # "prometheus"/"loki" datasource types actually expect on the wire
     # (VictoriaLogs speaks its own LogsQL, not LogQL) -- these are the

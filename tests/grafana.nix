@@ -1,7 +1,11 @@
 { pkgs, nixosModule }:
 
 let
+  inherit (pkgs) lib;
   module = nixosModule.nixosModules.victoriaStack;
+
+  testLib = import ./lib.nix { inherit pkgs nixosModule; };
+  inherit (testLib) mkWarningFiresCheck mkNoWarningsCheck;
 
   # services.grafana.* itself is entirely the consumer's own
   # responsibility (docs/decisions/0010) -- this module only adds
@@ -19,6 +23,49 @@ let
       settings.security.secret_key = "$__file{${secretKeyFixture}}";
     };
   };
+
+  # The remaining 4 of the 2^3 - 1 = 7 non-empty backend combinations
+  # (all-3, metrics-only, and logs+traces-without-metrics below already
+  # cover 3) -- each is a genuinely different datasourceSpecs permutation
+  # that could independently hit the same class of bug the isDefault
+  # auto-promotion check below was written for (a real Grafana >=12.2
+  # provisioning crash-loop, confirmed live, is also combination-specific
+  # by nature: deleteDatasources/declarativePlugins both build their
+  # contents from the exact same enabled-backend set).
+  mkDatasourceComboTest =
+    {
+      name,
+      backends,
+      expectPresent,
+      expectAbsent,
+    }:
+    pkgs.testers.nixosTest {
+      name = "victoria-stack-grafana-${name}";
+
+      containers.machine = {
+        imports = [
+          module
+          grafanaConsumerConfig
+        ];
+        services.victoriaStack = backends // {
+          grafana.enable = true;
+        };
+      };
+
+      testScript = ''
+        start_all()
+        machine.wait_for_unit("grafana.service")
+        machine.wait_for_open_port(3000)
+
+        datasources = machine.succeed(
+            "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"
+        )
+        for marker in ${builtins.toJSON expectPresent}:
+            assert marker in datasources, f"expected {marker!r} present: {datasources!r}"
+        for marker in ${builtins.toJSON expectAbsent}:
+            assert marker not in datasources, f"expected {marker!r} absent: {datasources!r}"
+      '';
+    };
 in
 {
   datasources-provisioned-for-enabled-backends = pkgs.testers.nixosTest {
@@ -169,5 +216,78 @@ in
           "is disabled (Grafana auto-promotes one when none is explicit)"
       )
     '';
+  };
+
+  logs-only-datasource = mkDatasourceComboTest {
+    name = "logs-only";
+    backends = {
+      logs.enable = true;
+    };
+    expectPresent = [ "victoriametrics-logs-datasource" ];
+    expectAbsent = [
+      "victoriametrics-metrics-datasource"
+      "jaeger"
+    ];
+  };
+
+  traces-only-datasource = mkDatasourceComboTest {
+    name = "traces-only";
+    backends = {
+      traces.enable = true;
+    };
+    expectPresent = [ "jaeger" ];
+    expectAbsent = [
+      "victoriametrics-metrics-datasource"
+      "victoriametrics-logs-datasource"
+    ];
+  };
+
+  metrics-and-logs-datasources = mkDatasourceComboTest {
+    name = "metrics-and-logs";
+    backends = {
+      metrics.enable = true;
+      logs.enable = true;
+    };
+    expectPresent = [
+      "victoriametrics-metrics-datasource"
+      "victoriametrics-logs-datasource"
+    ];
+    expectAbsent = [ "jaeger" ];
+  };
+
+  metrics-and-traces-datasources = mkDatasourceComboTest {
+    name = "metrics-and-traces";
+    backends = {
+      metrics.enable = true;
+      traces.enable = true;
+    };
+    expectPresent = [
+      "victoriametrics-metrics-datasource"
+      "jaeger"
+    ];
+    expectAbsent = [ "victoriametrics-logs-datasource" ];
+  };
+
+  grafana-enabled-with-zero-backends-warns = mkWarningFiresCheck {
+    name = "grafana-enabled-with-zero-backends-warns";
+    expectMessageSubstring = "datasourceSpecs empty";
+    module = {
+      services.victoriaStack.grafana.enable = true;
+      services.grafana.enable = true;
+      # metrics/logs/traces all deliberately left disabled.
+    };
+  };
+
+  # Control: any one backend enabled alongside grafana.enable -- no
+  # warning should fire.
+  grafana-enabled-with-a-backend-does-not-warn = mkNoWarningsCheck {
+    name = "grafana-enabled-with-a-backend-does-not-warn";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana.enable = true;
+      };
+      services.grafana.enable = true;
+    };
   };
 }
