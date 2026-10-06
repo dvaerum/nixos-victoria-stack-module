@@ -156,6 +156,50 @@ Vendored Grafana dashboards, default alerting rules, migrating
 - [x] 14. Two independent fresh-agent critical reviews
 - [x] 15. Address review findings, final gate, report completion
 
+## Round 2: deeper critical review (test gaps / missing options / design) + fixes
+
+Four fresh agents (storage; vmauth/grafana/nginx; mcp/collector;
+cross-cutting) reviewed again with an explicit brief to find test gaps,
+missing configurability, and bad design, not just correctness bugs. Every
+real finding was resolved in a `/grill-me` session with the project owner
+before any code changed; design decisions are docs/decisions/0014-0019,
+indexed by 0020.
+
+- [ ] 16. Write ADRs 0014-0020 capturing the grill session (this phase)
+- [ ] 17. Secret-type fix: vmauth's 3 credential-file options + collector's
+      writeTokenFile, `types.path` -> `types.str` (docs/decisions/0020)
+- [ ] 18. vmauth `openIngestPaths` behavioral fix + redundant-auth warning
+      (docs/decisions/0014)
+- [ ] 19. Storage hardening: nixpkgs profile + `wait4x` readiness +
+      `LimitNOFILE` + traces retentionPeriod doc fix + `manageTmpfiles`
+      option (docs/decisions/0015, 0020)
+- [ ] 20. vmauth + mcp hardening pass (docs/decisions/0015)
+- [ ] 21. Collector fixes: oneshot hardening/de-rooting, `hostType`
+      `strMatching`+traces coverage, `queue.directory` `ReadWritePaths`
+      (docs/decisions/0015)
+- [ ] 22. nginx rewrite: mirror vmauth timeouts/body-size, Grafana's
+      official sub-path config incl. previously-missing
+      `/grafana/api/live/` (docs/decisions/0016)
+- [ ] 23. Port renumbering: victoriaStack services 4201-4207
+      (docs/decisions/0017)
+- [ ] 24. `effectiveUrl` structural seam + external-backend/clustering
+      scope docs (docs/decisions/0019)
+- [ ] 25. CI consolidation: single workflow + job dependency,
+      `update-docs.yml` permissions fix (docs/decisions/0018)
+- [ ] 26. New vmauth options: concurrency, backend TLS, IP filters,
+      custom headers, load-balancing/failover (docs/decisions/0020)
+- [ ] 27. New alloy options: OTLP exporter TLS, retry/backoff tuning
+      (docs/decisions/0020)
+- [ ] 28. New mcp options: logLevel/logFormat/disabledTools passthrough
+      (docs/decisions/0020)
+- [ ] 29. Documentation: PLAN.md/README fixes, new architecture wiring
+      diagram, escape-hatch notes (docs/decisions/0020)
+- [ ] 30. Test harness unification: `tests/lib.nix`'s `evalWith`
+      generalized for both module trees
+- [ ] 31. Close remaining test gaps (large batch across all test files)
+- [ ] 32. Final full `nix flake check -L` gate
+- [ ] 33. Fresh-agent re-review round 3, triage, final push
+
 Each phase: gate with `nix flake check -L` (run detached, polled — never a
 single tool-call timeout for a full nspawn build) + nixfmt-rfc-style clean,
 commit separately, push. Any genuinely open question discovered mid-phase
