@@ -82,7 +82,7 @@ section):
     metrics.enable = true;
     logs.enable = true;
     writeEndpoint = "https://victoria-stack.example.com:8443";
-    writeTokenFile = /run/secrets/victoria-collector-write-token;
+    writeTokenFile = "/run/secrets/victoria-collector-write-token";
     hostType = "server";
   };
 }

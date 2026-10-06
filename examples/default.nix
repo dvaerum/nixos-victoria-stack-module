@@ -34,9 +34,9 @@
 
     vmauth = {
       # enable = true; -- auto-enabled (mkDefault) since a backend is on.
-      adminPasswordFile = /run/secrets/victoria/vmauth-admin-password;
-      readTokensFile = /run/secrets/victoria/vmauth-read-tokens.yaml;
-      writeTokensFile = /run/secrets/victoria/vmauth-write-tokens.yaml;
+      adminPasswordFile = "/run/secrets/victoria/vmauth-admin-password";
+      readTokensFile = "/run/secrets/victoria/vmauth-read-tokens.yaml";
+      writeTokensFile = "/run/secrets/victoria/vmauth-write-tokens.yaml";
     };
 
     grafana.enable = true;
@@ -62,7 +62,7 @@
     metrics.enable = true;
     logs.enable = true;
     writeEndpoint = "http://127.0.0.1:8880";
-    writeTokenFile = /run/secrets/victoria/collector-write-token;
+    writeTokenFile = "/run/secrets/victoria/collector-write-token";
     hostType = "server";
   };
 }

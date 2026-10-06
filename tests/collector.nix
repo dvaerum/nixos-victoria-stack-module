@@ -47,7 +47,7 @@ in
       imports = [ stackModule ];
       services.victoriaStack = {
         metrics.enable = true;
-        vmauth.writeTokensFile = writeTokensFixture;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
       };
     };
 
@@ -57,7 +57,7 @@ in
       services.victoriaCollector = {
         metrics.enable = true;
         writeEndpoint = "http://stack:8880";
-        writeTokenFile = writeTokenFixture;
+        writeTokenFile = "${writeTokenFixture}";
         hostType = "server";
       };
     };
@@ -159,6 +159,28 @@ in
           "echo OK > $out"
         else
           throw "journal-upload https:// branch did not render the expected settings: ${builtins.toJSON upload}"
+      );
+
+  write-token-file-is-a-plain-string-not-a-nix-path =
+    pkgs.runCommand "collector-write-token-file-is-a-plain-string" { }
+      (
+        let
+          # Same bug class as vmauth's adminPasswordFile/readTokensFile/
+          # writeTokensFile (tests/vmauth.nix) -- the identical
+          # LoadCredential="write-token:${cfg.writeTokenFile}" interpolation
+          # shape exists twice in config.nix (alloy's oneshot and
+          # journal-upload's oneshot). See docs/decisions/0020.
+          actualType =
+            httpsEvaluated.options.services.victoriaCollector.writeTokenFile.type.nestedTypes.elemType.name;
+        in
+        if actualType == "str" then
+          "echo OK > $out"
+        else
+          throw ''
+            victoriaCollector.writeTokenFile must be types.str, not
+            types.path (actual type: ${actualType}) -- same eval-crash/
+            Nix-store-secret-leak risk as vmauth's equivalent options.
+          ''
       );
 
   queue-option-takes-effect = pkgs.testers.nixosTest {

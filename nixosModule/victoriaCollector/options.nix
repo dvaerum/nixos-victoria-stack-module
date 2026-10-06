@@ -46,14 +46,19 @@ in
     };
 
     writeTokenFile = mkOption {
-      type = types.nullOr types.path;
+      type = types.nullOr types.str;
       default = null;
       description = ''
-        Path to a file containing exactly one bearer token (no YAML
-        structure needed at this end -- that's vmauth's own
-        `writeTokensFile` list on the gateway side) authorizing this host's
-        write traffic. Required whenever the gateway's own
-        `requireAuthForWrites` is `true` (the default).
+        Path (as a plain string, NOT a Nix path literal -- interpolating a
+        real Nix path forces a Nix-store copy at eval time, which either
+        crashes if the file doesn't exist yet on the build machine, the
+        normal case, since it lands at runtime via LoadCredential= (see
+        docs/decisions/0008/0020), or leaks the plaintext secret into the
+        world-readable store if it does) to a file containing exactly one
+        bearer token (no YAML structure needed at this end -- that's
+        vmauth's own `writeTokensFile` list on the gateway side)
+        authorizing this host's write traffic. Required whenever the
+        gateway's own `requireAuthForWrites` is `true` (the default).
       '';
     };
 

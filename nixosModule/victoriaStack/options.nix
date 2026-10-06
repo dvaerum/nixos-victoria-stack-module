@@ -208,12 +208,18 @@ in
       };
 
       writeTokensFile = mkOption {
-        type = types.nullOr types.path;
+        type = types.nullOr types.str;
         default = null;
         description = ''
-          Path to a YAML file (typically sops-nix rendered) containing a
-          `tokens:` list of bearer tokens authorized for the write/ingest
-          paths only. Each entry may carry an inline `#` comment (stripped
+          Path (as a plain string, NOT a Nix path literal -- interpolating
+          a real Nix path forces a Nix-store copy at eval time, which
+          either crashes if the file doesn't exist yet on the build
+          machine (the normal case: it lands at runtime via
+          LoadCredential=, see docs/decisions/0008/0020) or leaks the
+          plaintext secret into the world-readable store if it does) to a
+          YAML file (typically sops-nix rendered) containing a `tokens:`
+          list of bearer tokens authorized for the write/ingest paths
+          only. Each entry may carry an inline `#` comment (stripped
           automatically) naming which host/purpose it's for. See
           docs/decisions/0003-vmauth-two-credential-tiers.md. Required
           when `requireAuthForWrites = true` and at least one storage
@@ -222,23 +228,27 @@ in
       };
 
       readTokensFile = mkOption {
-        type = types.nullOr types.path;
+        type = types.nullOr types.str;
         default = null;
         description = ''
-          Path to a YAML file (typically sops-nix rendered) containing a
-          `tokens:` list of bearer tokens authorized for read + MCP paths.
-          Deliberately a SEPARATE file from `writeTokensFile` -- see
+          Path (as a plain string -- see `writeTokensFile`'s description
+          for why not a Nix path literal) to a YAML file (typically
+          sops-nix rendered) containing a `tokens:` list of bearer tokens
+          authorized for read + MCP paths. Deliberately a SEPARATE file
+          from `writeTokensFile` -- see
           docs/decisions/0003-vmauth-two-credential-tiers.md for why.
         '';
       };
 
       adminPasswordFile = mkOption {
-        type = types.nullOr types.path;
+        type = types.nullOr types.str;
         default = null;
         description = ''
-          Path to a file containing the plaintext password for vmauth's
-          Basic Auth "admin" user (read + MCP paths, same access as any
-          `readTokensFile` entry, just a different credential type).
+          Path (as a plain string -- see `writeTokensFile`'s description
+          for why not a Nix path literal) to a file containing the
+          plaintext password for vmauth's Basic Auth "admin" user (read +
+          MCP paths, same access as any `readTokensFile` entry, just a
+          different credential type).
         '';
       };
 

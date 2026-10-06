@@ -6,7 +6,7 @@ let
   module = nixosModule.nixosModules.victoriaStack;
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) mkNoAssertionsFireCheck;
+  inherit (testLib) mkNoAssertionsFireCheck evalWith;
 
   # Plain test fixtures -- not sops-rendered (this module's own options are
   # secrets-backend-agnostic, see docs/decisions/0008; sops-nix integration
@@ -26,6 +26,44 @@ let
 in
 {
   # --- eval-only ---
+
+  secret-options-are-plain-strings-not-nix-paths =
+    pkgs.runCommand "vmauth-secret-options-are-plain-strings-not-nix-paths" { }
+      (
+        let
+          evaluated = evalWith { };
+          # types.path's own check/merge functions coerce via toString at
+          # option-definition time (not lazily deferred to actual use) --
+          # confirmed directly: builtins.tryEval cannot catch the crash this
+          # produces for a nonexistent path, because interpolating a real
+          # Nix `path` value through a flake's filtered source tree is a
+          # restricted-eval abort, not an ordinary catchable exception.
+          # Asserting the TYPE itself, rather than trying to reproduce one
+          # downstream symptom of the wrong type, is both simpler and more
+          # direct -- it's the actual root cause docs/decisions/0020
+          # describes (eval-time crash OR a Nix-store secret leak,
+          # depending on whether the path happens to exist on the build
+          # machine).
+          actualType =
+            name: evaluated.options.services.victoriaStack.vmauth.${name}.type.nestedTypes.elemType.name;
+          wrongTypes = builtins.filter (name: actualType name != "str") [
+            "adminPasswordFile"
+            "readTokensFile"
+            "writeTokensFile"
+          ];
+        in
+        if wrongTypes == [ ] then
+          "echo OK > $out"
+        else
+          throw ''
+            vmauth's ${builtins.concatStringsSep ", " wrongTypes} must be
+            types.str, not types.path -- interpolating a Nix path forces a
+            store copy at eval time (crash if the secret doesn't exist yet
+            on the build machine, the normal LoadCredential= case per
+            docs/decisions/0008; a plaintext secret leak into the Nix store
+            if it does). See docs/decisions/0020.
+          ''
+      );
 
   vmauth-auto-enables-when-backend-on = mkNoAssertionsFireCheck {
     name = "vmauth-auto-enables-when-backend-on";
@@ -104,7 +142,7 @@ in
       services.victoriaStack = {
         metrics.enable = true;
         # requireAuthForWrites left at its true default.
-        vmauth.writeTokensFile = writeTokensFixture;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
       };
     };
 
@@ -135,8 +173,8 @@ in
       imports = [ module ];
       services.victoriaStack = {
         metrics.enable = true;
-        vmauth.writeTokensFile = writeTokensFixture;
-        vmauth.readTokensFile = readTokensFixture;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
+        vmauth.readTokensFile = "${readTokensFixture}";
       };
     };
 
@@ -167,7 +205,7 @@ in
       imports = [ module ];
       services.victoriaStack = {
         metrics.enable = true;
-        vmauth.adminPasswordFile = adminPasswordFixture;
+        vmauth.adminPasswordFile = "${adminPasswordFixture}";
       };
     };
 

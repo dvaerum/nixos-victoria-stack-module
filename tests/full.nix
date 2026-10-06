@@ -33,15 +33,15 @@ in
         ];
 
         services.victoriaStack.vmauth = {
-          adminPasswordFile = lib.mkForce adminPasswordFixture;
-          readTokensFile = lib.mkForce readTokensFixture;
-          writeTokensFile = lib.mkForce writeTokensFixture;
+          adminPasswordFile = lib.mkForce "${adminPasswordFixture}";
+          readTokensFile = lib.mkForce "${readTokensFixture}";
+          writeTokensFile = lib.mkForce "${writeTokensFixture}";
         };
         services.grafana.settings.security = {
           secret_key = lib.mkForce "$__file{${grafanaSecretKeyFixture}}";
           admin_password = lib.mkForce "$__file{${grafanaAdminPasswordFixture}}";
         };
-        services.victoriaCollector.writeTokenFile = lib.mkForce collectorWriteTokenFixture;
+        services.victoriaCollector.writeTokenFile = lib.mkForce "${collectorWriteTokenFixture}";
       };
 
     testScript = ''
