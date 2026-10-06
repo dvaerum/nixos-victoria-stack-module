@@ -40,4 +40,27 @@ feature now would be new scope disproportionate to a bug-fixing pass.
 The `effectiveUrl` seam is cheap insurance against a *future* breaking
 change specifically for external-backend support, without committing to
 building the feature itself today.
+
+## Addendum: two more vmauth options considered and explicitly NOT added
+
+Found while implementing Phase 26's vmauth option additions
+(concurrency limits, backend TLS, custom headers all landed — see
+`options.nix`):
+
+- **vmauth IP filters** (`ip_filters.allow_list`/`deny_list`) are an
+  **Enterprise-only vmauth feature** — confirmed directly from
+  vmauth's own docs ("The Enterprise version of vmauth can be
+  configured to allow/deny incoming requests via global and per-user IP
+  filters"). This project packages `pkgs.victoriametrics`, the open-source
+  build. Shipping a Nix option for this would silently do nothing against
+  the actual binary this module defaults to — not implemented.
+- **Load-balancing/failover** (`url_prefix` as a list + `load_balancing_
+  policy`) requires *multiple independent backend instances* for the
+  same signal — structurally the same "more than one backend" concept
+  this ADR already defers under multi-instance/clustering. This
+  module's `effectiveUrl` seam produces exactly one URL per signal by
+  design; there is no list to load-balance across without first building
+  multi-backend support, which this ADR already puts out of scope. Not
+  implemented for the same reason multi-instance clustering isn't.
+
 </content>

@@ -97,6 +97,126 @@ in
           ''
       );
 
+  concurrency-limits-are-inert-unless-configured =
+    pkgs.runCommand "vmauth-concurrency-limits-inert-unless-configured" { }
+      (
+        let
+          unset = evalWith { services.victoriaStack.metrics.enable = true; };
+          set = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              vmauth = {
+                maxConcurrentRequests = 100;
+                maxConcurrentPerUserRequests = 10;
+              };
+            };
+          };
+          execStartUnset = unset.config.systemd.services.vmauth.serviceConfig.ExecStart;
+          execStartSet = set.config.systemd.services.vmauth.serviceConfig.ExecStart;
+          checks = {
+            "flags absent when unset" =
+              !(lib.hasInfix "maxConcurrentRequests" execStartUnset)
+              && !(lib.hasInfix "maxConcurrentPerUserRequests" execStartUnset);
+            "flags present when set" =
+              lib.hasInfix "-maxConcurrentRequests=100" execStartSet
+              && lib.hasInfix "-maxConcurrentPerUserRequests=10" execStartSet;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "concurrency-limit options broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  backend-tls-options-are-inert-unless-configured =
+    pkgs.runCommand "vmauth-backend-tls-inert-unless-configured" { }
+      (
+        let
+          unset = evalWith { services.victoriaStack.metrics.enable = true; };
+          set = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              vmauth.backendTls = {
+                insecureSkipVerify = true;
+                # A real path within this flake's own source tree -- an
+                # absolute path outside it (e.g. the real
+                # /etc/ssl/certs/ca-certificates.crt) hits flakes' own
+                # pure-eval "path outside the flake" restriction when
+                # assigned to a types.path option (confirmed directly, same
+                # class of restriction as the secret-type tests above).
+                # Content is irrelevant here, only that it's a real,
+                # evaluable path.
+                caFile = ./lib.nix;
+                certFile = "${writeTokensFixture}"; # any string fixture, content irrelevant here
+                keyFile = "${readTokensFixture}";
+              };
+            };
+          };
+          execStartUnset = unset.config.systemd.services.vmauth.serviceConfig.ExecStart;
+          execStartSet = set.config.systemd.services.vmauth.serviceConfig.ExecStart;
+          loadCredentialSet = set.config.systemd.services.vmauth.serviceConfig.LoadCredential;
+          checks = {
+            "flags absent when unset" = !(lib.hasInfix "backend.tls" execStartUnset);
+            "insecureSkipVerify flag present" = lib.hasInfix "-backend.tlsInsecureSkipVerify=true" execStartSet;
+            "caFile flag present" = lib.hasInfix "-backend.tlsCAFile=" execStartSet;
+            "certFile/keyFile reference %d (LoadCredential), not a literal path" =
+              lib.hasInfix "-backend.tlsCertFile=%d/backend-tls-cert" execStartSet
+              && lib.hasInfix "-backend.tlsKeyFile=%d/backend-tls-key" execStartSet;
+            "certFile/keyFile staged via LoadCredential" =
+              lib.any (lib.hasPrefix "backend-tls-cert:") loadCredentialSet
+              && lib.any (lib.hasPrefix "backend-tls-key:") loadCredentialSet;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "backendTls options broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  extra-headers-are-inert-unless-configured =
+    pkgs.runCommand "vmauth-extra-headers-inert-unless-configured" { }
+      (
+        let
+          unset = evalWith { services.victoriaStack.metrics.enable = true; };
+          set = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              vmauth = {
+                extraRequestHeaders = [ "TenantID: foobar" ];
+                extraResponseHeaders = [ "Server:" ];
+              };
+            };
+          };
+          envVar =
+            evaluated:
+            let
+              readUrlMapVar =
+                lib.findFirst (lib.hasPrefix "READ_URL_MAP_FILE=") null
+                  evaluated.config.systemd.services.vmauth.serviceConfig.Environment;
+            in
+            builtins.fromJSON (builtins.readFile (lib.removePrefix "READ_URL_MAP_FILE=" readUrlMapVar));
+          unsetMap = envVar unset;
+          setMap = envVar set;
+          checks = {
+            "no headers key anywhere when unset" = lib.all (
+              e: !(e ? headers) && !(e ? response_headers)
+            ) unsetMap;
+            "headers key present on every entry when set" =
+              setMap != [ ]
+              && lib.all (
+                e: (e.headers or [ ]) == [ "TenantID: foobar" ] && (e.response_headers or [ ]) == [ "Server:" ]
+              ) setMap;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "extraRequestHeaders/extraResponseHeaders broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
   secret-options-are-plain-strings-not-nix-paths =
     pkgs.runCommand "vmauth-secret-options-are-plain-strings-not-nix-paths" { }
       (

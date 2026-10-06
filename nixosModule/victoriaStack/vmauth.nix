@@ -11,6 +11,16 @@ let
 
   anyBackendEnabled = topCfg.metrics.enable || topCfg.logs.enable || topCfg.traces.enable;
 
+  # vmauth's own `headers`/`response_headers` url_map keys -- applied
+  # uniformly to every entry this module builds (read, write, and MCP
+  # routes alike) when configured, omitted entirely otherwise.
+  extraHeadersAttrs =
+    lib.optionalAttrs (cfg.extraRequestHeaders != [ ]) { headers = cfg.extraRequestHeaders; }
+    // lib.optionalAttrs (cfg.extraResponseHeaders != [ ]) {
+      response_headers = cfg.extraResponseHeaders;
+    };
+  withExtraHeaders = map (entry: entry // extraHeadersAttrs);
+
   # Each enabled backend's own native read API, reached via vmauth as
   # /metrics/*, /logs/*, /traces/* -- src_paths are POST-STRIP (vmauth
   # itself strips nothing; whatever fronts vmauth, e.g. nginx, is
@@ -22,7 +32,7 @@ let
   # read: those proxies are tightly coupled to a co-located backend by
   # construction, not a meaningful target for future remote-backend
   # support the way the 3 storage services are.
-  readUrlMap =
+  readUrlMap = withExtraHeaders (
     lib.optional topCfg.metrics.enable {
       src_paths = [ "/metrics/.*" ];
       drop_src_path_prefix_parts = 1;
@@ -58,14 +68,15 @@ let
       drop_src_path_prefix_parts = 2;
       url_prefix = "http://${topCfg.traces.mcp.listenAddress}/mcp";
     }
-    ++ cfg.extraReadUrlMap;
+    ++ cfg.extraReadUrlMap
+  );
 
   # Each enabled backend's own native ingest/write path -- auto-derived
   # default for `openIngestPaths`, confirmed from each project's own data
   # ingestion docs (not assumed to share one shape): VictoriaMetrics' OTLP
   # receiver, VictoriaLogs' native journald-upload handler, VictoriaTraces'
   # OTLP receiver.
-  autoOpenIngestPaths =
+  autoOpenIngestPaths = withExtraHeaders (
     lib.optional topCfg.metrics.enable {
       src_paths = [ "/opentelemetry.*" ];
       url_prefix = "${topCfg.metrics.effectiveUrl}/";
@@ -77,7 +88,8 @@ let
     ++ lib.optional topCfg.traces.enable {
       src_paths = [ "/insert/opentelemetry/v1/traces.*" ];
       url_prefix = "${topCfg.traces.effectiveUrl}/";
-    };
+    }
+  );
 
   readUrlMapFile = pkgs.writeText "vmauth-read-url-map.json" (builtins.toJSON readUrlMap);
   openIngestPathsFile = pkgs.writeText "vmauth-open-ingest-paths.json" (
@@ -179,7 +191,9 @@ in
         LoadCredential =
           lib.optional (cfg.adminPasswordFile != null) "admin-password:${cfg.adminPasswordFile}"
           ++ lib.optional (cfg.readTokensFile != null) "read-tokens:${cfg.readTokensFile}"
-          ++ lib.optional (cfg.writeTokensFile != null) "write-tokens:${cfg.writeTokensFile}";
+          ++ lib.optional (cfg.writeTokensFile != null) "write-tokens:${cfg.writeTokensFile}"
+          ++ lib.optional (cfg.backendTls.certFile != null) "backend-tls-cert:${cfg.backendTls.certFile}"
+          ++ lib.optional (cfg.backendTls.keyFile != null) "backend-tls-key:${cfg.backendTls.keyFile}";
 
         Environment = [
           "READ_URL_MAP_FILE=${readUrlMapFile}"
@@ -195,7 +209,29 @@ in
         # force-closes connections collectors are about to reuse --
         # confirmed in production, see cfg.idleConnTimeout's own option
         # description.
-        ExecStart = "${cfg.package}/bin/vmauth -auth.config=/run/vmauth/config.json -httpListenAddr=${cfg.listenAddress} -http.idleConnTimeout=${cfg.idleConnTimeout}";
+        ExecStart = lib.concatStringsSep " " (
+          [
+            "${cfg.package}/bin/vmauth"
+            "-auth.config=/run/vmauth/config.json"
+            "-httpListenAddr=${cfg.listenAddress}"
+            "-http.idleConnTimeout=${cfg.idleConnTimeout}"
+          ]
+          ++ lib.optional (
+            cfg.maxConcurrentRequests != null
+          ) "-maxConcurrentRequests=${toString cfg.maxConcurrentRequests}"
+          ++ lib.optional (
+            cfg.maxConcurrentPerUserRequests != null
+          ) "-maxConcurrentPerUserRequests=${toString cfg.maxConcurrentPerUserRequests}"
+          ++ lib.optional cfg.backendTls.insecureSkipVerify "-backend.tlsInsecureSkipVerify=true"
+          ++ lib.optional (cfg.backendTls.caFile != null) "-backend.tlsCAFile=${cfg.backendTls.caFile}"
+          # %d expands to $CREDENTIALS_DIRECTORY at the service manager
+          # level (same pattern nixpkgs' own victoriametrics.nix module
+          # uses for -httpAuth.password=file://%d/basic_auth_password) --
+          # never a literal path, the credential is staged there by
+          # LoadCredential= at runtime.
+          ++ lib.optional (cfg.backendTls.certFile != null) "-backend.tlsCertFile=%d/backend-tls-cert"
+          ++ lib.optional (cfg.backendTls.keyFile != null) "-backend.tlsKeyFile=%d/backend-tls-key"
+        );
         RuntimeDirectory = "vmauth";
         RuntimeDirectoryMode = "0700";
         # Default UMask (0022) would render config.json -- every bearer

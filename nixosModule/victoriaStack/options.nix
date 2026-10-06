@@ -239,6 +239,102 @@ in
         '';
       };
 
+      maxConcurrentRequests = mkOption {
+        type = types.nullOr types.int;
+        default = null;
+        description = ''
+          vmauth's `-maxConcurrentRequests` -- the global limit on
+          concurrent requests across all configured users. `null` (the
+          default) omits the flag entirely, matching vmauth's own
+          upstream default.
+        '';
+      };
+
+      maxConcurrentPerUserRequests = mkOption {
+        type = types.nullOr types.int;
+        default = null;
+        description = ''
+          vmauth's `-maxConcurrentPerUserRequests` -- the limit on
+          concurrent requests per configured user. `null` (the default)
+          omits the flag entirely, matching vmauth's own upstream
+          default.
+        '';
+      };
+
+      backendTls = {
+        insecureSkipVerify = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            vmauth's `-backend.tlsInsecureSkipVerify` -- skip TLS
+            verification when connecting to HTTPS backends. `false` (the
+            default) omits the flag entirely, matching vmauth's own
+            upstream default.
+          '';
+        };
+
+        caFile = mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = ''
+            vmauth's `-backend.tlsCAFile` -- CA bundle for verifying
+            backend TLS certificates. A real Nix path is fine here (unlike
+            the credential options above): a CA bundle is public by
+            nature, not a runtime-staged secret.
+          '';
+        };
+
+        certFile = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = ''
+            vmauth's `-backend.tlsCertFile` -- client certificate for
+            mTLS to HTTPS backends. Path as a plain string, staged via
+            `LoadCredential=` at runtime, same reasoning as
+            `adminPasswordFile` above -- paired with a private key, worth
+            treating with the same care even though a certificate alone
+            isn't secret.
+          '';
+        };
+
+        keyFile = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = ''
+            vmauth's `-backend.tlsKeyFile` -- the client private key
+            paired with `certFile`, for mTLS to HTTPS backends. Path as a
+            plain string, NOT a Nix path literal -- this is a real private
+            key; the exact same eval-crash/Nix-store-leak risk as
+            `adminPasswordFile` applies (docs/decisions/0020), staged via
+            `LoadCredential=` at runtime.
+          '';
+        };
+      };
+
+      extraRequestHeaders = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "TenantID: foobar" ];
+        description = ''
+          vmauth's `headers` option -- extra HTTP request headers set (or,
+          with an empty value, removed) before proxying to any enabled
+          backend. Applied uniformly across every url_map entry this
+          module builds (read, write, and MCP routes alike).
+        '';
+      };
+
+      extraResponseHeaders = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "Server:" ];
+        description = ''
+          vmauth's `response_headers` option -- extra HTTP response
+          headers set (or, with an empty value, removed) before returning
+          the backend's response to the client. Applied uniformly across
+          every url_map entry this module builds.
+        '';
+      };
+
       requireAuthForWrites = mkOption {
         type = types.bool;
         default = true;
