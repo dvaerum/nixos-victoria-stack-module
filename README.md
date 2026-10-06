@@ -5,9 +5,10 @@ VictoriaTraces stack with an auth gateway (vmauth), optional Grafana
 datasource wiring, optional nginx reverse-proxy, optional MCP servers, and a
 separate fleet-wide collector agent (`victoriaCollector`).
 
-See [`PLAN.md`](./PLAN.md) for the full design and task list, and
+See [`PLAN.md`](./PLAN.md) for the full design and task list,
 [`docs/decisions/`](./docs/decisions/) for the ADRs behind each real design
-decision.
+decision, and [`docs/architecture.md`](./docs/architecture.md) for the
+default network topology (what's reachable from where, out of the box).
 
 **Documentation:** [options](./docs/options.md)
 
@@ -63,7 +64,7 @@ code in the module itself):
 ```nix
 {
   imports = [
-    (fetchTarball "https://github.com/dvaerum/nixos-victoria-stack-module/archive/main.tar.gz" + "/nixosModule")
+    (fetchTarball "https://github.com/dvaerum/nixos-victoria-stack-module/archive/master.tar.gz" + "/nixosModule")
   ];
 }
 ```
@@ -95,6 +96,36 @@ module has no opinion about how the file got there. It composes cleanly with
 sops-nix's own native "one encrypted file, many individually-addressed
 secrets" support (`sops.secrets."group/key".path`), or agenix, or anything
 else -- see `docs/decisions/0008-agnostic-secrets-file-options.md`.
+
+## Escape hatches for things this module deliberately doesn't wrap
+
+Two things found useful in practice have no first-class option here on
+purpose -- both are already fully configurable through the generic NixOS
+mechanism that already exists for them, so adding a second, narrower
+mechanism here would just be a worse version of something you already have:
+
+- **Systemd resource limits** (`MemoryMax`, `CPUQuota`, etc.) for the
+  storage services: `systemd.services.<name>.serviceConfig` already does
+  this for every NixOS service. The unit names are a stable contract you
+  can target directly: `victoriametrics`, `victorialogs`, `victoriatraces`,
+  `vmauth`, `mcp-victoriametrics`, `mcp-victorialogs`, `mcp-victoriatraces`.
+  For example:
+
+  ```nix
+  systemd.services.victoriametrics.serviceConfig.MemoryMax = "4G";
+  ```
+
+- **Grafana datasource tuning** (which datasource is `isDefault`, custom
+  `jsonData` like TLS skip-verify or scrape intervals) beyond what
+  `services.victoriaStack.grafana.enable` auto-provisions:
+  `services.grafana.provision.datasources.settings` is a fully generic,
+  already-existing NixOS option tree this module's own datasource wiring
+  is a plain (non-`mkForce`) definition against. Adding a *new* datasource
+  this way merges cleanly; tweaking one of the *three auto-provisioned*
+  entries (VictoriaMetrics/VictoriaLogs/VictoriaTraces) needs
+  `lib.mkForce` on the whole `datasources` list, since list-typed options
+  don't merge per-entry -- reconstruct all three yourself if you go this
+  route.
 
 ## License
 
