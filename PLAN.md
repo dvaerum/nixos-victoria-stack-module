@@ -238,7 +238,18 @@ indexed by 0020.
       (grafana), queue-option isolation + traces-exporter coverage
       (collector) -- all container-boot
 - [ ] 32. Final full `nix flake check -L` gate
-- [ ] 33. Fresh-agent re-review round 3, triage, final push
+- [x] 33. Fresh-agent re-review round 3, triage, final push -- 2
+      independent agents, no shared context. Fixed 2 genuine bugs
+      (extraReadUrlMap header-clobbering, same `//` class as the nginx
+      bug in Phase 22; wait4x's IPv6-wildcard readiness gap), corrected
+      ADR 0020's false claims and PLAN.md's stale options-surface block,
+      closed 7 test-coverage gaps (vmauth logs/traces end-to-end,
+      vmauth.package, manageTmpfiles logs/traces, assertions logs/traces,
+      extraReadUrlMap, wildcard-readiness both IPv4/IPv6, journal-upload
+      hard dependency), fixed examples/default.nix's missing collector
+      traces.enable, added update-docs.yml's missing concurrency group.
+      Explicitly reverted one overly-broad fix (a requireAuthForWrites
+      warning) after confirming it broke 9+ legitimate existing tests.
 
 Each phase: gate with `nix flake check -L` (run detached, polled — never a
 single tool-call timeout for a full nspawn build) + nixfmt-rfc-style clean,
