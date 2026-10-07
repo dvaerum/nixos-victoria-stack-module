@@ -527,7 +527,7 @@ in
           "${otlpMetric} victoria_stack_vmauth_write_token_metric 1 > /tmp/otlp.bin"
       )
       machine.succeed(
-          "curl -sf -X POST -H 'Authorization: Bearer write-token-one' "
+          "curl -sf -X POST -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
           "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
           "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
@@ -558,13 +558,13 @@ in
       # A write-tier token must NOT grant read access -- the whole point
       # of splitting the two tiers (docs/decisions/0003).
       machine.fail(
-          "curl -sf -H 'Authorization: Bearer write-token-one' "
+          "curl -sf -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
           "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
 
       # A read-tier token must succeed on the same read path.
       machine.succeed(
-          "curl -sf -H 'Authorization: Bearer read-token-one' "
+          "curl -sf -H 'Authorization: Bearer read-token-one' "  # gitleaks:allow
           "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
     '';
@@ -588,7 +588,7 @@ in
 
       # No credential at all: must be rejected.
       machine.fail(
-          "curl -sf 'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+          "curl -sf 'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"  # gitleaks:allow
       )
 
       # Basic Auth with the admin password: must succeed.
@@ -625,7 +625,7 @@ in
       machine.wait_for_open_port(4204)
 
       machine.fail(
-          "curl -sf -H 'Authorization: Bearer read-token-one' "
+          "curl -sf -H 'Authorization: Bearer read-token-one' "  # gitleaks:allow
           "-X POST --data-binary 'victoria_stack_vmauth_test_metric 1' "
           "'http://127.0.0.1:4204/opentelemetry'"
       )
@@ -639,7 +639,7 @@ in
       # (read) path -- the write rejection above isn't masking a config
       # that broke reads entirely.
       machine.succeed(
-          "curl -sf -H 'Authorization: Bearer read-token-one' "
+          "curl -sf -H 'Authorization: Bearer read-token-one' "  # gitleaks:allow
           "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
       machine.succeed(
@@ -676,7 +676,7 @@ in
 
       # Each tier's own route succeeds...
       machine.succeed(
-          "curl -sf -u admin:admin-password-value "
+          "curl -sf -u admin:admin-password-value "  # gitleaks:allow
           "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
       machine.succeed(
@@ -687,7 +687,7 @@ in
           "${otlpMetric} victoria_stack_vmauth_all_tiers_test_metric 1 > /tmp/otlp.bin"
       )
       machine.succeed(
-          "curl -sf -H 'Authorization: Bearer write-token-one' "
+          "curl -sf -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
           "-X POST -H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
           "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
@@ -700,7 +700,7 @@ in
       # tiers don't interfere with or widen each other when all present
       # at once.
       machine.fail(
-          "curl -sf -u admin:admin-password-value "
+          "curl -sf -u admin:admin-password-value "  # gitleaks:allow
           "-X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
       )
       machine.fail(
@@ -708,7 +708,7 @@ in
           "-X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
       )
       machine.fail(
-          "curl -sf -H 'Authorization: Bearer write-token-one' "
+          "curl -sf -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
           "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
     '';
@@ -760,7 +760,7 @@ in
       # All 3 tiers still independently work with every other feature
       # configured at once.
       machine.succeed(
-          "curl -sf -u admin:admin-password-value "
+          "curl -sf -u admin:admin-password-value "  # gitleaks:allow
           "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
       )
       machine.succeed(
@@ -771,7 +771,7 @@ in
           "${otlpMetric} victoria_stack_vmauth_full_combo_test_metric 1 > /tmp/otlp.bin"
       )
       machine.succeed(
-          "curl -sf -H 'Authorization: Bearer write-token-one' "
+          "curl -sf -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
           "-X POST -H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
           "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
@@ -785,10 +785,10 @@ in
       # both the custom route's own header behavior and the
       # module-wide extraResponseHeaders.
       machine.succeed(
-          "curl -sf -u admin:admin-password-value "
+          "curl -sf -u admin:admin-password-value "  # gitleaks:allow
           "'http://127.0.0.1:4204/custom-escape-hatch?query=up'"
       )
-      machine.fail("curl -sf 'http://127.0.0.1:4204/custom-escape-hatch?query=up'")
+      machine.fail("curl -sf 'http://127.0.0.1:4204/custom-escape-hatch?query=up'")  # gitleaks:allow
       machine.succeed(
           "curl -sfD - -u admin:admin-password-value "
           "'http://127.0.0.1:4204/custom-escape-hatch?query=up' "
@@ -851,7 +851,7 @@ in
       machine.wait_for_open_port(4204)
 
       machine.fail(
-          "curl -sf -X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
+          "curl -sf -X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"  # gitleaks:allow
       )
       # Confirms there is no credential of any form (correctly-shaped or
       # not) that could open the write path in this state.
@@ -901,7 +901,7 @@ in
           "${otlpMetric} victoria_stack_vmauth_e2e_metric 1 > /tmp/otlp.bin"
       )
       machine.succeed(
-          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' "
+          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' "  # gitleaks:allow
           "--data-binary @/tmp/otlp.bin "
           "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
@@ -924,7 +924,7 @@ in
       machine.succeed(
           "echo '{\"log\":{\"level\":\"info\",\"message\":\"victoria_stack_vmauth_e2e_log\"}"
           ",\"date\":\"0\",\"stream\":\"roundtrip\"}' | "
-          "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
+          "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "  # gitleaks:allow
           "'http://127.0.0.1:4202/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
       )
       machine.wait_until_succeeds(
@@ -948,7 +948,7 @@ in
           "\"startTimeUnixNano\":\"$now\","
           "\"endTimeUnixNano\":\"$now\""
           "}]}]}]}\nJSON\n); "
-          "curl -sf -X POST -H 'Content-Type: application/json' --data-binary \"$payload\" "
+          "curl -sf -X POST -H 'Content-Type: application/json' --data-binary \"$payload\" "  # gitleaks:allow
           "'http://127.0.0.1:4204/insert/opentelemetry/v1/traces'"
       )
       machine.wait_until_succeeds(

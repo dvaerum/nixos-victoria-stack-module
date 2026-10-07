@@ -58,7 +58,7 @@ let
         machine.wait_for_open_port(3000)
 
         datasources = machine.succeed(
-            "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"
+            "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"  # gitleaks:allow
         )
         for marker in ${builtins.toJSON expectPresent}:
             assert marker in datasources, f"expected {marker!r} present: {datasources!r}"
@@ -95,7 +95,7 @@ in
       # module's own adminPasswordFile-style options are for vmauth, not
       # Grafana -- see docs/decisions/0010, Grafana keeps its own auth).
       datasources = machine.succeed(
-          "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"
+          "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"  # gitleaks:allow
       )
       assert "victoriametrics-metrics-datasource" in datasources
       assert "victoriametrics-logs-datasource" in datasources
@@ -133,7 +133,7 @@ in
       machine.wait_for_open_port(3000)
 
       datasources = machine.succeed(
-          "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"
+          "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"  # gitleaks:allow
       )
       assert "127.0.0.1:4201" in datasources, (
           f"expected the metrics datasource URL to point directly at "
@@ -163,7 +163,7 @@ in
       machine.wait_for_open_port(3000)
 
       datasources = machine.succeed(
-          "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"
+          "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"  # gitleaks:allow
       )
       assert "victoriametrics-metrics-datasource" in datasources
       assert "victoriametrics-logs-datasource" not in datasources
@@ -201,7 +201,7 @@ in
       machine.wait_for_open_port(3000)
 
       datasources = machine.succeed(
-          "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"
+          "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"  # gitleaks:allow
       )
       assert "victoriametrics-metrics-datasource" not in datasources
       assert "victoriametrics-logs-datasource" in datasources

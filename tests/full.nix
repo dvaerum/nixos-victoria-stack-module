@@ -89,12 +89,12 @@ in
           "${otlpMetric} victoria_stack_full_test_metric 1 > /tmp/otlp.bin"
       )
       machine.succeed(
-          "curl -sf -X POST -H 'Authorization: Bearer full-test-write-token' "
+          "curl -sf -X POST -H 'Authorization: Bearer full-test-write-token' "  # gitleaks:allow
           "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
           "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
       machine.wait_until_succeeds(
-          "curl -sf -H 'Authorization: Bearer full-test-read-token' "
+          "curl -sf -H 'Authorization: Bearer full-test-read-token' "  # gitleaks:allow
           "'http://127.0.0.1:4204/metrics/api/v1/query?query=victoria_stack_full_test_metric' "
           "| grep -q '\"value\"'"
       )
@@ -109,7 +109,7 @@ in
       machine.succeed(
           "echo '{\"log\":{\"level\":\"info\",\"message\":\"victoria_stack_full_test_log\"}"
           ",\"date\":\"0\",\"stream\":\"full-test\"}' | "
-          "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
+          "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "  # gitleaks:allow
           "'http://127.0.0.1:4202/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
       )
       machine.wait_until_succeeds(
@@ -135,12 +135,12 @@ in
           "\"startTimeUnixNano\":\"$now\","
           "\"endTimeUnixNano\":\"$now\""
           "}]}]}]}\nJSON\n); "
-          "curl -sf -X POST -H 'Authorization: Bearer full-test-write-token' "
+          "curl -sf -X POST -H 'Authorization: Bearer full-test-write-token' "  # gitleaks:allow
           "-H 'Content-Type: application/json' --data-binary \"$payload\" "
           "'http://127.0.0.1:4204/insert/opentelemetry/v1/traces'"
       )
       machine.wait_until_succeeds(
-          "curl -sf -H 'Authorization: Bearer full-test-read-token' "
+          "curl -sf -H 'Authorization: Bearer full-test-read-token' "  # gitleaks:allow
           "'http://127.0.0.1:4204/traces/select/jaeger/api/services' "
           "| grep -q victoria_stack_full_test_service"
       )
@@ -152,7 +152,7 @@ in
       # the exact metric this test itself wrote above through the
       # write-tier token earlier.
       machine.succeed(
-          "curl -sD /tmp/mcp-headers.txt -u admin:full-test-admin-password -X POST "
+          "curl -sD /tmp/mcp-headers.txt -u admin:full-test-admin-password -X POST "  # gitleaks:allow
           "'http://127.0.0.1:4204/mcp/metrics' -H 'Content-Type: application/json' "
           "-H 'Accept: application/json, text/event-stream' "
           "-d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":"
@@ -168,7 +168,7 @@ in
           '{"name":"query","arguments":{"query":"victoria_stack_full_test_metric"}}}'
       )
       mcp_result = machine.succeed(
-          f"curl -sf -u admin:full-test-admin-password -X POST "
+          f"curl -sf -u admin:full-test-admin-password -X POST "  # gitleaks:allow
           f"'http://127.0.0.1:4204/mcp/metrics' -H 'Content-Type: application/json' "
           f"-H 'Accept: application/json, text/event-stream' "
           f"-H 'Mcp-Session-Id: {mcp_session_id}' "
@@ -223,7 +223,7 @@ in
       # Grafana reachable through nginx, datasources provisioned.
       # wait_until_succeeds, not succeed: Grafana's HTTP port opens
       # before its own startup migrations finish (confirmed directly --
-      # this raced and failed with a one-shot curl).
+      # this raced and failed with a one-shot curl).  # gitleaks:allow
       machine.wait_until_succeeds("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
       datasources = machine.succeed(
           "curl -sf -u admin:full-test-grafana-admin-password 'http://127.0.0.1:3000/api/datasources'"

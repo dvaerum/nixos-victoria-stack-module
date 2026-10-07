@@ -333,7 +333,7 @@ in
       )
       for route, expected_name in expected_names.items():
           response = machine.succeed(
-              f"curl -sf -u admin:mcp-test-admin-password-value -X POST "
+              f"curl -sf -u admin:mcp-test-admin-password-value -X POST "  # gitleaks:allow
               f"'http://127.0.0.1:4204/mcp/{route}' -H 'Content-Type: application/json' "
               "-H 'Accept: application/json, text/event-stream' "
               f"-d '{initialize_body}'"

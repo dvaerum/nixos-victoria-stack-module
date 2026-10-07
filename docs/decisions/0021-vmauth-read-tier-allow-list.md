@@ -42,11 +42,11 @@ including write and destructive-admin endpoints. Verified live against a
 real running container before this fix:
 
 ```
-curl -H 'Authorization: Bearer read-token-one' -X POST \
+curl -H "Authorization: Bearer $READ_TOKEN" -X POST \
   'http://127.0.0.1:4204/metrics/api/v1/import' -d '...'
 # → write succeeds with a "read" credential
 
-curl -H 'Authorization: Bearer read-token-one' -X POST \
+curl -H "Authorization: Bearer $READ_TOKEN" -X POST \
   'http://127.0.0.1:4204/metrics/api/v1/admin/tsdb/delete_series' \
   -d 'match[]=some_metric'
 # → permanent data deletion succeeds with a "read" credential

@@ -7,9 +7,8 @@ title = "gitleaks config for nixos-victoria-stack-module"
 [extend]
 useDefault = true
 
-# Per-finding fingerprint exemptions (reviewed, deliberately fake
-# test-fixture credentials, not real secrets) live in .gitleaksignore,
-# not here -- gitleaks' own TOML [[allowlists]] schema only supports
-# paths/regexes/stopwords/commits checks, not fingerprints (confirmed via
-# `gitleaks protect --help`'s own -i/--gitleaks-ignore-path flag, which
-# defaults to this repo's root).
+# Reviewed, deliberately fake test-fixture credentials are exempted inline
+# with a trailing `gitleaks:allow` on the line itself, not in a separate
+# ignore file: .gitleaksignore fingerprints are line-number based, so they
+# go stale whenever an edit shifts lines. A new fixture credential needs
+# its own `gitleaks:allow`.
