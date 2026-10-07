@@ -167,7 +167,8 @@ in
               ProtectKernelModules = true;
               ProtectKernelTunables = true;
               ProtectProc = "invisible";
-              ProtectSystem = "full";
+              CapabilityBoundingSet = "";
+              ProtectSystem = "strict";
               RemoveIPC = true;
               RestrictAddressFamilies = [
                 "AF_INET"
@@ -204,6 +205,9 @@ in
                   DynamicUser = false;
                   User = unitName;
                   Group = unitName;
+                  # No StateDirectory for a static user, and ProtectSystem=strict
+                  # makes everything else read-only.
+                  ReadWritePaths = [ (toString cfg.dataDir) ];
                 }
             )
           ];
@@ -232,6 +236,7 @@ in
               "http://${bindAddr}${snapshotCreatePath}"
             ];
             DynamicUser = true;
+            CapabilityBoundingSet = "";
             NoNewPrivileges = true;
             PrivateDevices = true;
             PrivateTmp = true;

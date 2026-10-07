@@ -1501,4 +1501,80 @@ in
     else
       throw "storage start timeouts wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
   );
+
+  # An explicit ProtectSystem=full overrides the strict that DynamicUser would
+  # otherwise imply, so the effective value is asserted on the RUNNING units, not
+  # on the rendered text. Capabilities are read from the kernel (CapBnd), the
+  # authoritative source.
+  hardening-is-effective-on-running-units = pkgs.testers.nixosTest {
+    name = "victoria-stack-hardening-effective";
+
+    containers.dyn = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics = {
+          enable = true;
+          mcp.enable = true;
+          snapshots.enable = true;
+        };
+        logs = {
+          enable = true;
+          mcp.enable = true;
+        };
+        traces = {
+          enable = true;
+          mcp.enable = true;
+        };
+        vmauth.adminPasswordFile = "${pkgs.writeText "hardening-admin-password" "hardening-admin-password-value"}";
+      };
+    };
+
+    # A static user has no implied sandbox and no StateDirectory: its data
+    # directory must be explicitly writable under ProtectSystem=strict.
+    containers.static = {
+      imports = [ module ];
+      services.victoriaStack.metrics = {
+        enable = true;
+        dynamicUser = false;
+        dataDir = "/srv/vm-data";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      services = [
+          "victoriametrics", "victorialogs", "victoriatraces", "vmauth",
+          "mcp-victoriametrics", "mcp-victorialogs", "mcp-victoriatraces",
+      ]
+      for unit in services:
+          dyn.wait_for_unit(f"{unit}.service")
+      static.wait_for_unit("victoriametrics.service")
+
+      problems = []
+
+      def check_running(machine, unit):
+          prop = lambda p: machine.succeed(f"systemctl show -p {p} --value {unit}.service").strip()
+          if prop("ProtectSystem") != "strict":
+              problems.append(f"{unit}: ProtectSystem={prop('ProtectSystem')}")
+          pid = prop("MainPID")
+          capbnd = machine.succeed(f"grep ^CapBnd /proc/{pid}/status").split()[1]
+          if int(capbnd, 16) != 0:
+              problems.append(f"{unit}: CapBnd={capbnd}")
+
+      for unit in services:
+          check_running(dyn, unit)
+      check_running(static, "victoriametrics")
+
+      # Oneshots are not running now; their loaded properties are authoritative.
+      for unit in ["victoriametrics-snapshot", "vmauth-secret-restart"]:
+          cap = dyn.succeed(f"systemctl show -p CapabilityBoundingSet --value {unit}.service").strip()
+          if cap != "":
+              problems.append(f"{unit}: CapabilityBoundingSet={cap}")
+
+      assert not problems, "; ".join(problems)
+
+      # The static user really writes its data under strict.
+      static.succeed("test -n \"$(find /srv/vm-data -mindepth 1 -user victoriametrics | head -n1)\"")
+    '';
+  };
 }

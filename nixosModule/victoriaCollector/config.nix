@@ -192,6 +192,7 @@ in
           RemainAfterExit = true;
           LoadCredential = [ "write-token:${cfg.writeTokenFile}" ];
           ExecStart = lib.getExe renderAlloyWriteToken;
+          CapabilityBoundingSet = "";
 
           # Own DynamicUser + its own RuntimeDirectory (deliberately NOT
           # alloy.service's own "alloy" StateDirectory -- two different
@@ -271,6 +272,8 @@ in
           RemainAfterExit = true;
           LoadCredential = [ "write-token:${cfg.writeTokenFile}" ];
           ExecStart = lib.getExe renderJournalUploadTokenHeader;
+          # chgrp to systemd-journal: root is not a member of that group.
+          CapabilityBoundingSet = [ "CAP_CHOWN" ];
 
           # Stays root -- confirmed, not assumed: /run/systemd is mode
           # 755, owned root:root on a real machine, so writing a new

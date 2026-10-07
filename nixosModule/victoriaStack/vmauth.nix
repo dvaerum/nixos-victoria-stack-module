@@ -641,7 +641,8 @@ in
         ProtectKernelModules = true;
         ProtectKernelTunables = true;
         ProtectProc = "invisible";
-        ProtectSystem = "full";
+        CapabilityBoundingSet = "";
+        ProtectSystem = "strict";
         RemoveIPC = true;
         RestrictAddressFamilies = [
           "AF_INET"
@@ -668,6 +669,7 @@ in
       serviceConfig = {
         Type = "oneshot";
         ExecStart = "${config.systemd.package}/bin/systemctl try-restart vmauth.service";
+        CapabilityBoundingSet = "";
       };
     };
 

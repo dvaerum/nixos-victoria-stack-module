@@ -125,7 +125,8 @@ let
             ProtectKernelModules = true;
             ProtectKernelTunables = true;
             ProtectProc = "invisible";
-            ProtectSystem = "full";
+            CapabilityBoundingSet = "";
+            ProtectSystem = "strict";
             RemoveIPC = true;
             RestrictAddressFamilies = [
               "AF_INET"

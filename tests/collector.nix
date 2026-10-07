@@ -343,6 +343,34 @@ in
     '';
   };
 
+  # Empty capability set everywhere, except the one oneshot that changes a file's
+  # group (a real boot proves it needs CAP_CHOWN: "" made it fail).
+  collector-oneshots-drop-capabilities = pkgs.runCommand "collector-oneshots-drop-capabilities" { } (
+    let
+      units =
+        (evalWithCollector {
+          services.victoriaCollector = {
+            logs.enable = true;
+            metrics.enable = true;
+            hostType = "server";
+            writeEndpoint = "http://127.0.0.1:4204";
+            writeTokenFile = "/run/secrets/token";
+          };
+        }).config.systemd.services;
+      caps = n: units.${n}.serviceConfig.CapabilityBoundingSet;
+      checks = {
+        "alloy token oneshot: none" = caps "victoria-collector-alloy-write-token" == "";
+        "journal-upload token oneshot: only CAP_CHOWN" =
+          caps "victoria-collector-journal-upload-token" == [ "CAP_CHOWN" ];
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "collector oneshot capabilities wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
   journal-upload-https-disables-client-cert =
     pkgs.runCommand "journal-upload-https-disables-client-cert" { }
       (
