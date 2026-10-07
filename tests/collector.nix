@@ -1105,4 +1105,52 @@ in
       assert "collector-a" in hosts and "collector-b" in hosts, hosts
     '';
   };
+
+  # examples/fleet.nix is documentation operators copy from -- evaluate it
+  # (gateway + two collectors with distinct labels/tokens) so it can't
+  # drift from the real option set.
+  fleet-example-evaluates = pkgs.runCommand "fleet-example-evaluates" { } (
+    let
+      fleet = import ../examples/fleet.nix { };
+      gateway = testLib.evalWith {
+        imports = [ fleet.gateway ];
+        services.victoriaStack.vmauth.writeTokensFile = lib.mkForce "${twoWriteTokensFixture}";
+      };
+      collectorOf =
+        hostType: tokenFile:
+        evalWithCollector {
+          imports = [
+            (fleet.collector {
+              inherit hostType;
+              writeTokenFile = "${tokenFile}";
+            })
+          ];
+        };
+      a = collectorOf "server" writeTokenAFixture;
+      b = collectorOf "edge-device" writeTokenBFixture;
+      ownFailed' =
+        e:
+        lib.filter (lib.hasInfix "services.victoria") (
+          map (x: x.message) (builtins.filter (x: !x.assertion) e.config.assertions)
+        );
+      checks = {
+        "gateway: vmauth is reachable beyond loopback" =
+          gateway.config.services.victoriaStack.vmauth.listenAddress == "0.0.0.0:4204";
+        "gateway: no failed assertions" = ownFailed' gateway == [ ];
+        "collectors: no failed assertions" = ownFailed' a == [ ] && ownFailed' b == [ ];
+        "collectors: distinct hostType" =
+          a.config.services.victoriaCollector.hostType != b.config.services.victoriaCollector.hostType;
+        "collectors: distinct token files" =
+          a.config.services.victoriaCollector.writeTokenFile
+          != b.config.services.victoriaCollector.writeTokenFile;
+        "collectors: endpoint is not loopback" =
+          !(lib.hasInfix "127.0.0.1" a.config.services.victoriaCollector.writeEndpoint);
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "examples/fleet.nix broken: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
 }

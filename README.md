@@ -89,6 +89,13 @@ section):
 }
 ```
 
+### Fleet topology
+
+One gateway host running `victoriaStack`, N other hosts running
+`victoriaCollector` with their own `hostType` and write token:
+[`examples/fleet.nix`](./examples/fleet.nix) (evaluated by
+`tests/collector.nix`, so it stays in sync with the real options).
+
 ## Secrets
 
 Every credential option is a plain file-path (`...File`) option -- this
