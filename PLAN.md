@@ -513,9 +513,106 @@ session before any code changes, same discipline as Round 2/Round 3).
 
 ## Round 4 continued: grill session results (judgment calls)
 
-Pending -- see chat for the live session. Each resolved topic gets its own
-numbered phase appended here once decided, same discipline as Round 2/3's
-own grill sessions (docs/decisions/0014-0020, 0021-0022).
+9 topics, each with the project owner's own recommended-first-choice
+decision, a few genuinely redirected the initial recommendation after
+real codebase investigation (confirmed, not assumed) surfaced a fact that
+changed the tradeoff -- same discipline as Round 2/3's own grill sessions
+(docs/decisions/0014-0020, 0021-0022). New ADRs get written during
+implementation, not here -- this section only records the decision.
+
+- [ ] 46. **Naming unification**: `extraOptions` (metrics/logs/traces) and
+      `extraFlags` (Alloy) are the identical concept under two names --
+      unify on `extraFlags` (the more literally accurate term: these are
+      real CLI flags, not generic "options") via
+      `lib.mkRenamedOptionModule` for the 3 renamed storage options.
+- [ ] 47. **vmauth's own `extraFlags`**: vmauth has no CLI-passthrough
+      escape hatch at all today (confirmed via grep), unlike the other 3
+      services -- add `vmauth.extraFlags`, same shape as #46. Covers
+      vmauth's own TLS listener (`-tls`/`-tlsCertFile`/`-tlsKeyFile`,
+      confirmed real vmauth flags) for operators who bypass nginx
+      entirely, plus anything else, without a bespoke option per flag.
+- [ ] 48. **Multi-host fleet**: a real 2-collector + 1-gateway
+      container-boot test (concurrent writers, `hostType` label
+      distinctness under real load) AND a documented multi-host example
+      (`examples/fleet.nix` or a new README section) showing the actual
+      NixOS config shape for N collector hosts -> 1 gateway.
+- [ ] 49. **`.gitleaksignore` -> inline `gitleaks:allow`**: migrate every
+      pinned line-number entry to an inline `# gitleaks:allow` comment on
+      the fixture's own line (gitleaks' own first-class, documented
+      mechanism for exactly this case -- confirmed via real gitleaks
+      docs), then delete `.gitleaksignore` entirely. Survives any future
+      edit to the file above/below it; no separate file to keep in sync.
+- [ ] 50. **vmauth consumes `X-Forwarded-For` automatically when nginx is
+      on**: not a new user-facing option -- `vmauth`'s `-httpRealIPHeader`
+      gets set to `X-Forwarded-For` via `lib.mkIf cfg.nginx.enable
+      (lib.mkDefault "X-Forwarded-For")`, still overridable. When nginx is
+      off (direct-bypass), nothing is set -- same "bypass = your own
+      setup" precedent already established elsewhere in this project.
+- [ ] 51. **`extraWriteUrlMap`**: symmetric with the existing
+      `extraReadUrlMap`, scoped to the write-tier credential only. Real
+      use case confirmed via upstream docs: VictoriaMetrics' own `/write`
+      (InfluxDB line protocol) and `/api/v1/write` (Prometheus
+      remote-write) are genuine same-listener HTTP paths this module
+      doesn't open a door for today -- e.g. an existing Telegraf fleet
+      writing through the same gateway/write-token already issued to
+      Alloy-based collectors. Includes a wildcard-pattern guardrail eval
+      test (same closed-world-check style ADR 0021 already uses for the
+      built-in entries), so a careless `src_paths = [".*"]` in this
+      escape hatch gets flagged.
+- [ ] 52. **Per-token scoping (read AND write tiers)**: `readTokensFile`/
+      `writeTokensFile`'s YAML format changes from a bare list of strings
+      to a uniform list of `{token, backends}` objects (`backends`
+      optional -- omitted means today's behavior, all enabled backends).
+      `backends: ["traces"]` automatically includes that signal's own MCP
+      route too (`/mcp/traces`, if `traces.mcp.enable`) -- matches the
+      project's own test-fixture naming hint ("ai-client-a" read token),
+      where MCP access is almost always the actual point of a scoped
+      AI-client credential. Filtering reuses the url_map's own existing
+      per-backend path-prefix convention (ADR 0021) -- no change to how
+      the allow-list itself gets built, only to which subset of it a
+      given token's user entry receives. BREAKING YAML format change --
+      needs a clear migration note (not Nix-auto-migratable: token file
+      content lives in operator-managed secrets, outside this module's
+      control per docs/decisions/0008). `validate_tokens_shape` (vmauth.nix)
+      needs updating to require the new object shape, with a legible
+      error distinguishing "still using the old bare-string format" from
+      a genuinely malformed file.
+- [ ] 53. **Collector metrics customization**: mirrors Alloy's own real
+      3-knob `prometheus.exporter.unix` model exactly (confirmed via
+      Alloy's own docs) -- `services.victoriaCollector.metrics.{
+      extraCollectors, disabledCollectors, scrapeInterval}`.
+      `extraCollectors` adds on top of (node_exporter's own defaults +
+      `"systemd"`, today's hardcoded set), `disabledCollectors` removes
+      specific ones, `scrapeInterval` overrides Alloy's own default
+      (confirmed `"60s"`). All null/[]-default, inert unless configured.
+      No upstream nixpkgs `services.alloy` option to inherit from
+      (confirmed: that module is deliberately generic, only
+      `enable`/`package`/`configPath`/`environmentFile`/`extraFlags` --
+      this project is the one generating the actual `.alloy` pipeline
+      config, so it's the one that has to expose this).
+- [ ] 54. **On-disk snapshot creation + pruning** (metrics/logs/traces,
+      each independently): confirmed via real upstream docs that
+      snapshotting is NOT automatic on its own (`/snapshot/create` is a
+      pure on-demand HTTP endpoint, nothing inside the binaries schedules
+      it) and that a snapshot never leaves the host's own disk (lives
+      under `<dataDir>/snapshots/`, hardcoded location, not configurable)
+      -- real protection against accidental/logical data loss, NOT disk
+      failure; the actual off-host-shipping step needs VictoriaMetrics'
+      own separate `vmbackup` tool, explicitly out of scope for this
+      phase (a real, separate judgment call of its own -- which
+      destinations to support, how to pass credentials -- deferred, not
+      forgotten). New `snapshots = { enable (default false, opt-in per
+      docs/decisions/0002); schedule (systemd OnCalendar string, default
+      "daily"); maxAge (nullable string, default "30d", -snapshotsMaxAge,
+      null disables automatic pruning -- confirmed this flag makes the
+      binary prune itself, no separate timer needed for that half) }`.
+      Snapshot creation needs its own systemd timer + oneshot calling
+      `/snapshot/create`; deletion of an individual snapshot (not the
+      automatic age-based pruning) must go through `/snapshot/delete`,
+      never raw `rm`/`cp`/`rsync` (confirmed: snapshots are hardlinks into
+      live data, those commands can silently corrupt them) -- worth a
+      code comment at the one place this matters, not a feature, since
+      this module never touches snapshot contents directly itself.
 
 Each phase: gate with `nix flake check -L` (run detached, polled — never a
 single tool-call timeout for a full nspawn build) + nixfmt-rfc-style clean,
