@@ -118,7 +118,7 @@ let
     );
 
   # Previously untested for all 3 storage services: retentionPeriod,
-  # extraOptions, and a listenAddress override all reaching ExecStart /
+  # extraFlags, and a listenAddress override all reaching ExecStart /
   # effectiveUrl correctly. One shared check applied per service rather
   # than 3x near-identical hand-written tests.
   mkExecStartOptionsCheck =
@@ -133,7 +133,7 @@ let
           services.victoriaStack.${serviceAttr} = {
             enable = true;
             retentionPeriod = "30d";
-            extraOptions = [ "-search.maxUniqueTimeseries=300000" ];
+            extraFlags = [ "-search.maxUniqueTimeseries=300000" ];
             listenAddress = "127.0.0.1:19999";
           };
         };
@@ -141,7 +141,7 @@ let
         effectiveUrl = evaluated.config.services.victoriaStack.${serviceAttr}.effectiveUrl;
         checks = {
           "retentionPeriod flag present" = lib.hasInfix "-retentionPeriod=30d" execStart;
-          "extraOptions flag present" = lib.hasInfix "-search.maxUniqueTimeseries=300000" execStart;
+          "extraFlags flag present" = lib.hasInfix "-search.maxUniqueTimeseries=300000" execStart;
           "listenAddress override reaches ExecStart" =
             lib.hasInfix "-httpListenAddr=127.0.0.1:19999" execStart;
           "listenAddress override reaches effectiveUrl" = effectiveUrl == "http://127.0.0.1:19999";
@@ -308,7 +308,7 @@ in
   };
 
   # Previously untested for all 3 storage services: retentionPeriod,
-  # extraOptions, and a listenAddress override all reaching ExecStart /
+  # extraFlags, and a listenAddress override all reaching ExecStart /
   # effectiveUrl correctly. One shared check applied per service rather
   # than 3x near-identical hand-written tests.
   metrics-retention-extraoptions-listenaddress-reach-execstart = mkExecStartOptionsCheck {
@@ -970,4 +970,49 @@ in
     serviceAttr = "traces";
     expectRule = false;
   };
+
+  # extraOptions was renamed to extraFlags (docs/decisions/0024): the old
+  # name must keep working, produce the standard rename warning, and
+  # render the identical ExecStart as the new name.
+  extra-options-old-name-still-works-and-warns =
+    pkgs.runCommand "extra-options-old-name-still-works-and-warns" { }
+      (
+        let
+          flag = "-search.maxUniqueTimeseries=300000";
+          perService =
+            attr: unit:
+            let
+              viaOld = evalWith {
+                services.victoriaStack.${attr} = {
+                  enable = true;
+                  extraOptions = [ flag ];
+                };
+              };
+              viaNew = evalWith {
+                services.victoriaStack.${attr} = {
+                  enable = true;
+                  extraFlags = [ flag ];
+                };
+              };
+              execStart = e: e.config.systemd.services.${unit}.serviceConfig.ExecStart;
+              warned = lib.any (lib.hasInfix "${attr}.extraOptions") (
+                lib.filter (lib.hasInfix "services.victoriaStack") viaOld.config.warnings
+              );
+            in
+            {
+              "${attr}: old name warns" = warned;
+              "${attr}: same ExecStart as the new name" = execStart viaOld == execStart viaNew;
+              "${attr}: flag reaches ExecStart" = lib.hasInfix flag (execStart viaOld);
+            };
+          checks =
+            perService "metrics" "victoriametrics"
+            // perService "logs" "victorialogs"
+            // perService "traces" "victoriatraces";
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "extraOptions rename broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
 }

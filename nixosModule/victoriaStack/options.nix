@@ -151,7 +151,7 @@ let
         '';
       };
 
-      extraOptions = mkOption {
+      extraFlags = mkOption {
         type = types.listOf types.str;
         default = [ ];
         example = [ "-search.maxUniqueTimeseries=300000" ];

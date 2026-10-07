@@ -24,6 +24,16 @@ let
   cfg = config.services.victoriaStack.${name};
 in
 {
+  # Renamed from extraOptions to match vmauth.extraFlags and the
+  # collector's alloy.extraFlags (docs/decisions/0024) -- the first
+  # real use of lib.mkRenamedOptionModule in this project.
+  imports = [
+    (lib.mkRenamedOptionModule
+      [ "services" "victoriaStack" name "extraOptions" ]
+      [ "services" "victoriaStack" name "extraFlags" ]
+    )
+  ];
+
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
@@ -122,7 +132,7 @@ in
                 ++ lib.optional (
                   (cfg.retentionMaxDiskUsagePercent or null) != null
                 ) "-retention.maxDiskUsagePercent=${toString cfg.retentionMaxDiskUsagePercent}"
-                ++ cfg.extraOptions
+                ++ cfg.extraFlags
               );
               Restart = "on-failure";
               RestartSec = 5;
