@@ -23,6 +23,22 @@ let
       inherit description;
     };
 
+  # Same two options on all 4 services whose binary has the -pushmetrics.*
+  # flags (metrics, logs, traces, vmauth) -- see self-monitoring.nix.
+  mkSelfMonitoringOptions = binaryName: {
+    enable = mkEnableOption "${binaryName} pushing its own /metrics page into the local VictoriaMetrics instance (requires `metrics.enable`)";
+
+    interval = mkOption {
+      type = types.strMatching "([0-9]+(ms|s|m|h))+";
+      default = "30s";
+      description = ''
+        How often ${binaryName} pushes its own metrics (`-pushmetrics.interval`).
+        Only used when `selfMonitoring.enable` is true. The series carry a
+        `job` label naming the service, so the four services stay apart.
+      '';
+    };
+  };
+
   # Shared option shape for metrics/logs/traces -- each storage service is an
   # independent systemd unit built directly on the relevant victoria-family
   # binary (see docs/decisions/0001), not a wrapper around nixpkgs' own
@@ -189,6 +205,8 @@ let
       };
     }
     // {
+      selfMonitoring = mkSelfMonitoringOptions binaryName;
+
       snapshots = {
         enable = mkEnableOption "periodic on-disk snapshot creation (a systemd timer calling ${binaryName}'s own snapshot API)";
 
@@ -383,6 +401,8 @@ in
           connections collectors are about to reuse. 5m gives real headroom.
         '';
       };
+
+      selfMonitoring = mkSelfMonitoringOptions "vmauth";
 
       accessLog = mkOption {
         type = types.bool;

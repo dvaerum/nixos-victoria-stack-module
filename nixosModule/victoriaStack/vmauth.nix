@@ -10,6 +10,7 @@ let
   cfg = topCfg.vmauth;
 
   anyBackendEnabled = topCfg.metrics.enable || topCfg.logs.enable || topCfg.traces.enable;
+  selfMonitoring = import ./self-monitoring.nix { inherit lib; };
 
   # `ip:port`, bracketing a bare IPv6 literal.
   hostPort =
@@ -525,6 +526,16 @@ in
           # LoadCredential= at runtime.
           ++ lib.optional (cfg.backendTls.certFile != null) "-backend.tlsCertFile=%d/backend-tls-cert"
           ++ lib.optional (cfg.backendTls.keyFile != null) "-backend.tlsKeyFile=%d/backend-tls-key"
+          # This ExecStart is a plain space-joined string (no escaping), so
+          # the label's quotes need escaping here.
+          ++ map lib.escapeShellArg (
+            selfMonitoring.mkFlags {
+              selfMonitoring = cfg.selfMonitoring;
+              metricsEnabled = topCfg.metrics.enable;
+              metricsUrl = topCfg.metrics.effectiveUrl;
+              job = "vmauth";
+            }
+          )
           ++ cfg.extraFlags
         );
         RuntimeDirectory = "vmauth";

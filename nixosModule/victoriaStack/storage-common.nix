@@ -25,7 +25,9 @@
 }:
 
 let
-  cfg = config.services.victoriaStack.${name};
+  topCfg = config.services.victoriaStack;
+  cfg = topCfg.${name};
+  selfMonitoring = import ./self-monitoring.nix { inherit lib; };
 
   # The IPv4 (0.0.0.0), IPv6 ([::]), and bare (":<port>", no
   # host part at all -- a real, upstream-recognized form: the
@@ -128,6 +130,12 @@ in
                 ]
                 ++ lib.optionals (cfg.retentionPeriod != null) [ "-retentionPeriod=${cfg.retentionPeriod}" ]
                 # Exist only on logs/traces (options.nix), hence `or null`.
+                ++ selfMonitoring.mkFlags {
+                  selfMonitoring = cfg.selfMonitoring;
+                  metricsEnabled = topCfg.metrics.enable;
+                  metricsUrl = topCfg.metrics.effectiveUrl;
+                  job = unitName;
+                }
                 ++ lib.optional (
                   cfg.snapshots.enable && cfg.snapshots.maxAge != null
                 ) "-snapshotsMaxAge=${cfg.snapshots.maxAge}"

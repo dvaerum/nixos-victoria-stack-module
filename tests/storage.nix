@@ -1178,4 +1178,155 @@ in
       assert json.loads(listed), f"expected at least one snapshot, got {listed!r}"
     '';
   };
+
+  # --- selfMonitoring: each service pushes its own /metrics page into the
+  # local metrics database (docs/decisions/0026). A native flag family
+  # (-pushmetrics.*) on all four binaries, so no timer/unit is involved.
+
+  self-monitoring-flags-for-all-four-services = pkgs.runCommand "self-monitoring-flags" { } (
+    let
+      eval =
+        m:
+        evalWith {
+          services.victoriaStack = lib.recursiveUpdate {
+            metrics.enable = true;
+            logs.enable = true;
+            traces.enable = true;
+          } m;
+        };
+      execStart = e: unit: e.config.systemd.services.${unit}.serviceConfig.ExecStart;
+      off = eval { };
+      on = eval {
+        metrics.selfMonitoring.enable = true;
+        logs.selfMonitoring.enable = true;
+        traces.selfMonitoring.enable = true;
+        vmauth.selfMonitoring.enable = true;
+      };
+      custom = eval {
+        logs.selfMonitoring = {
+          enable = true;
+          interval = "1m";
+        };
+      };
+      url = "-pushmetrics.url=http://127.0.0.1:4201/api/v1/import/prometheus";
+      perUnit = unit: job: {
+        "${unit}: absent by default" = !(lib.hasInfix "pushmetrics" (execStart off unit));
+        "${unit}: pushes to the local metrics database" = lib.hasInfix url (execStart on unit);
+        "${unit}: default interval 30s" = lib.hasInfix "-pushmetrics.interval=30s" (execStart on unit);
+        "${unit}: labelled with its own job" = lib.hasInfix "'-pushmetrics.extraLabel=job=\"${job}\"'" (
+          execStart on unit
+        );
+      };
+      checks =
+        perUnit "victoriametrics" "victoriametrics"
+        // perUnit "victorialogs" "victorialogs"
+        // perUnit "victoriatraces" "victoriatraces"
+        // perUnit "vmauth" "vmauth"
+        // {
+          "custom interval renders" = lib.hasInfix "-pushmetrics.interval=1m" (
+            execStart custom "victorialogs"
+          );
+          "enabling one service does not enable the others" =
+            !(lib.hasInfix "pushmetrics" (execStart custom "victoriatraces"));
+        };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "selfMonitoring flags broken: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  self-monitoring-needs-the-metrics-database = pkgs.runCommand "self-monitoring-needs-metrics" { } (
+    let
+      failedFor =
+        m:
+        lib.filter (lib.hasInfix "selfMonitoring") (
+          map (a: a.message) (
+            builtins.filter (a: !a.assertion)
+              (evalWith {
+                services.victoriaStack = m;
+              }).config.assertions
+          )
+        );
+      checks = {
+        "logs without metrics fires" =
+          failedFor {
+            logs = {
+              enable = true;
+              selfMonitoring.enable = true;
+            };
+          } != [ ];
+        "vmauth without metrics fires" =
+          failedFor {
+            traces.enable = true;
+            vmauth.selfMonitoring.enable = true;
+          } != [ ];
+        "with metrics enabled it does not fire" =
+          failedFor {
+            metrics.enable = true;
+            logs = {
+              enable = true;
+              selfMonitoring.enable = true;
+            };
+          } == [ ];
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "selfMonitoring assertion broken: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # For real: all four push, and each one's series shows up in the metrics
+  # database under its own job label.
+  self-monitoring-series-really-arrive = pkgs.testers.nixosTest {
+    name = "victoria-stack-self-monitoring";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics = {
+          enable = true;
+          selfMonitoring = {
+            enable = true;
+            interval = "5s";
+          };
+        };
+        logs = {
+          enable = true;
+          selfMonitoring = {
+            enable = true;
+            interval = "5s";
+          };
+        };
+        traces = {
+          enable = true;
+          selfMonitoring = {
+            enable = true;
+            interval = "5s";
+          };
+        };
+        vmauth.selfMonitoring = {
+          enable = true;
+          interval = "5s";
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      for unit in ["victoriametrics", "victorialogs", "victoriatraces", "vmauth"]:
+          machine.wait_for_unit(f"{unit}.service")
+      machine.wait_for_open_port(4201)
+
+      for job in ["victoriametrics", "victorialogs", "victoriatraces", "vmauth"]:
+          machine.wait_until_succeeds(
+              "curl -sfG 'http://127.0.0.1:4201/api/v1/query' "
+              f"--data-urlencode 'query=count({{job=\"{job}\"}})' | grep -q '\"value\"'",
+              timeout=120,
+          )
+    '';
+  };
 }

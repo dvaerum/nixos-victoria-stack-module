@@ -81,6 +81,22 @@ in
         '';
       }
       {
+        assertion =
+          !(
+            cfg.metrics.selfMonitoring.enable
+            || cfg.logs.selfMonitoring.enable
+            || cfg.traces.selfMonitoring.enable
+            || cfg.vmauth.selfMonitoring.enable
+          )
+          || cfg.metrics.enable;
+        message = ''
+          services.victoriaStack.*.selfMonitoring.enable needs
+          services.victoriaStack.metrics.enable = true -- each service pushes
+          its own metrics into the local VictoriaMetrics instance, so there is
+          nothing to push to otherwise.
+        '';
+      }
+      {
         assertion = cfg.metrics.mcp.enable -> cfg.metrics.enable;
         message = ''
           services.victoriaStack.metrics.mcp.enable requires
