@@ -1185,37 +1185,43 @@ in
 
   self-monitoring-flags-for-all-four-services = pkgs.runCommand "self-monitoring-flags" { } (
     let
-      eval =
-        m:
-        evalWith {
-          services.victoriaStack = lib.recursiveUpdate {
-            metrics.enable = true;
-            logs.enable = true;
-            traces.enable = true;
-          } m;
-        };
+      eval = m: evalWith { services.victoriaStack = m; };
       execStart = e: unit: e.config.systemd.services.${unit}.serviceConfig.ExecStart;
-      off = eval { };
-      on = eval {
-        metrics.selfMonitoring.enable = true;
-        logs.selfMonitoring.enable = true;
-        traces.selfMonitoring.enable = true;
-        vmauth.selfMonitoring.enable = true;
+      allBackends = {
+        metrics.enable = true;
+        logs.enable = true;
+        traces.enable = true;
       };
-      custom = eval {
-        logs.selfMonitoring = {
-          enable = true;
-          interval = "1m";
-        };
+      # On by default whenever the metrics database is enabled.
+      byDefault = eval allBackends;
+      explicitlyOff = eval (
+        lib.recursiveUpdate allBackends {
+          metrics.selfMonitoring.enable = false;
+          logs.selfMonitoring.enable = false;
+          traces.selfMonitoring.enable = false;
+          vmauth.selfMonitoring.enable = false;
+        }
+      );
+      custom = eval (lib.recursiveUpdate allBackends { logs.selfMonitoring.interval = "1m"; });
+      oneOff = eval (lib.recursiveUpdate allBackends { logs.selfMonitoring.enable = false; });
+      # No metrics database on this host: nothing to push to, so off.
+      noMetricsDb = eval {
+        logs.enable = true;
+        traces.enable = true;
       };
       url = "-pushmetrics.url=http://127.0.0.1:4201/api/v1/import/prometheus";
       perUnit = unit: job: {
-        "${unit}: absent by default" = !(lib.hasInfix "pushmetrics" (execStart off unit));
-        "${unit}: pushes to the local metrics database" = lib.hasInfix url (execStart on unit);
-        "${unit}: default interval 30s" = lib.hasInfix "-pushmetrics.interval=30s" (execStart on unit);
-        "${unit}: labelled with its own job" = lib.hasInfix "'-pushmetrics.extraLabel=job=\"${job}\"'" (
-          execStart on unit
+        "${unit}: on by default when the metrics database is enabled" = lib.hasInfix url (
+          execStart byDefault unit
         );
+        "${unit}: default interval 30s" = lib.hasInfix "-pushmetrics.interval=30s" (
+          execStart byDefault unit
+        );
+        "${unit}: labelled with its own job" = lib.hasInfix "'-pushmetrics.extraLabel=job=\"${job}\"'" (
+          execStart byDefault unit
+        );
+        "${unit}: explicit false turns it off" =
+          !(lib.hasInfix "pushmetrics" (execStart explicitlyOff unit));
       };
       checks =
         perUnit "victoriametrics" "victoriametrics"
@@ -1226,8 +1232,16 @@ in
           "custom interval renders" = lib.hasInfix "-pushmetrics.interval=1m" (
             execStart custom "victorialogs"
           );
-          "enabling one service does not enable the others" =
-            !(lib.hasInfix "pushmetrics" (execStart custom "victoriatraces"));
+          "turning one service off leaves the others on" =
+            !(lib.hasInfix "pushmetrics" (execStart oneOff "victorialogs"))
+            && lib.hasInfix url (execStart oneOff "victoriatraces");
+          "no metrics database -> off, and no assertion fires" =
+            !(lib.hasInfix "pushmetrics" (execStart noMetricsDb "victorialogs"))
+            && !(lib.hasInfix "pushmetrics" (execStart noMetricsDb "vmauth"))
+            &&
+              lib.filter (lib.hasInfix "selfMonitoring") (
+                map (a: a.message) (builtins.filter (a: !a.assertion) noMetricsDb.config.assertions)
+              ) == [ ];
         };
       failed = lib.filterAttrs (_: ok: !ok) checks;
     in
@@ -1284,34 +1298,25 @@ in
   self-monitoring-series-really-arrive = pkgs.testers.nixosTest {
     name = "victoria-stack-self-monitoring";
 
+    # selfMonitoring.enable is deliberately NOT set anywhere: it is on by
+    # default because the metrics database is enabled. Only the interval is
+    # shortened so the test doesn't wait 30s.
     containers.machine = {
       imports = [ module ];
       services.victoriaStack = {
         metrics = {
           enable = true;
-          selfMonitoring = {
-            enable = true;
-            interval = "5s";
-          };
+          selfMonitoring.interval = "5s";
         };
         logs = {
           enable = true;
-          selfMonitoring = {
-            enable = true;
-            interval = "5s";
-          };
+          selfMonitoring.interval = "5s";
         };
         traces = {
           enable = true;
-          selfMonitoring = {
-            enable = true;
-            interval = "5s";
-          };
+          selfMonitoring.interval = "5s";
         };
-        vmauth.selfMonitoring = {
-          enable = true;
-          interval = "5s";
-        };
+        vmauth.selfMonitoring.interval = "5s";
       };
     };
 
@@ -1329,4 +1334,79 @@ in
           )
     '';
   };
+
+  # selfMonitoring is on by default, so an operator who already pushes
+  # metrics with their own -pushmetrics.* flags would silently get both.
+  self-monitoring-conflicting-extra-flags-warn-for-every-service =
+    pkgs.runCommand "self-monitoring-conflict-warns" { }
+      (
+        let
+          warningsFor =
+            m:
+            lib.filter (lib.hasInfix "selfMonitoring") (
+              (evalWith {
+                services.victoriaStack = m;
+              }).config.warnings
+            );
+          flag = [ "-pushmetrics.url=http://example.invalid/push" ];
+          warns =
+            svc: extra:
+            lib.any (lib.hasInfix "services.victoriaStack.${svc}") (
+              warningsFor ({ metrics.enable = true; } // extra)
+            );
+          checks = {
+            "metrics.extraFlags" = warns "metrics" {
+              metrics = {
+                enable = true;
+                extraFlags = flag;
+              };
+            };
+            "logs.extraFlags" = warns "logs" {
+              logs = {
+                enable = true;
+                extraFlags = flag;
+              };
+            };
+            "traces.extraFlags" = warns "traces" {
+              traces = {
+                enable = true;
+                extraFlags = flag;
+              };
+            };
+            "vmauth.extraFlags" = warns "vmauth" { vmauth.extraFlags = flag; };
+            "the old extraOptions name still counts (it is renamed to extraFlags)" = warns "logs" {
+              logs = {
+                enable = true;
+                extraOptions = flag;
+              };
+            };
+            "no warning when the operator opted that service out" =
+              warningsFor {
+                metrics.enable = true;
+                logs = {
+                  enable = true;
+                  extraFlags = flag;
+                  selfMonitoring.enable = false;
+                };
+              } == [ ];
+            "no warning for unrelated extra flags" =
+              warningsFor {
+                metrics = {
+                  enable = true;
+                  extraFlags = [ "-search.maxUniqueTimeseries=300000" ];
+                };
+              } == [ ];
+            "no warning when the service itself is disabled" =
+              warningsFor {
+                metrics.enable = true;
+                logs.extraFlags = flag; # logs.enable left false
+              } == [ ];
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "selfMonitoring conflict warning broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
 }

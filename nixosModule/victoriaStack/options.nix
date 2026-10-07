@@ -26,7 +26,24 @@ let
   # Same two options on all 4 services whose binary has the -pushmetrics.*
   # flags (metrics, logs, traces, vmauth) -- see self-monitoring.nix.
   mkSelfMonitoringOptions = binaryName: {
-    enable = mkEnableOption "${binaryName} pushing its own /metrics page into the local VictoriaMetrics instance (requires `metrics.enable`)";
+    enable = mkOption {
+      type = types.bool;
+      # The real default is set with mkDefault in assertions.nix (like
+      # vmauth.enable): on whenever the metrics database is enabled.
+      default = false;
+      defaultText = lib.literalExpression "config.services.victoriaStack.metrics.enable";
+      description = ''
+        Whether ${binaryName} pushes its own `/metrics` page into the local
+        VictoriaMetrics instance.
+
+        - On by default whenever `services.victoriaStack.metrics.enable` is
+          true (there is then a database to push into).
+        - Off by default when the metrics database is not enabled on this
+          host, so logs-only or traces-only setups need no change.
+        - Set it to `false` to opt a service out. Setting it to `true`
+          without `metrics.enable` is an error: there is nothing to push to.
+      '';
+    };
 
     interval = mkOption {
       type = types.strMatching "([0-9]+(ms|s|m|h))+";

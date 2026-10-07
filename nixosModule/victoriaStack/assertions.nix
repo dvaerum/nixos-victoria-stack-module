@@ -33,6 +33,55 @@ in
     # here.
     services.victoriaStack.vmauth.enable = lib.mkDefault anyBackendEnabled;
 
+    # Each service pushing its own metrics is on whenever the metrics
+    # database it would push into is enabled (docs/decisions/0026).
+    services.victoriaStack.metrics.selfMonitoring.enable = lib.mkDefault cfg.metrics.enable;
+    services.victoriaStack.logs.selfMonitoring.enable = lib.mkDefault cfg.metrics.enable;
+    services.victoriaStack.traces.selfMonitoring.enable = lib.mkDefault cfg.metrics.enable;
+    services.victoriaStack.vmauth.selfMonitoring.enable = lib.mkDefault cfg.metrics.enable;
+
+    # selfMonitoring is on by default, so an operator who already passes
+    # their own -pushmetrics.* flags through extraFlags would silently get
+    # BOTH sets (the flags are arrays, so the service pushes to two URLs with
+    # two label sets). Warn rather than fail: it is the operator's call.
+    warnings =
+      let
+        services = [
+          {
+            name = "metrics";
+            active = cfg.metrics.enable;
+            inherit (cfg.metrics) selfMonitoring extraFlags;
+          }
+          {
+            name = "logs";
+            active = cfg.logs.enable;
+            inherit (cfg.logs) selfMonitoring extraFlags;
+          }
+          {
+            name = "traces";
+            active = cfg.traces.enable;
+            inherit (cfg.traces) selfMonitoring extraFlags;
+          }
+          {
+            name = "vmauth";
+            active = cfg.vmauth.enable && anyBackendEnabled;
+            inherit (cfg.vmauth) selfMonitoring extraFlags;
+          }
+        ];
+        conflicts = lib.filter (
+          svc:
+          svc.active && svc.selfMonitoring.enable && lib.any (lib.hasPrefix "-pushmetrics.") svc.extraFlags
+        ) services;
+      in
+      map (svc: ''
+        services.victoriaStack.${svc.name}.extraFlags contains -pushmetrics.*
+        flags, but services.victoriaStack.${svc.name}.selfMonitoring.enable is
+        also true (it is on by default whenever metrics.enable is) -- the
+        service would push its metrics twice, to both targets. Either drop
+        your own flags, or set
+        services.victoriaStack.${svc.name}.selfMonitoring.enable = false.
+      '') conflicts;
+
     assertions = [
       {
         assertion = lib.length enabledListenAddrs == lib.length (lib.unique enabledListenAddrs);
