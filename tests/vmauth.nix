@@ -1409,4 +1409,162 @@ in
       machine.fail("curl -sf --max-time 5 -u admin:admin-password-value '" + url + "'")  # gitleaks:allow
     '';
   };
+
+  # --- extraWriteUrlMap ---
+
+  extra-write-url-map-reaches-only-the-write-tier-file =
+    pkgs.runCommand "vmauth-extra-write-url-map-write-tier-only" { }
+      (
+        let
+          entry = {
+            src_paths = [ "/write" ];
+            url_prefix = "http://127.0.0.1:4201/";
+          };
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              vmauth = {
+                extraWriteUrlMap = [ entry ];
+                extraRequestHeaders = [ "X-Extra-Write: yes" ];
+              };
+            };
+          };
+          has = file: lib.any (e: e.src_paths == entry.src_paths) (urlMapFile file evaluated);
+          written = lib.findFirst (e: e.src_paths == entry.src_paths) null (
+            urlMapFile "WRITE_URL_MAP_FILE" evaluated
+          );
+          checks = {
+            "in the write-tier url_map" = has "WRITE_URL_MAP_FILE";
+            "NOT in the read-tier url_map" = !(has "READ_URL_MAP_FILE");
+            "NOT in the open (unauthenticated) ingest paths" = !(has "OPEN_INGEST_PATHS_FILE");
+            "module-wide headers apply" = written != null && written.headers == [ "X-Extra-Write: yes" ];
+            "auto-derived write routes still present" = lib.any (e: e.src_paths == [ "/opentelemetry.*" ]) (
+              urlMapFile "WRITE_URL_MAP_FILE" evaluated
+            );
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "extraWriteUrlMap wiring broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # The escape hatch is the operator's own responsibility (no allow-list
+  # enforced, ADR 0021 covers only the built-in routes) -- but a pattern
+  # that matches EVERY path is almost certainly a mistake, so it warns.
+  extra-url-map-match-everything-pattern-warns = mkWarningFiresCheck {
+    name = "extra-url-map-match-everything-pattern-warns";
+    expectMessageSubstring = "matches every path";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.extraWriteUrlMap = [
+          {
+            src_paths = [ "/.*" ];
+            url_prefix = "http://127.0.0.1:4201/";
+          }
+        ];
+      };
+    };
+  };
+
+  extra-read-url-map-match-everything-pattern-warns = mkWarningFiresCheck {
+    name = "extra-read-url-map-match-everything-pattern-warns";
+    expectMessageSubstring = "matches every path";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.extraReadUrlMap = [
+          {
+            src_paths = [ ".*" ];
+            url_prefix = "http://127.0.0.1:4201/";
+          }
+        ];
+      };
+    };
+  };
+
+  extra-url-map-narrow-patterns-do-not-warn = mkNoWarningsCheck {
+    name = "extra-url-map-narrow-patterns-do-not-warn";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          extraWriteUrlMap = [
+            {
+              src_paths = [ "/write" ];
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+            {
+              src_paths = [ "/api/v1/write.*" ];
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+          ];
+          extraReadUrlMap = [
+            {
+              src_paths = [ "/custom/.*" ];
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+          ];
+        };
+      };
+    };
+  };
+
+  # A real InfluxDB-line-protocol write through the escape hatch lands, and
+  # the read tier cannot reach the same path (the property ADR 0021 exists
+  # to guarantee, re-confirmed for the new escape hatch).
+  extra-write-url-map-lands-data-and-stays-closed-to-the-read-tier = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-extra-write-url-map";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          readTokensFile = "${readTokensFixture}";
+          writeTokensFile = "${writeTokensFixture}";
+          extraWriteUrlMap = [
+            {
+              src_paths = [ "/write" ];
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+          ];
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(4201)
+
+      line = "influx_extra_write_test,host=a value=42"
+      machine.succeed(
+          "curl -sf -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
+          f"-X POST --data-binary '{line}' 'http://127.0.0.1:4204/write'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=influx_extra_write_test_value' "
+          "| grep -q '\"value\"'"
+      )
+
+      def status(auth):
+          return machine.succeed(
+              f"curl -s -o /dev/null -w '%{{http_code}}' {auth} -X POST "
+              f"--data-binary '{line}' 'http://127.0.0.1:4204/write'"
+          )
+
+      for name, auth in [
+          ("read-tier token", "-H 'Authorization: Bearer read-token-one'"),  # gitleaks:allow
+          ("admin", "-u admin:admin-password-value"),  # gitleaks:allow
+          ("anonymous", ""),
+      ]:
+          code = status(auth)
+          assert code in ("400", "401", "403"), f"{name} must not reach /write, got {code}"
+    '';
+  };
 }

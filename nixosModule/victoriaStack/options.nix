@@ -546,6 +546,29 @@ in
         default = [ ];
         description = "Extra vmauth url_map entries for the read/admin tier, appended after the auto-derived ones.";
       };
+
+      extraWriteUrlMap = mkOption {
+        type = types.listOf types.attrs;
+        default = [ ];
+        example = [
+          {
+            src_paths = [ "/write" ];
+            url_prefix = "http://127.0.0.1:4201/";
+          }
+        ];
+        description = ''
+          Escape hatch: extra vmauth url_map entries appended to the
+          write-tier credential's url_map (the read tier is untouched --
+          see `extraReadUrlMap` for that side). Never added to the
+          unauthenticated `openIngestPaths` door. Same
+          operator's-own-responsibility philosophy as `extraReadUrlMap`:
+          entries are NOT validated against the allow-list ADR 0021
+          established for the built-in routes (a pattern matching every
+          path only draws a warning). Real use: VictoriaMetrics' own
+          `/write` (InfluxDB line protocol) or `/api/v1/write` (Prometheus
+          remote write), which this module opens no door for by default.
+        '';
+      };
     };
 
     grafana.enable = mkEnableOption ''

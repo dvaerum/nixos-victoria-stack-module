@@ -147,7 +147,7 @@ let
   # regardless of how the unauthenticated/open door is sized. Always
   # derived straight from autoOpenIngestPaths; see docs/decisions/0014.
   writeUrlMapFile = pkgs.writeText "vmauth-write-url-map.json" (
-    builtins.toJSON (withExtraHeaders autoOpenIngestPaths)
+    builtins.toJSON (withExtraHeaders (autoOpenIngestPaths ++ cfg.extraWriteUrlMap))
   );
 
   # Renders /run/vmauth/config.json at service start from: the two
@@ -262,12 +262,31 @@ in
     # the case below, there's no way to tell "forgot to configure this"
     # apart from "never intended to write through vmauth" from the
     # config alone -- not a genuine contradiction, so no warning.
-    warnings = lib.optional (!cfg.requireAuthForWrites && cfg.writeTokensFile != null) ''
-      services.victoriaStack.vmauth.writeTokensFile is set, but
-      requireAuthForWrites = false already permits unauthenticated writes --
-      the configured write tokens provide no additional protection for the
-      write path in this configuration.
-    '';
+    warnings =
+      # A src_paths pattern that begins with a wildcard matches every path
+      # -- almost certainly a mistake in an escape-hatch entry, but still
+      # the operator's call (no hard assertion).
+      let
+        matchesEverything =
+          entries:
+          lib.any (e: lib.any (p: lib.hasPrefix ".*" (lib.removePrefix "/" p)) (e.src_paths or [ ])) entries;
+      in
+      lib.optional (matchesEverything cfg.extraWriteUrlMap) ''
+        services.victoriaStack.vmauth.extraWriteUrlMap has a src_paths
+        pattern that matches every path (it starts with a wildcard) --
+        every write-tier request would be routed by that entry.
+      ''
+      ++ lib.optional (matchesEverything cfg.extraReadUrlMap) ''
+        services.victoriaStack.vmauth.extraReadUrlMap has a src_paths
+        pattern that matches every path (it starts with a wildcard) --
+        every read-tier request would be routed by that entry.
+      ''
+      ++ lib.optional (!cfg.requireAuthForWrites && cfg.writeTokensFile != null) ''
+        services.victoriaStack.vmauth.writeTokensFile is set, but
+        requireAuthForWrites = false already permits unauthenticated writes --
+        the configured write tokens provide no additional protection for the
+        write path in this configuration.
+      '';
 
     systemd.services.vmauth = {
       description = "vmauth -- auth/routing gateway in front of VictoriaMetrics/Logs/Traces";
