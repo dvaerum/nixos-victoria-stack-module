@@ -28,7 +28,7 @@ let
   writeTokenFixture = pkgs.writeText "collector-test-write-token" "collector-test-write-token";
 
   # Pure eval, no container boot needed: confirms the https:// branch of
-  # journaldWriteEndpoint actually renders the dummy-cert + CA-bundle
+  # journaldWriteEndpoint actually renders the client-cert-disabling + CA-bundle
   # settings it's supposed to -- the one branch with no prior coverage
   # at all (the roundtrip test above only ever uses a plain http://
   # writeEndpoint).
@@ -343,14 +343,14 @@ in
     '';
   };
 
-  journal-upload-https-renders-dummy-cert =
-    pkgs.runCommand "journal-upload-https-renders-dummy-cert" { }
+  journal-upload-https-disables-client-cert =
+    pkgs.runCommand "journal-upload-https-disables-client-cert" { }
       (
         let
           upload = httpsEvaluated.config.services.journald.upload.settings.Upload;
           checks = [
-            (upload ? ServerKeyFile)
-            (upload ? ServerCertificateFile)
+            (upload.ServerKeyFile == "-")
+            (upload.ServerCertificateFile == "-")
             # The CA bundle reaches the DynamicUser unit as a credential,
             # not as a path whose ownership/permissions matter.
             (upload.TrustedCertificateFile == "/run/credentials/systemd-journal-upload.service/trusted-ca")

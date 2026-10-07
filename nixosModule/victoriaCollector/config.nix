@@ -16,22 +16,6 @@ let
   # `..` is rejected by assertions.nix, so a plain prefix test is sound here.
   queueOutsideStateDir = !(lib.hasPrefix "/var/lib/alloy/" (toString cfg.queue.directory));
 
-  # systemd-journal-upload has no option to skip client-certificate
-  # loading for an https:// endpoint at all -- the server side (the
-  # gateway's own open write/ingest path, when requireAuthForWrites is
-  # false, or any Basic/Bearer-authenticated path otherwise) never
-  # requests or validates a client cert, so any syntactically valid pair
-  # satisfies the requirement without meaning anything. Throwaway,
-  # generated at build time -- not a secret.
-  dummyClientCert =
-    pkgs.runCommand "journal-upload-dummy-cert" { nativeBuildInputs = [ pkgs.openssl ]; }
-      ''
-        mkdir -p $out
-        openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
-          -subj "/CN=journal-upload-dummy" \
-          -keyout $out/key.pem -out $out/cert.pem
-      '';
-
   renderJournalUploadTokenHeader = pkgs.writeShellApplication {
     name = "victoria-collector-journal-upload-token-header";
     text = ''
@@ -260,8 +244,11 @@ in
           URL = "${journaldWriteEndpoint}/insert/journald";
         }
         // lib.optionalAttrs (lib.hasPrefix "https" journaldWriteEndpoint) {
-          ServerKeyFile = "${dummyClientCert}/key.pem";
-          ServerCertificateFile = "${dummyClientCert}/cert.pem";
+          # "-" disables client-certificate loading; without it the uploader
+          # refuses https:// URLs it has no client cert for. The gateway never
+          # asks for one.
+          ServerKeyFile = "-";
+          ServerCertificateFile = "-";
           # Staged as a credential (below), so the bundle's owner/mode don't
           # matter to systemd-journal-upload's dynamic user.
           TrustedCertificateFile = "/run/credentials/systemd-journal-upload.service/trusted-ca";
