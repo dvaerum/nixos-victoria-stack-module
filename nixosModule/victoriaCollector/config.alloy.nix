@@ -130,11 +130,12 @@ let
       }
     }
 
-    // host_type label, promoted to a real VictoriaMetrics label by the
-    // gateway's own relabelConfig.
+    // host_type: becomes the VictoriaMetrics label of the same name as it
+    // is. Spelled with an underscore on purpose -- a name with a dot would be
+    // stored verbatim and only a quoted selector could match it.
     otelcol.processor.attributes "add_host_type" {
       action {
-        key    = "host.type"
+        key    = "host_type"
         value  = "${cfg.hostType}"
         action = "upsert"
       }
@@ -187,7 +188,7 @@ let
     // surprising than useful (docs/decisions/0020).
     otelcol.processor.attributes "add_host_type_traces" {
       action {
-        key    = "host.type"
+        key    = "host_type"
         value  = "${cfg.hostType}"
         action = "upsert"
       }

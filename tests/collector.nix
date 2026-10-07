@@ -449,13 +449,13 @@ in
           };
           configText = evaluated.config.environment.etc."alloy/config.alloy".text;
         in
-        if lib.hasInfix "host.type" configText then
+        if lib.hasInfix ''key    = "host_type"'' configText then
           "echo OK > $out"
         else
           throw ''
             hostType's own option doc promises a fleet-identification label
             that isn't scoped to metrics only -- but the traces-only
-            rendered Alloy config has no host.type attribute anywhere.
+            rendered Alloy config has no host_type attribute anywhere.
           ''
       );
 
@@ -1103,14 +1103,14 @@ in
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")
 
-      # The hostType label lands on VictoriaMetrics as `host.type` (an
-      # OTLP resource attribute name, dot included) -- NOT `host_type` as
-      # options.nix/config.alloy.nix's comments claim; the quoted-label
-      # selector below is the only form that matches it.
+      # The hostType label lands on VictoriaMetrics as `host_type`, the plain
+      # selector below matching what options.nix documents. (It used to
+      # arrive as `host.type`, dot included, which only a quoted selector
+      # could match.)
       for host_type in ("server", "edge-device"):
           stack.wait_until_succeeds(
               "curl -sfG 'http://127.0.0.1:4201/api/v1/query' "
-              f"--data-urlencode 'query=alloy_up{{\"host.type\"=\"{host_type}\"}}' "
+              f"--data-urlencode 'query=alloy_up{{host_type=\"{host_type}\"}}' "
               "| grep -q '\"value\"'",
               timeout=120,
           )
@@ -1358,5 +1358,39 @@ in
           "echo OK > $out"
         else
           throw "journald endpoint assertion broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # The label name is part of the documented contract: host_type with an
+  # underscore, so a plain `{host_type="server"}` selector works. A dotted
+  # `host.type` can only be matched with a quoted selector.
+  host-type-label-is-spelled-with-an-underscore-for-metrics-and-traces =
+    pkgs.runCommand "host-type-label-spelling" { }
+      (
+        let
+          textFor =
+            m:
+            (evalWithCollector {
+              services.victoriaCollector = {
+                writeEndpoint = "http://127.0.0.1:4204";
+                hostType = "server";
+              }
+              // m;
+            }).config.environment.etc."alloy/config.alloy".text;
+          metrics = textFor { metrics.enable = true; };
+          traces = textFor { traces.enable = true; };
+          checks = {
+            "metrics: host_type key with the configured value" =
+              lib.hasInfix ''key    = "host_type"'' metrics && lib.hasInfix ''value  = "server"'' metrics;
+            "traces: host_type key with the configured value" =
+              lib.hasInfix ''key    = "host_type"'' traces && lib.hasInfix ''value  = "server"'' traces;
+            "metrics: no dotted host.type left" = !(lib.hasInfix "host.type" metrics);
+            "traces: no dotted host.type left" = !(lib.hasInfix "host.type" traces);
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "host_type label spelling broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 }

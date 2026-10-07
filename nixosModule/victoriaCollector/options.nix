@@ -123,8 +123,9 @@ in
       example = "server";
       description = ''
         A free-form label promoted onto every metric AND trace this host
-        ships (as the `host_type` attribute, via the gateway's own
-        relabel config) -- restricted to `[A-Za-z0-9_.-]+` so it can
+        ships, as the `host_type` label (`{host_type="server"}` in a
+        query; series stored by older versions carry `host.type`
+        instead) -- restricted to `[A-Za-z0-9_.-]+` so it can
         never break the generated Alloy config syntax it's embedded in.
         Not an enum beyond that restriction -- this module has no opinion
         about what values are meaningful; that's entirely a property of
