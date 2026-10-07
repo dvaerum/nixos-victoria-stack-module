@@ -23,7 +23,8 @@ let
         sc = evaluated.config.systemd.services.${serviceName}.serviceConfig;
         hardeningChecks = {
           "NoNewPrivileges" = (sc.NoNewPrivileges or null) == true;
-          "ProtectSystem" = (sc.ProtectSystem or null) == "full";
+          "ProtectSystem" = (sc.ProtectSystem or null) == "strict";
+          "CapabilityBoundingSet" = (sc.CapabilityBoundingSet or null) == "";
           "PrivateDevices" = (sc.PrivateDevices or null) == true;
           "MemoryDenyWriteExecute" = (sc.MemoryDenyWriteExecute or null) == true;
           "RestrictAddressFamilies" =

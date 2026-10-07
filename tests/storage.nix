@@ -27,7 +27,8 @@ let
         # never applied" as a class of regression.
         hardeningChecks = {
           "NoNewPrivileges" = (sc.NoNewPrivileges or null) == true;
-          "ProtectSystem" = (sc.ProtectSystem or null) == "full";
+          "ProtectSystem" = (sc.ProtectSystem or null) == "strict";
+          "CapabilityBoundingSet" = (sc.CapabilityBoundingSet or null) == "";
           "PrivateDevices" = (sc.PrivateDevices or null) == true;
           "MemoryDenyWriteExecute" = (sc.MemoryDenyWriteExecute or null) == true;
           "RestrictAddressFamilies" =
@@ -1502,9 +1503,9 @@ in
       throw "storage start timeouts wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
   );
 
-  # An explicit ProtectSystem=full overrides the strict that DynamicUser would
-  # otherwise imply, so the effective value is asserted on the RUNNING units, not
-  # on the rendered text. Capabilities are read from the kernel (CapBnd), the
+  # The effective ProtectSystem is asserted on the RUNNING units, not the rendered
+  # text: measured, DynamicUser units were strict even with an explicit "full",
+  # and only a static user actually ran with "full". Capabilities are read from the kernel (CapBnd), the
   # authoritative source.
   hardening-is-effective-on-running-units = pkgs.testers.nixosTest {
     name = "victoria-stack-hardening-effective";
