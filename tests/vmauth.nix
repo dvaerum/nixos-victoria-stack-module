@@ -12,6 +12,7 @@ let
     mkNoWarningsCheck
     evalWith
     otlpMetricGenerator
+    otlpTestPython
     ;
   otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
 
@@ -535,15 +536,18 @@ in
     };
 
     testScript = ''
+      ${otlpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
 
-      machine.fail(
-          "curl -sf -X POST --data-binary "
-          "'victoria_stack_vmauth_test_metric 1' "
-          "'http://127.0.0.1:4204/opentelemetry'"
-      )
+      code, body = otlp_status(machine, "http://127.0.0.1:4204/opentelemetry/v1/metrics")
+      assert code == "401" and "missing 'Authorization'" in body, (code, body)
+      # vmauth must not even have an unauthenticated user configured: an
+      # empty one answers 400 "missing route" instead and hides a regression.
+      import json
+      cfg = json.loads(machine.succeed("cat /run/vmauth/config.json"))
+      assert "unauthorized_user" not in cfg, cfg
     '';
   };
 
@@ -560,6 +564,7 @@ in
     };
 
     testScript = ''
+      ${otlpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
@@ -567,9 +572,8 @@ in
 
       # No credential: the write path must now reject the request (default
       # requireAuthForWrites = true).
-      machine.fail(
-          "curl -sf -X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
-      )
+      code, body = otlp_status(machine, "http://127.0.0.1:4204/opentelemetry/v1/metrics")
+      assert code == "401" and "missing 'Authorization'" in body, (code, body)
 
       # With a valid write-tier bearer token: must succeed.
       machine.succeed(
@@ -669,20 +673,20 @@ in
     };
 
     testScript = ''
+      ${otlpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
 
-      machine.fail(
-          "curl -sf -H 'Authorization: Bearer read-token-one' "  # gitleaks:allow
-          "-X POST --data-binary 'victoria_stack_vmauth_test_metric 1' "
-          "'http://127.0.0.1:4204/opentelemetry'"
-      )
-      machine.fail(
-          "curl -sf -u admin:admin-password-value "
-          "-X POST --data-binary 'victoria_stack_vmauth_test_metric 1' "
-          "'http://127.0.0.1:4204/opentelemetry'"
-      )
+      # A valid credential of the wrong tier has no write route at all: vmauth
+      # itself answers "missing route" (a junk body would be rejected by the
+      # backend even if it did have one).
+      for auth in [
+          "-H 'Authorization: Bearer read-token-one'",  # gitleaks:allow
+          "-u admin:admin-password-value",  # gitleaks:allow
+      ]:
+          code, body = otlp_status(machine, "http://127.0.0.1:4204/opentelemetry/v1/metrics", auth)
+          assert code == "400" and "missing route" in body, (auth, code, body)
 
       # Confirm both credentials still work on their actual intended
       # (read) path -- the write rejection above isn't masking a config
@@ -718,6 +722,7 @@ in
     };
 
     testScript = ''
+      ${otlpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
@@ -748,14 +753,16 @@ in
       # ...and no tier can reach outside its own scope, confirming the 3
       # tiers don't interfere with or widen each other when all present
       # at once.
-      machine.fail(
-          "curl -sf -u admin:admin-password-value "  # gitleaks:allow
-          "-X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
-      )
-      machine.fail(
-          "curl -sf -H 'Authorization: Bearer read-token-one' "
-          "-X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
-      )
+      for auth in [
+          "-u admin:admin-password-value",  # gitleaks:allow
+          "-H 'Authorization: Bearer read-token-one'",  # gitleaks:allow
+      ]:
+          code, body = otlp_status(machine, "http://127.0.0.1:4204/opentelemetry/v1/metrics", auth)
+          assert code == "400" and "missing route" in body, (auth, code, body)
+      # config.json holds every token and the admin password in cleartext:
+      # it must stay owner-only (UMask 0177).
+      mode = machine.succeed("stat -c %a /run/vmauth/config.json").strip()
+      assert mode == "600", f"config.json mode is {mode}, expected 600"
       machine.fail(
           "curl -sf -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
           "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
@@ -895,19 +902,21 @@ in
     };
 
     testScript = ''
+      ${otlpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
 
-      machine.fail(
-          "curl -sf -X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"  # gitleaks:allow
-      )
+      code, body = otlp_status(machine, "http://127.0.0.1:4204/opentelemetry/v1/metrics")
+      assert code == "401" and "missing 'Authorization'" in body, (code, body)
       # Confirms there is no credential of any form (correctly-shaped or
       # not) that could open the write path in this state.
-      machine.fail(
-          "curl -sf -H 'Authorization: Bearer anything-at-all' "
-          "-X POST --data-binary 'x 1' 'http://127.0.0.1:4204/opentelemetry'"
+      code, body = otlp_status(
+          machine,
+          "http://127.0.0.1:4204/opentelemetry/v1/metrics",
+          "-H 'Authorization: Bearer anything-at-all'",  # gitleaks:allow
       )
+      assert code == "401" and "Unauthorized" in body, (code, body)
     '';
   };
 
@@ -1670,15 +1679,20 @@ in
       assert code(scoped, "/mcp/traces", init) == "200"
 
       # ...and nothing else, on either surface.
+      # A valid-but-unrouted request is vmauth's own 400 "missing route"; any
+      # other status would mean the request reached a backend.
       for path in ["/metrics/api/v1/labels", "/logs/select/logsql/query?query=*"]:
           c = code(scoped, path)
-          assert c in ("400", "401", "403"), f"scoped token reached {path}: {c}"
+          assert c == "400", f"scoped token reached {path}: {c}"
       for path in ["/mcp/metrics", "/mcp/logs"]:
           c = code(scoped, path, init)
-          assert c in ("400", "401", "403"), f"scoped token reached {path}: {c}"
+          assert c == "400", f"scoped token reached {path}: {c}"
 
       # An unscoped token still reaches everything (backward compatible).
       assert code(unscoped, "/metrics/api/v1/labels") == "200"
+      # (the /logs probe above needs this control: without it a 400 could be a
+      # backend rejecting the query rather than vmauth having no route)
+      assert code(unscoped, "/logs/select/logsql/query?query=*") == "200"
       assert code(unscoped, "/traces/select/jaeger/api/services") == "200"
       assert code(unscoped, "/mcp/logs", init) == "200"
 
@@ -1958,6 +1972,7 @@ in
     };
 
     testScript = ''
+      ${otlpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
@@ -1974,7 +1989,12 @@ in
 
       # HTTPS door: verified against the CA, and refused without credentials.
       machine.succeed(post + "--cacert ${selfSignedCert}/cert.pem 'https://127.0.0.1:8443" + path + "'")
-      machine.fail("curl -sf --max-time 5 -X POST --data-binary x 'https://127.0.0.1:8443" + path + "'")
+      # (Without --cacert such a probe would fail on certificate verification and
+      # prove nothing about credentials, so it carries the CA.)
+      code, body = otlp_status(
+          machine, "https://127.0.0.1:8443" + path, "--cacert ${selfSignedCert}/cert.pem"
+      )
+      assert code == "401" and "missing 'Authorization'" in body, (code, body)
       machine.fail(post + "--max-time 5 'https://127.0.0.1:8443" + path + "'")  # no CA -> verification fails
 
       # Plain loopback HTTP door and the unchanged internal listener.
@@ -2010,13 +2030,15 @@ in
     };
 
     testScript = ''
+      ${otlpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(8080)
       listeners = machine.succeed("ss -Hltn")
       assert "0.0.0.0:8080" in listeners or "*:8080" in listeners, listeners
       assert "8443" not in listeners, listeners
-      machine.fail("curl -sf --max-time 5 -X POST --data-binary x 'http://127.0.0.1:8080/opentelemetry/v1/metrics'")  # no token
+      code, body = otlp_status(machine, "http://127.0.0.1:8080/opentelemetry/v1/metrics")
+      assert code == "401" and "missing 'Authorization'" in body, (code, body)
     '';
   };
 
@@ -2101,4 +2123,233 @@ in
       assert lines, f"no access-log line for the successful write from {client_ip}:\n{journal}"
     '';
   };
+
+  # The anonymous write door must stay closed whenever requireAuthForWrites is
+  # true (the default), on the internal listener AND the public http door. A
+  # mutation that always rendered the unauthenticated user survived every other
+  # test, because the old controls posted junk the backend rejected anyway.
+  anonymous-write-door-stays-closed-when-auth-is-required = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-anonymous-write-door-closed";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          writeTokensFile = "${writeTokensFixture}";
+          http.enable = true; # 0.0.0.0:8080
+        };
+      };
+    };
+
+    testScript = ''
+      ${otlpTestPython}
+      import json
+
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(8080)
+      machine.wait_for_open_port(4201)
+
+      for port in ("4204", "8080"):
+          code, body = otlp_status(machine, f"http://127.0.0.1:{port}/opentelemetry/v1/metrics")
+          assert code == "401" and "missing 'Authorization'" in body, (port, code, body)
+
+      cfg = json.loads(machine.succeed("cat /run/vmauth/config.json"))
+      assert "unauthorized_user" not in cfg, cfg
+    '';
+  };
+
+  # acmeCertName is the one door option with no boot test (a real ACME issuance
+  # is impossible in the sandbox): pin its wiring instead.
+  acme-cert-name-is-wired-into-the-unit = pkgs.runCommand "vmauth-acme-cert-name-wiring" { } (
+    let
+      eval =
+        reload:
+        evalWith {
+          security.acme = {
+            acceptTerms = true;
+            defaults.email = "test@example.invalid";
+            certs."example.test" = {
+              reloadServices = lib.optional reload "vmauth.service";
+            };
+          };
+          services.victoriaStack = {
+            metrics.enable = true;
+            vmauth.https = {
+              enable = true;
+              acmeCertName = "example.test";
+            };
+          };
+        };
+      withReload = eval true;
+      withoutReload = eval false;
+      unit = e: e.config.systemd.services.vmauth;
+      acmeWarns = e: lib.any (lib.hasInfix "reloadServices") e.config.warnings;
+      checks = {
+        "cert and key staged as credentials from the ACME directory" =
+          lib.elem "https-cert:/var/lib/acme/example.test/fullchain.pem" (unit withReload)
+          .serviceConfig.LoadCredential
+          && lib.elem "https-key:/var/lib/acme/example.test/key.pem" (unit withReload)
+          .serviceConfig.LoadCredential;
+        "ordered after the ACME unit" = lib.elem "acme-example.test.service" (unit withReload).after;
+        "pulls the ACME unit in" = lib.elem "acme-example.test.service" (unit withReload).wants;
+        "warns when reloadServices lacks vmauth.service" = acmeWarns withoutReload;
+        "no warning when reloadServices has vmauth.service" = !(acmeWarns withReload);
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "acmeCertName wiring broken: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # http.port customisation and its collision with the internal listener.
+  http-door-port-customisation-reaches-the-unit = pkgs.runCommand "vmauth-http-door-port" { } (
+    let
+      e = evalWith {
+        services.victoriaStack = {
+          metrics.enable = true;
+          vmauth.http = {
+            enable = true;
+            ipAddress = "127.0.0.1";
+            port = 8085;
+          };
+        };
+      };
+      execStart = e.config.systemd.services.vmauth.serviceConfig.ExecStart;
+    in
+    if lib.hasInfix "-httpListenAddr=127.0.0.1:8085" execStart then
+      "echo OK > $out"
+    else
+      throw "http.port did not reach ExecStart: ${execStart}"
+  );
+
+  # vmauth's own diagnostic pages (/health, /metrics, /flags, /debug/pprof,
+  # /-/reload) used to be served on every listener, so the public write doors
+  # exposed them to anyone. They now live on one loopback-only internal
+  # listener (-httpInternalListenAddr) and no data listener serves them.
+  builtin-pages-live-only-on-the-internal-listener = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-builtin-pages-internal-only";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          writeTokensFile = "${writeTokensFixture}";
+          https = {
+            enable = true;
+            certFile = "${selfSignedCert}/cert.pem";
+            keyFile = "${selfSignedCert}/key.pem";
+          };
+          http = {
+            enable = true;
+            ipAddress = "127.0.0.1";
+          };
+        };
+        nginx.enable = true;
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      for port in (4204, 8443, 8080, 4208):
+          machine.wait_for_open_port(port)
+      machine.wait_for_unit("nginx.service")
+
+      pages = ["/health", "/metrics", "/flags", "/debug/pprof/", "/-/reload"]
+
+      def code(url, extra=""):
+          return machine.succeed(
+              f"curl -s -o /dev/null -w '%{{http_code}}' {extra} '{url}'"
+          ).strip()
+
+      # No data listener serves any of them, with or without credentials: the
+      # request is just another unrouted request there.
+      data_listeners = {
+          "4204": "http://127.0.0.1:4204",
+          "8080": "http://127.0.0.1:8080",
+          "8443": "https://127.0.0.1:8443",
+      }
+      for name, base in data_listeners.items():
+          tls = "--cacert ${selfSignedCert}/cert.pem" if name == "8443" else ""
+          for page in pages:
+              anon = code(base + page, tls)
+              assert anon != "200", f"{name}{page} answered 200 anonymously"
+              authed = code(base + page, tls + " -u admin:admin-password-value")  # gitleaks:allow
+              assert authed != "200", f"{name}{page} answered 200 for admin"
+
+      # They are all on the internal listener (plain HTTP, loopback only).
+      for page in pages:
+          assert code("http://127.0.0.1:4208" + page) == "200", page
+      listeners = machine.succeed("ss -Hltn")
+      assert "127.0.0.1:4208" in listeners, listeners
+      assert "0.0.0.0:4208" not in listeners and "*:4208" not in listeners, listeners
+
+      # Through nginx, /victoria/metrics is an ordinary unrouted read path, not
+      # vmauth's own metrics page.
+      body = machine.succeed(
+          "curl -s -u admin:admin-password-value 'http://127.0.0.1:80/victoria/metrics'"  # gitleaks:allow
+      )
+      assert "vmauth_" not in body and "go_goroutines" not in body, body[:200]
+    '';
+  };
+
+  internal-listener-address-reaches-the-unit-and-collides-like-any-other =
+    pkgs.runCommand "vmauth-internal-listener-eval" { }
+      (
+        let
+          execStart =
+            m:
+            (evalWith {
+              services.victoriaStack = {
+                metrics.enable = true;
+              }
+              // m;
+            }).config.systemd.services.vmauth.serviceConfig.ExecStart;
+          failedFor =
+            m:
+            lib.filter (lib.hasInfix "same listenAddress") (
+              map (a: a.message) (
+                builtins.filter (a: !a.assertion)
+                  (evalWith {
+                    services.victoriaStack = {
+                      metrics.enable = true;
+                    }
+                    // m;
+                  }).config.assertions
+              )
+            );
+          checks = {
+            "default internal address" = lib.hasInfix "-httpInternalListenAddr=127.0.0.1:4208" (execStart { });
+            "custom internal address" = lib.hasInfix "-httpInternalListenAddr=127.0.0.1:4299" (execStart {
+              vmauth.internalListenAddress = "127.0.0.1:4299";
+            });
+            "colliding with a data listener is rejected" =
+              failedFor { vmauth.internalListenAddress = "127.0.0.1:4204"; } != [ ];
+            "the default does not collide" = failedFor { } == [ ];
+            # The internal listener reads the SAME -tls array slot as listener 0, so
+            # the array must stay explicit with a plain first entry.
+            "TLS array keeps the internal slot plain when the https door is on" =
+              lib.hasInfix "-tls=false -tls=true"
+                (execStart {
+                  vmauth.https = {
+                    enable = true;
+                    certFile = "/run/secrets/c.pem";
+                    keyFile = "/run/secrets/k.pem";
+                  };
+                });
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "internal listener wiring broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
 }

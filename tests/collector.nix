@@ -1417,4 +1417,121 @@ in
         else
           throw "host_type label spelling broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
+
+  # alloy.extraFlags had no test at all. A real boot is the check: a mistyped or
+  # misplaced flag crashes Alloy, and the flag must appear on the running
+  # process's own command line.
+  alloy-extra-flags-reach-the-running-process = pkgs.testers.nixosTest {
+    name = "victoria-collector-alloy-extra-flags";
+
+    containers.collector = {
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        # Nothing listens here; only the process's own flags matter.
+        writeEndpoint = "http://127.0.0.1:4204";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+        alloy.extraFlags = [ "--disable-reporting" ];
+      };
+    };
+
+    testScript = ''
+      start_all()
+      collector.wait_for_unit("alloy.service")
+      collector.wait_until_succeeds("curl -sf http://127.0.0.1:12345/-/ready")
+      pid = collector.succeed("systemctl show -p MainPID --value alloy.service").strip()
+      cmdline = collector.succeed(f"tr '\\0' ' ' < /proc/{pid}/cmdline")
+      assert "--disable-reporting" in cmdline, cmdline
+      # Still the module's own flag as well: extraFlags adds to it, never replaces.
+      assert "--stability.level=public-preview" in cmdline, cmdline
+    '';
+  };
+
+  # trustedCertificateFile was only exercised inside the maximal test. Logs over
+  # verified TLS, with a negative control: a collector that does NOT trust the
+  # gateway's CA must deliver nothing (so the pass above is verification at
+  # work, not a gateway that accepts anything).
+  journal-upload-https-verifies-the-gateway = pkgs.testers.nixosTest {
+    name = "victoria-collector-journal-upload-https-verifies-the-gateway";
+
+    containers.stack = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ stackModule ];
+      services.victoriaStack = {
+        logs.enable = true;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
+        # vmauth stays on its loopback default: only nginx is reachable.
+      };
+      services.nginx = {
+        enable = true;
+        virtualHosts."stack" = {
+          onlySSL = true;
+          sslCertificate = "${stackSelfSignedCert}/cert.pem";
+          sslCertificateKey = "${stackSelfSignedCert}/key.pem";
+          locations."/".proxyPass = "http://127.0.0.1:4204";
+        };
+      };
+      networking.firewall.allowedTCPPorts = [ 443 ];
+    };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        logs.enable = true;
+        # Explicit port: systemd-journal-upload does not default https to 443.
+        writeEndpoint = "https://stack:443";
+        writeTokenFile = "${writeTokenFixture}";
+        trustedCertificateFile = "${stackSelfSignedCert}/cert.pem";
+      };
+    };
+
+    containers.collector-untrusted = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        logs.enable = true;
+        writeEndpoint = "https://stack:443";
+        writeTokenFile = "${writeTokenFixture}";
+        # trustedCertificateFile left at the system bundle, which does not
+        # contain the test CA.
+      };
+    };
+
+    testScript = ''
+      start_all()
+      stack.wait_for_unit("nginx.service")
+      stack.wait_for_unit("vmauth.service")
+      stack.wait_for_unit("victorialogs.service")
+      # Only the trusted uploader is awaited: the untrusted one is SUPPOSED to
+      # fail verification and restart-loop, so it never settles as "active".
+      collector.wait_for_unit("systemd-journal-upload.service")
+      for m in (stack, collector, collector_untrusted):
+          m.systemctl("start network-online.target")
+          m.wait_for_unit("network-online.target")
+      for c in (collector, collector_untrusted):
+          c.wait_until_succeeds("ping -c 1 stack")
+
+      collector.succeed("logger --tag tls-test 'victoria_tls_trusted_marker'")
+      collector_untrusted.succeed("logger --tag tls-test 'victoria_tls_untrusted_marker'")
+
+      def query(marker):
+          return (
+              "curl -sf 'http://127.0.0.1:4202/select/logsql/query' "
+              f"-d 'query={marker}' | grep -q {marker}"
+          )
+
+      stack.wait_until_succeeds(query("victoria_tls_trusted_marker"), timeout=120)
+      # By now the untrusted one has had as long as the trusted one to deliver.
+      stack.fail(query("victoria_tls_untrusted_marker"))
+      # ...and it failed for the right reason (it could not verify/connect), not
+      # because it never tried.
+      collector_untrusted.wait_until_succeeds(
+          "journalctl -u systemd-journal-upload.service --no-pager "
+          "| grep -iE 'certificate|verif|ssl|tls|could not connect|failed'",
+          timeout=60,
+      )
+    '';
+  };
 }

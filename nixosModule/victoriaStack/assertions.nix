@@ -11,6 +11,7 @@ let
     ++ lib.optional cfg.logs.enable cfg.logs.listenAddress
     ++ lib.optional cfg.traces.enable cfg.traces.listenAddress
     ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled) cfg.vmauth.listenAddress
+    ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled) cfg.vmauth.internalListenAddress
     ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled && cfg.vmauth.https.enable) (
       "${cfg.vmauth.https.ipAddress}:${toString cfg.vmauth.https.port}"
     )

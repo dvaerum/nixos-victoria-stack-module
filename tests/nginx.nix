@@ -749,6 +749,16 @@ in
           "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
       )
       assert code == "404", f"a write through nginx /victoria/ must be 404, got {code}"
+      # The read prefixes end at a boundary: a longer name that merely STARTS
+      # with one (/victoria/metricsX) is not a read route and must be nginx's own
+      # 404, not vmauth's 400 "missing route" (which is what happens if the
+      # (/|$) boundary is dropped from the location regex).
+      for path in ["/victoria/metricsX/api/v1/labels", "/victoria/logsX", "/victoria/mcpfoo"]:
+          code = machine.succeed(
+              "curl -s -o /dev/null -w '%{http_code}' -u admin:nginx-admin-password "  # gitleaks:allow
+              f"'http://127.0.0.1:80{path}'"
+          )
+          assert code == "404", f"{path} must be nginx's 404, got {code}"
       # Any other non-read path under /victoria/ is refused the same way.
       code = machine.succeed(
           "curl -s -o /dev/null -w '%{http_code}' -u admin:nginx-admin-password "  # gitleaks:allow
@@ -758,6 +768,53 @@ in
 
       # The same write works on vmauth's own port -- the door writes belong on.
       machine.succeed(f"curl -sf {write} 'http://127.0.0.1:4204/opentelemetry/v1/metrics'")
+    '';
+  };
+
+  # extraReadPaths widens the allow-list for a route added through
+  # vmauth.extraReadUrlMap -- through a real request, not just rendered text.
+  nginx-extra-read-paths-are-reachable-through-a-real-request = pkgs.testers.nixosTest {
+    name = "victoria-stack-nginx-extra-read-paths";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        nginx = {
+          enable = true;
+          extraReadPaths = [ "custom-route" ];
+        };
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          extraReadUrlMap = [
+            {
+              src_paths = [ "/custom-route/api/v1/labels" ];
+              drop_src_path_prefix_parts = 1;
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+          ];
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("nginx.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(80)
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
+
+      auth = "-u admin:nginx-admin-password"  # gitleaks:allow
+
+      def status(path):
+          return machine.succeed(
+              f"curl -s -o /dev/null -w '%{{http_code}}' {auth} 'http://127.0.0.1:80{path}'"
+          )
+
+      assert status("/victoria/custom-route/api/v1/labels") == "200"
+      # Not in extraReadPaths, so nginx refuses it before vmauth is asked.
+      assert status("/victoria/other-route/api/v1/labels") == "404"
     '';
   };
 }

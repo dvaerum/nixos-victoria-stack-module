@@ -169,6 +169,25 @@ let
 
         sys.stdout.buffer.write(req.SerializeToString())
       '';
+
+  # Test-script snippet for NEGATIVE write controls. The old controls POSTed a
+  # junk body to the bare path /opentelemetry, which the BACKEND rejects with a
+  # 4xx anyway, so they passed even when vmauth let the request through. This
+  # posts a genuinely valid OTLP body to the real ingest path and returns
+  # (http_status, body), so an assertion on vmauth's own answer (401 "missing
+  # 'Authorization'", 401 "Unauthorized", 400 "missing route") proves vmauth, not
+  # the backend, refused it. Measured against vmauth 1.153.
+  otlpTestPython = ''
+    def otlp_status(machine, url, auth=""):
+        machine.succeed("${otlpMetricGenerator}/bin/gen-otlp-metric victoria_stack_negative_control 1 > /tmp/otlp-probe.bin")
+        out = machine.succeed(
+            f"curl -s -w '\\n%{{http_code}}' {auth} -X POST "
+            "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp-probe.bin "
+            f"'{url}'"
+        )
+        body, code = out.rsplit("\n", 1)
+        return code.strip(), body
+  '';
 in
 {
   inherit
@@ -179,5 +198,6 @@ in
     mkWarningFiresCheck
     mkNoWarningsCheck
     otlpMetricGenerator
+    otlpTestPython
     ;
 }

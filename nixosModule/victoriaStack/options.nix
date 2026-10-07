@@ -404,7 +404,24 @@ in
       listenAddress = mkOption {
         type = types.str;
         default = "127.0.0.1:4204"; # docs/decisions/0017
-        description = "Address vmauth listens on.";
+        description = ''
+          The internal data listener: nginx and local callers reach vmauth
+          here. Public write doors are separate listeners (`https`, `http`).
+          Never serves vmauth's own diagnostic pages (see `internalListenAddress`).
+        '';
+      };
+
+      internalListenAddress = mkOption {
+        type = types.str;
+        default = "127.0.0.1:4208"; # next free number after 4201-4207, docs/decisions/0017
+        description = ''
+          Address of the loopback-only listener that serves vmauth's OWN pages:
+          `/health`, `/metrics`, `/flags`, `/debug/pprof/` and `/-/reload`
+          (`-httpInternalListenAddr`). No data listener -- the internal one or
+          the public `https`/`http` doors -- serves them, so a public door never
+          exposes vmauth's statistics, flags or profiler. Keep it on loopback
+          (an address that is not loopback exposes them again).
+        '';
       };
 
       idleConnTimeout = mkOption {

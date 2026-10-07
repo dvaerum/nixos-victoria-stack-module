@@ -503,6 +503,11 @@ in
             "-auth.config=/run/vmauth/config.json"
           ]
           ++ map (l: "-httpListenAddr=${l.addr}") listeners
+          # vmauth's own pages move off every -httpListenAddr listener onto this
+          # one. It reads the SAME -tls/-tlsCertFile/-tlsKeyFile array slot as
+          # listener 0, which is why those arrays below are always explicit and
+          # keep a plain first entry.
+          ++ [ "-httpInternalListenAddr=${cfg.internalListenAddress}" ]
           ++ lib.optionals anyTls (
             map (l: "-tls=${lib.boolToString l.tls}") listeners
             ++ map (l: "-tlsCertFile=${lib.optionalString l.tls "%d/https-cert"}") listeners
