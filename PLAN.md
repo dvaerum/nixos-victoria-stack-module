@@ -400,7 +400,7 @@ right answer, no real tradeoff -- write into the plan same as test gaps),
 and judgment calls (real design tradeoffs or scope questions -- grill
 session before any code changes, same discipline as Round 2/Round 3).
 
-- [ ] 44. **Test gap fixes** (tracked here, phases TBD once grill session's
+- [x] 44. **Test gap fixes** (tracked here, phases TBD once grill session's
       results are folded in -- some test gaps depend on a judgment call
       below, e.g. the vmauth full-combination test can't include MCP until
       the grill session resolves whether MCP gets a dedicated credential
@@ -465,7 +465,7 @@ session before any code changes, same discipline as Round 2/Round 3).
         credential tiers + all 3 backends + all 3 MCP servers + Grafana +
         a real collector shipping real data, all at once) -- the dimension
         this whole bucket's findings kept surfacing as never-combined.
-- [ ] 45. **Hardening / obvious improvements** (clear right answer, no
+- [x] 45. **Hardening / obvious improvements** (clear right answer, no
       real tradeoff -- implement directly, no grill needed):
       - Fix `openIngestPaths`: a custom override currently bypasses
         `withExtraHeaders` entirely, breaking the option's own documented
@@ -520,35 +520,35 @@ changed the tradeoff -- same discipline as Round 2/3's own grill sessions
 (docs/decisions/0014-0020, 0021-0022). New ADRs get written during
 implementation, not here -- this section only records the decision.
 
-- [ ] 46. **Naming unification**: `extraOptions` (metrics/logs/traces) and
+- [x] 46. **Naming unification**: `extraOptions` (metrics/logs/traces) and
       `extraFlags` (Alloy) are the identical concept under two names --
       unify on `extraFlags` (the more literally accurate term: these are
       real CLI flags, not generic "options") via
       `lib.mkRenamedOptionModule` for the 3 renamed storage options.
-- [ ] 47. **vmauth's own `extraFlags`**: vmauth has no CLI-passthrough
+- [x] 47. **vmauth's own `extraFlags`**: vmauth has no CLI-passthrough
       escape hatch at all today (confirmed via grep), unlike the other 3
       services -- add `vmauth.extraFlags`, same shape as #46. Covers
       vmauth's own TLS listener (`-tls`/`-tlsCertFile`/`-tlsKeyFile`,
       confirmed real vmauth flags) for operators who bypass nginx
       entirely, plus anything else, without a bespoke option per flag.
-- [ ] 48. **Multi-host fleet**: a real 2-collector + 1-gateway
+- [x] 48. **Multi-host fleet**: a real 2-collector + 1-gateway
       container-boot test (concurrent writers, `hostType` label
       distinctness under real load) AND a documented multi-host example
       (`examples/fleet.nix` or a new README section) showing the actual
       NixOS config shape for N collector hosts -> 1 gateway.
-- [ ] 49. **`.gitleaksignore` -> inline `gitleaks:allow`**: migrate every
+- [x] 49. **`.gitleaksignore` -> inline `gitleaks:allow`**: migrate every
       pinned line-number entry to an inline `# gitleaks:allow` comment on
       the fixture's own line (gitleaks' own first-class, documented
       mechanism for exactly this case -- confirmed via real gitleaks
       docs), then delete `.gitleaksignore` entirely. Survives any future
       edit to the file above/below it; no separate file to keep in sync.
-- [ ] 50. **vmauth consumes `X-Forwarded-For` automatically when nginx is
+- [-] 50. (DROPPED -- see "Round 4 outcome") **vmauth consumes `X-Forwarded-For` automatically when nginx is
       on**: not a new user-facing option -- `vmauth`'s `-httpRealIPHeader`
       gets set to `X-Forwarded-For` via `lib.mkIf cfg.nginx.enable
       (lib.mkDefault "X-Forwarded-For")`, still overridable. When nginx is
       off (direct-bypass), nothing is set -- same "bypass = your own
       setup" precedent already established elsewhere in this project.
-- [ ] 51. **`extraWriteUrlMap`**: symmetric with the existing
+- [x] 51. **`extraWriteUrlMap`**: symmetric with the existing
       `extraReadUrlMap`, scoped to the write-tier credential only. Real
       use case confirmed via upstream docs: VictoriaMetrics' own `/write`
       (InfluxDB line protocol) and `/api/v1/write` (Prometheus
@@ -559,7 +559,7 @@ implementation, not here -- this section only records the decision.
       test (same closed-world-check style ADR 0021 already uses for the
       built-in entries), so a careless `src_paths = [".*"]` in this
       escape hatch gets flagged.
-- [ ] 52. **Per-token scoping (read AND write tiers)**: `readTokensFile`/
+- [x] 52. **Per-token scoping (read AND write tiers)**: `readTokensFile`/
       `writeTokensFile`'s YAML format changes from a bare list of strings
       to a uniform list of `{token, backends}` objects (`backends`
       optional -- omitted means today's behavior, all enabled backends).
@@ -577,7 +577,7 @@ implementation, not here -- this section only records the decision.
       needs updating to require the new object shape, with a legible
       error distinguishing "still using the old bare-string format" from
       a genuinely malformed file.
-- [ ] 53. **Collector metrics customization**: mirrors Alloy's own real
+- [x] 53. **Collector metrics customization**: mirrors Alloy's own real
       3-knob `prometheus.exporter.unix` model exactly (confirmed via
       Alloy's own docs) -- `services.victoriaCollector.metrics.{
       extraCollectors, disabledCollectors, scrapeInterval}`.
@@ -590,7 +590,7 @@ implementation, not here -- this section only records the decision.
       `enable`/`package`/`configPath`/`environmentFile`/`extraFlags` --
       this project is the one generating the actual `.alloy` pipeline
       config, so it's the one that has to expose this).
-- [ ] 54. **On-disk snapshot creation + pruning** (metrics/logs/traces,
+- [x] 54. **On-disk snapshot creation + pruning** (metrics/logs/traces,
       each independently): confirmed via real upstream docs that
       snapshotting is NOT automatic on its own (`/snapshot/create` is a
       pure on-demand HTTP endpoint, nothing inside the binaries schedules
@@ -613,6 +613,56 @@ implementation, not here -- this section only records the decision.
       live data, those commands can silently corrupt them) -- worth a
       code comment at the one place this matters, not a feature, since
       this module never touches snapshot contents directly itself.
+
+## Round 4 outcome (what actually shipped, and where it differed from the plan)
+
+All of Phases 44-54 shipped except 50, each gated with `nix flake check -L`,
+committed and pushed separately. Deviations worth knowing:
+
+- **44** -- all 23 test gaps closed. The new tests found two pre-existing
+  bugs: `hostType` arrived as the label `host.type` (not the documented
+  `host_type`; fixed afterwards, see below) and a collector `writeEndpoint`
+  with a path but no port broke systemd-journal-upload (now an assertion).
+  They also exposed a vacuous nginx assertion ("a different Host is refused"
+  -- it is not, with a single virtualHost; the old probe passed on a 401).
+- **45** -- item 1 assumed `withExtraHeaders` was idempotent; it
+  concatenates, so it is applied once at serialization instead. Item 7
+  (`selfScrapeInterval`) was dropped as specified: only victoria-metrics has
+  the flag. Replaced by `selfMonitoring` on all four services via the
+  `-pushmetrics.*` family they share (ADR 0026), on by default whenever the
+  metrics database is enabled, with a warning when it conflicts with the
+  operator's own `-pushmetrics.*` flags. Item 8's real flag names are
+  `-retention.maxDiskSpaceUsageBytes` / `-retention.maxDiskUsagePercent`
+  (logs/traces only).
+- **46** -- `extraFlags` rename with a `mkRenamedOptionModule` shim, ADR 0024.
+- **47-49, 51, 53** -- as planned. 49 uses inline `gitleaks:allow`; one ADR
+  example whose line ends in a shell `\` uses a `$READ_TOKEN` placeholder.
+- **50 DROPPED** -- vmauth's `-httpRealIPHeader` is Enterprise-only (absent
+  from the open-source binary's `-help` and source). Behind a reverse proxy
+  vmauth cannot be told to trust a forwarded address; the real client stays
+  readable in the proxy's own log and in vmauth's failure log lines (last
+  `X-Forwarded-For` entry). Collectors that write straight to vmauth's own
+  doors are unaffected. Documented in docs/architecture.md, "Client
+  addresses behind a reverse proxy".
+- **52** -- BREAKING token file format (`- token: <value>`, optional
+  `backends`); the old bare-string format fails at start with a migration
+  message.
+- **54** -- the snapshot API differs per binary (metrics: `/snapshot/*`;
+  logs/traces: POST-only `/internal/partition/snapshot/*`); `-snapshotsMaxAge`
+  exists on all three.
+
+Added during the round, beyond the plan:
+- **Phase 55** -- vmauth public write doors `vmauth.https` / `vmauth.http`
+  (ipAddress + port, operator cert files or an existing ACME cert name),
+  nginx `/victoria/` reads-only (BREAKING for writes through nginx), ADR 0025.
+  No redirect option: vmauth cannot redirect.
+- `vmauth.accessLog` (default off) so successful writes log their source.
+- Every CA bundle (vmauth backend, Alloy, journal-upload) now goes through
+  `LoadCredential`, like the other TLS/secret files.
+- Collector `host_type` label spelling fixed; a collector assertion for a
+  journald endpoint with a path but no port.
+- A latent race in the alloy-reload test (reload sent before Alloy was
+  ready) fixed by waiting for `/-/ready`.
 
 Each phase: gate with `nix flake check -L` (run detached, polled — never a
 single tool-call timeout for a full nspawn build) + nixfmt-rfc-style clean,
