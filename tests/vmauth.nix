@@ -56,6 +56,10 @@ let
       tier, # "read" | "write"
       yaml,
       expectInJournal,
+      # Secrets must never reach the journal: the file holds them.
+      expectNotInJournal ? null,
+      # Content for the OTHER tier's file, for cross-file checks.
+      otherYaml ? null,
       backends ? {
         metrics.enable = true;
       },
@@ -66,7 +70,13 @@ let
       containers.machine = {
         imports = [ module ];
         services.victoriaStack = backends // {
-          vmauth."${tier}TokensFile" = "${pkgs.writeText "bad-${tier}-tokens.yaml" yaml}";
+          vmauth = {
+            "${tier}TokensFile" = "${pkgs.writeText "bad-${tier}-tokens.yaml" yaml}";
+          }
+          // lib.optionalAttrs (otherYaml != null) {
+            "${if tier == "read" then "write" else "read"}TokensFile" =
+              "${pkgs.writeText "other-tokens.yaml" otherYaml}";
+          };
         };
       };
 
@@ -76,6 +86,11 @@ let
         machine.succeed(
             "journalctl -u vmauth.service --no-pager | grep -qF ${lib.escapeShellArg expectInJournal}"
         )
+        ${lib.optionalString (expectNotInJournal != null) ''
+          machine.fail(
+              "journalctl -u vmauth.service --no-pager | grep -qF ${lib.escapeShellArg expectNotInJournal}"
+          )
+        ''}
       '';
     };
 
@@ -1252,7 +1267,7 @@ in
       machine.fail("systemctl is-active vmauth.service")
       machine.succeed(
           "journalctl -u vmauth.service --no-pager "
-          "| grep -q \"read-tokens must contain a top-level 'tokens:' key\""
+          "| grep -q \"readTokensFile must contain a top-level 'tokens:' key\""
       )
     '';
   };
@@ -1278,7 +1293,7 @@ in
       machine.fail("systemctl is-active vmauth.service")
       machine.succeed(
           "journalctl -u vmauth.service --no-pager "
-          "| grep -q \"write-tokens must contain a top-level 'tokens:' key\""
+          "| grep -q \"writeTokensFile must contain a top-level 'tokens:' key\""
       )
     '';
   };
@@ -2353,4 +2368,223 @@ in
         else
           throw "internal listener wiring broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
+
+  # --- token validation (every message names the OPTION and entry numbers, never
+  # a token value or the name of a mistyped key, which can itself be a token) ---
+
+  empty-token-is-a-legible-error = mkBadTokensFileTest {
+    name = "empty-token";
+    tier = "read";
+    yaml = ''
+      tokens:
+        - token: ""
+    '';
+    expectInJournal = "readTokensFile entry #1 has an empty token";
+  };
+
+  duplicate-token-within-a-file-is-a-legible-error = mkBadTokensFileTest {
+    name = "duplicate-token-in-file";
+    tier = "read";
+    yaml = ''
+      tokens:
+        - token: dup-token-value
+        - token: other-token-value
+        - token: dup-token-value
+    '';
+    expectInJournal = "readTokensFile lists the same token more than once (entries #1 and #3)";
+    # vmauth's own fatal for a duplicate prints the token itself.
+    expectNotInJournal = "dup-token-value";
+  };
+
+  duplicate-token-across-read-and-write-files-is-a-legible-error = mkBadTokensFileTest {
+    name = "duplicate-token-across-files";
+    tier = "read";
+    yaml = ''
+      tokens:
+        - token: shared-token-value
+    '';
+    otherYaml = ''
+      tokens:
+        - token: shared-token-value
+    '';
+    expectInJournal = "the same token is in readTokensFile (entry #1) and writeTokensFile (entry #1)";
+    expectNotInJournal = "shared-token-value";
+  };
+
+  unknown-key-in-a-token-entry-is-a-legible-error = mkBadTokensFileTest {
+    name = "unknown-token-key";
+    tier = "read";
+    # `backend` (singular) used to render as a fully UNSCOPED token.
+    yaml = ''
+      tokens:
+        - token: some-token-value
+          backend: ["metrics"]
+    '';
+    # (no apostrophes here: the expected text is embedded in a quoted shell command)
+    expectInJournal = "readTokensFile entry #1 has an unknown key";
+    expectNotInJournal = "some-token-value";
+  };
+
+  empty-admin-password-file-is-a-legible-error = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-empty-admin-password";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        # An empty file used to render an admin user with an EMPTY password
+        # (`curl -u admin:` was accepted).
+        vmauth.adminPasswordFile = "${pkgs.writeText "empty-admin-password" ""}";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.fail("systemctl is-active vmauth.service")
+      machine.succeed(
+          "journalctl -u vmauth.service --no-pager | grep -qF 'adminPasswordFile is empty'"
+      )
+    '';
+  };
+
+  # A source guard: the render script handles every token and the admin password
+  # in cleartext, so none of it may be passed as a jq argument, where any local
+  # user could read /proc/<pid>/cmdline while the script runs. (The exposure
+  # itself is a race with no stable runtime test; this pins the cause.)
+  render-script-keeps-secrets-off-the-command-line =
+    let
+      script =
+        (evalWith { services.victoriaStack.metrics.enable = true; })
+        .config.systemd.services.vmauth.serviceConfig.ExecStartPre;
+    in
+    pkgs.runCommand "vmauth-render-script-no-secret-argv" { } ''
+      if grep -nE -- '--arg(json)? ' ${script}; then
+        echo "the render script passes data to jq as command-line arguments (visible in /proc/<pid>/cmdline)" >&2
+        exit 1
+      fi
+      echo OK > $out
+    '';
+
+  # Scoping used to keep a WHOLE extra url_map entry if ANY of its paths matched
+  # the token's prefix (so a metrics-scoped token got the logs and traces paths
+  # of a multi-path entry), matched with a plain startswith (so /metricsX looked
+  # like /metrics), and aborted the render on an entry with no src_paths.
+  scoped-token-filters-extra-url-map-paths-individually = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-scoped-extra-url-map";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        logs.enable = true;
+        vmauth = {
+          readTokensFile = "${pkgs.writeText "scoped-extra-read-tokens.yaml" ''
+            tokens:
+              - token: scoped-extra-metrics-only
+                backends: ["metrics"]
+              - token: unscoped-extra-read
+          ''}";
+          writeTokensFile = "${pkgs.writeText "scoped-extra-write-tokens.yaml" ''
+            tokens:
+              - token: scoped-extra-write-metrics-only
+                backends: ["metrics"]
+              - token: unscoped-extra-write
+          ''}";
+          extraReadUrlMap = [
+            {
+              # One entry, paths under two different backends.
+              src_paths = [
+                "/metrics/api/v1/status/tsdb"
+                "/logs/select/extra"
+              ];
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+            {
+              # Merely STARTS with a backend prefix.
+              src_paths = [ "/metricsX/foo" ];
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+          ];
+          extraWriteUrlMap = [
+            {
+              src_paths = [
+                "/opentelemetry/extra"
+                "/insert/journald/extra"
+              ];
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+            {
+              src_paths = [ "/opentelemetryX/foo" ];
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+          ];
+        };
+      };
+    };
+
+    testScript = ''
+      import json
+
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+
+      users = {u["bearer_token"]: u["url_map"] for u in json.loads(machine.succeed("cat /run/vmauth/config.json"))["users"]}
+
+      def paths(token):
+          return [p for e in users[token] for p in e.get("src_paths", [])]
+
+      # Scoped read token: only its own backend's path of the multi-path entry,
+      # as an entry holding ONLY that path; none of the look-alikes.
+      scoped = paths("scoped-extra-metrics-only")
+      assert "/metrics/api/v1/status/tsdb" in scoped, scoped
+      for leaked in ("/logs/select/extra", "/metricsX/foo"):
+          assert leaked not in scoped, (leaked, scoped)
+      assert not any("src_paths" not in e for e in users["scoped-extra-metrics-only"]), users["scoped-extra-metrics-only"]
+      assert all(len(e["src_paths"]) == 1 for e in users["scoped-extra-metrics-only"] if "tsdb" in e["src_paths"][0]), users["scoped-extra-metrics-only"]
+
+      # Unscoped token: the full map, extra entries byte-for-byte intact.
+      full = users["unscoped-extra-read"]
+      assert {"src_paths": ["/metrics/api/v1/status/tsdb", "/logs/select/extra"], "url_prefix": "http://127.0.0.1:4201/"} in full, full
+      assert len(full) > len(users["scoped-extra-metrics-only"])
+
+      # Same for the write tier.
+      wscoped = paths("scoped-extra-write-metrics-only")
+      assert "/opentelemetry/extra" in wscoped, wscoped
+      for leaked in ("/insert/journald/extra", "/opentelemetryX/foo"):
+          assert leaked not in wscoped, (leaked, wscoped)
+      assert {"src_paths": ["/opentelemetry/extra", "/insert/journald/extra"], "url_prefix": "http://127.0.0.1:4201/"} in users["unscoped-extra-write"]
+    '';
+  };
+
+  # An extra entry with no src_paths is rejected by vmauth itself for any user
+  # that receives it, but a scoped token has nothing to match it against and
+  # must simply not get it (it used to abort the whole render with a jq error).
+  scoped-token-ignores-extra-entries-without-src-paths = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-scoped-no-src-paths";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          readTokensFile = "${pkgs.writeText "scoped-only-read-tokens.yaml" ''
+            tokens:
+              - token: scoped-only-metrics
+                backends: ["metrics"]
+          ''}";
+          extraReadUrlMap = [ { url_prefix = "http://127.0.0.1:4201/"; } ];
+        };
+      };
+    };
+
+    testScript = ''
+      import json
+
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      users = json.loads(machine.succeed("cat /run/vmauth/config.json"))["users"]
+      assert len(users) == 1 and all("src_paths" in e for e in users[0]["url_map"]), users
+    '';
+  };
 }
