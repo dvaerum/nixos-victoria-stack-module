@@ -5,9 +5,9 @@ storage
 
 `metrics.nix`/`logs.nix`/`traces.nix` now carry the exact hardening
 profile nixpkgs' own `victoriametrics`/`victorialogs`/`victoriatraces`
-modules already ship (`NoNewPrivileges`, `ProtectSystem=full`,
+modules already ship (`NoNewPrivileges`, `ProtectSystem=full` (since raised to `strict` with an empty `CapabilityBoundingSet` on the storage, vmauth, mcp and Alloy-oneshot units; DynamicUser units were already effectively strict, only static-user units ran with `full`),
 `PrivateDevices`, `MemoryDenyWriteExecute`, `RestrictAddressFamilies`,
-syscall filtering, etc. — copied verbatim, not re-derived), plus
+syscall filtering, etc. — initially copied from nixpkgs, not re-derived), plus
 `LimitNOFILE = 1048576` on metrics and traces specifically (matching
 nixpkgs' own asymmetry — logs doesn't set it either, upstream).
 
@@ -37,7 +37,7 @@ regardless of who owns the file. It now runs under its own
 The journal-upload oneshot *does* still need root: it writes under
 `/run/systemd/journal-upload.conf.d/`, a directory confirmed `755
 root:root` on this machine — an unprivileged user has no write bit there
-at all.
+at all. It keeps `CAP_CHOWN` (it needs `chgrp` to `systemd-journal`).
 
 ## Why
 

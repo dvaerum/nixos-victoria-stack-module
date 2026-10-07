@@ -3,7 +3,7 @@
 ## Decision
 
 `services.victoriaStack.{metrics,logs,traces,vmauth}.selfMonitoring`
-(`enable`, `interval`, default off / `30s`) makes a service push its own
+(`enable`, defaulting to `metrics.enable`; `interval`, default `30s`) makes a service push its own
 `/metrics` page into the local VictoriaMetrics instance:
 
 ```

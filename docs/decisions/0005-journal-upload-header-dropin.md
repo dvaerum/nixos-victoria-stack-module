@@ -2,9 +2,12 @@
 
 ## Decision
 
+Status: the sops-template drop-in mechanism is superseded by ADR 0012; the
+reasoning for using a drop-in rather than a hand-rolled unit stands.
+
 `services.victoriaCollector`'s logs-write-path keeps using nixpkgs' own
-`services.journald.upload` module for every non-secret setting (URL, dummy
-client cert, trust bundle) exactly as the original `common/victoria-collector`
+`services.journald.upload` module for every non-secret setting (URL, client-cert
+loading disabled, trust bundle) exactly as the original `common/victoria-collector`
 did. The bearer token is carried separately via
 `environment.etc."systemd/journal-upload.conf.d/50-write-token.conf".source`
 pointed at a `sops.templates."<name>".path` (an already-rendered, non-store

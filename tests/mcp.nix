@@ -183,7 +183,7 @@ in
           throw "mcp logLevel/logFormat/disabledTools options broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # Phase 43 fresh-agent review finding: mcp-victoriametrics' own
+  # mcp-victoriametrics' own
   # binary (unlike logs/traces) hardcodes 6 tools disabled by default
   # when MCP_DISABLED_TOOLS is unset entirely -- confirmed directly
   # from its source (pinned version 1.20.2), including test_rules,

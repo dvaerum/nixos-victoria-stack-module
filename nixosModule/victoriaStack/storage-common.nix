@@ -52,8 +52,9 @@ in
         # of the same dynamic attribute prefix in one set.
         services.victoriaStack.${name} = {
           package = lib.mkDefault pkgs.${packageAttr};
-          # docs/decisions/0019's structural seam -- consumers (vmauth,
-          # Grafana) read this, never cfg.listenAddress directly.
+          # docs/decisions/0019's structural seam -- consumers (vmauth, Grafana,
+          # the MCP servers, the self-monitoring push) read this, never
+          # cfg.listenAddress directly.
           effectiveUrl = lib.mkDefault "http://${bindAddr}";
         };
       }
@@ -72,8 +73,8 @@ in
               dynamicUser is still true. DynamicUser's StateDirectory handling
               tries to migrate a pre-existing dataDir into a private managed copy
               on every start, which fails against an externally-mounted path
-              (e.g. a ZFS dataset) -- confirmed on two independent real
-              deployments (docs/decisions/0001, 0009). Set
+              (e.g. a ZFS dataset) (see the `dynamicUser` option and
+              docs/decisions/0001, 0009). Set
               services.victoriaStack.${name}.dynamicUser = false, or set
               services.victoriaStack.${name}.suppressDynamicUserWarning = true
               once you've confirmed this is deliberate.
@@ -147,10 +148,9 @@ in
               RestartSec = 5;
               TimeoutStartSec = "6min";
 
-              # Hardening -- copied from nixpkgs' own services.victoria*
-              # modules (same pinned nixpkgs rev), an unacknowledged
-              # regression from going from-scratch (ADR 0001 never argued
-              # for dropping it). See docs/decisions/0015.
+              # Hardening based on nixpkgs' own services.victoria* modules, but
+              # with ProtectSystem=strict and an empty capability set. See
+              # docs/decisions/0015.
               DeviceAllow = [ "/dev/null rw" ];
               DevicePolicy = "strict";
               LockPersonality = true;

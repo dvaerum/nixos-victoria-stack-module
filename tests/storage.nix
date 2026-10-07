@@ -56,28 +56,11 @@ let
         ''
     );
 
-  # Previously only the IPv4 wildcard (0.0.0.0) substitution was
-  # exercised (indirectly, via the default listenAddress never being a
-  # wildcard in any other test) -- the IPv6 wildcard form ([::]) is an
-  # equally legitimate -httpListenAddr value but was never confirmed to
-  # get the same loopback substitution in the readiness probe. Found
-  # during Round 2 review: the substitution condition only checked for
-  # the IPv4 prefix, so [::]:PORT fell through to probing the wildcard
-  # address itself as a destination, unlike the documented/tested
-  # 0.0.0.0 case.
-  #
-  # A THIRD wildcard form -- a bare ":<port>" with no host part at all --
-  # was added in Phase 43, found by a fresh-agent review that confirmed
-  # it empirically: the real pinned-nixpkgs victoriametrics/victorialogs/
-  # victoriatraces modules' own postStart already handles this exact
-  # prefix the same way, but this project's own isWildcard check never
-  # did, and curl (which wait4x's underlying Go HTTP client does NOT
-  # share the same failure mode with) flatly rejects a host-less URL.
-  # Reproduced directly: wait4x against a real running instance behind a
-  # bare ":<port>" listenAddress succeeded 5/5 times in one run, then
-  # timed out 20/20 times in an immediately following run -- a genuine,
-  # non-deterministic flake tied to IPv6-vs-IPv4 getaddrinfo() ordering,
-  # not a one-off fluke.
+  # Covers the wildcard forms 0.0.0.0, [::] and a bare ":<port>" (no host);
+  # the readiness probe must substitute loopback for each (isWildcard in
+  # nixosModule/victoriaStack/listen.nix). A bare ":<port>" probed as-is was
+  # a non-deterministic flake: wait4x succeeded 5/5 in one run, then timed
+  # out 20/20 in the next (IPv6-vs-IPv4 getaddrinfo() ordering).
   mkWildcardReadinessCheck =
     {
       name,
@@ -189,10 +172,6 @@ let
     );
 in
 {
-  # Phase 3: metrics only. logs/traces checks are added here as their own
-  # phases (4, 5) land, same file -- this is the `storage` test group as a
-  # whole, built up incrementally with a red->green cycle per service.
-
   # --- eval-only: dynamicUser/dataDir warning behavior (fast, no container boot) ---
 
   metrics-dynamic-user-warning-fires-on-custom-data-dir = mkWarningFiresCheck {
@@ -493,7 +472,7 @@ in
       '';
     };
 
-  # --- Phase 4: logs (same pattern as metrics above) ---
+  # --- logs (same pattern as metrics above) ---
 
   logs-dynamic-user-warning-fires-on-custom-data-dir = mkWarningFiresCheck {
     name = "logs-dynamic-user-warning-fires-on-custom-data-dir";
@@ -645,7 +624,7 @@ in
       '';
     };
 
-  # --- Phase 5: traces (same pattern again) ---
+  # --- traces (same pattern again) ---
 
   traces-dynamic-user-warning-fires-on-custom-data-dir = mkWarningFiresCheck {
     name = "traces-dynamic-user-warning-fires-on-custom-data-dir";
@@ -716,7 +695,7 @@ in
           ''
       );
 
-  # Phase 39: metrics' and logs' own descriptions had the exact same
+  # Metrics' and logs' own descriptions had the exact same
   # factually-wrong "effectively unbounded" claim traces' had (fixed in
   # docs/decisions/0020, for traces only, at the time) -- confirmed via
   # each binary's own --help: metrics defaults to 1 month, logs to 7
@@ -1503,10 +1482,9 @@ in
       throw "storage start timeouts wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
   );
 
-  # The effective ProtectSystem is asserted on the RUNNING units, not the rendered
-  # text: measured, DynamicUser units were strict even with an explicit "full",
-  # and only a static user actually ran with "full". Capabilities are read from the kernel (CapBnd), the
-  # authoritative source.
+  # Effective ProtectSystem and capabilities (CapBnd, from the kernel) are read
+  # from the running unit, not the rendered text: measured, DynamicUser units were strict even with an explicit "full";
+  # only static users ran with "full".
   hardening-is-effective-on-running-units = pkgs.testers.nixosTest {
     name = "victoria-stack-hardening-effective";
 

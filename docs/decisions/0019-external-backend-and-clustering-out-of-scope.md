@@ -22,9 +22,9 @@ to rediscover.
 
 A structural seam is added regardless, in anticipation of
 external-backend support specifically: each service's `options.nix`
-exposes one internal `effectiveUrl`-style value (today always
-`"http://${cfg.listenAddress}"`) that `vmauth.nix`/`grafana.nix`/
-`nginx.nix` read instead of `listenAddress` directly. This confines any
+exposes one internal `effectiveUrl`-style value (today `"http://${cfg.listenAddress}"`, loopback for a wildcard
+listen address) that `vmauth.nix`/`grafana.nix`/`mcp.nix`/self-monitoring/
+`storage-common.nix` read instead of `listenAddress` directly. This confines any
 future `remoteUrl`-style option to a single definition per service,
 rather than requiring changes at three or more call sites across the
 module tree.

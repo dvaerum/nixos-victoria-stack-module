@@ -151,9 +151,8 @@ in
         never break the generated Alloy config syntax it's embedded in.
         Not an enum beyond that restriction -- this module has no opinion
         about what values are meaningful; that's entirely a property of
-        whatever alerting rules the consumer writes on top (see
-        docs/decisions -- this module takes no position on alerting, only
-        on getting the label onto the data). NOT applied to logs: that
+        whatever alerting rules the consumer writes on top (this module
+        only gets the label onto the data). NOT applied to logs: that
         path goes through systemd-journal-upload directly, with no Alloy
         pipeline to attach the label in, so it may be omitted when only
         `logs.enable` is set; it is required whenever `metrics.enable` or

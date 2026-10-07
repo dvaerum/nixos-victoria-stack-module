@@ -11,16 +11,18 @@ own ADR justifying the drift.
 
 Applied now:
 
-- **`/victoria/` (fronts vmauth)**: `proxy_connect_timeout` /
+- **`/victoria/` (reads-only front for vmauth, ADR 0025)**: `proxy_connect_timeout` /
   `proxy_send_timeout` / `proxy_read_timeout` are derived from
   `services.victoriaStack.vmauth.idleConnTimeout` (single source of
   truth — cannot drift out of sync with vmauth's own already-tuned
-  value). `client_max_body_size` is unbounded: vmauth itself has no
-  body-size ceiling of its own (confirmed from vmauth's real upstream
-  docs — it only has request-body *buffering*,
+  value). `client_max_body_size` is
+  `nginx.maxRequestBodySize` (default `8m`) with `proxy_request_buffering
+  off`: vmauth itself has no body-size ceiling of its own (confirmed from
+  vmauth's real upstream docs — it only has request-body *buffering*,
   `-requestBufferSize`/`-maxQueueDuration`, a different concept entirely
   — freeing backend connections sooner on slow uploads, not limiting max
-  size), so nginx shouldn't introduce a ceiling vmauth doesn't have.
+  size), so nginx is where an oversized anonymous body is stopped, and
+  with buffering off vmauth checks the credential first.
 
 - **`/grafana/` (fronts Grafana)**: implements Grafana's own official
   sub-path reverse-proxy configuration

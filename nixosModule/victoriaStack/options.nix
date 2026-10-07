@@ -7,15 +7,11 @@ let
     types
     ;
 
-  # Not lib.mkPackageOption: that helper resolves its default via
-  # attrByPath against the real `pkgs.<name>`, correct for
-  # metrics/logs/traces/vmauth (all real nixpkgs attributes), but wrong for
-  # the three MCP server packages (this flake's own packages/*, not
-  # anything in nixpkgs). Both cases instead declare a plain `types.package`
-  # option here with no literal default, and get their actual default value
-  # via `lib.mkDefault` in config.nix, where `pkgs` (and, for MCP, this
-  # flake's own package derivations) are naturally in scope -- one
-  # consistent mechanism for both cases rather than two different helpers.
+  # Not lib.mkPackageOption: it resolves its default from `pkgs.<name>`, which
+  # is wrong for the MCP packages (this flake's own packages/*, not nixpkgs).
+  # Every package option is instead a plain `types.package` with no literal
+  # default; the default is set with `lib.mkDefault` where `pkgs` is in scope
+  # (storage-common.nix, mcp.nix, vmauth.nix).
   mkPackageOption' =
     description:
     mkOption {
@@ -66,14 +62,9 @@ let
       defaultListenAddress,
       defaultMcpPort,
       binaryName,
-      # The real, binary-specific behavior when retentionPeriod is omitted
-      # -- NOT a shared claim across all three, since it genuinely differs
-      # (confirmed per-binary via each binary's own `-help` output, not
-      # assumed to match, nor assumed to match each other): metrics
-      # defaults to 1 month, logs to 7 days, traces to 7 days too (the
-      # same 7-day number, but confirmed independently per docs/decisions
-      # -- not assumed shared just because it's the same value). None of
-      # the three default to unbounded.
+      # Each binary's own default when retentionPeriod is omitted, confirmed
+      # per binary via its `-help` (metrics 1 month, logs and traces 7 days;
+      # none is unbounded).
       retentionPeriodNullBehavior,
       # -retention.maxDisk* exists on victoria-logs/victoria-traces only
       # (confirmed via each binary's own `-help`); an option for a flag
@@ -84,7 +75,7 @@ let
     {
       enable = mkEnableOption name;
 
-      package = mkPackageOption' "The ${binaryName} package to use. Defaults to pkgs.${name}, set via mkDefault in config.nix.";
+      package = mkPackageOption' "The ${binaryName} package to use. Defaults to pkgs.${name}.";
 
       dataDir = mkOption {
         type = types.path;
@@ -162,9 +153,10 @@ let
         type = types.str;
         internal = true;
         description = ''
-          Internal: the base URL consumers (vmauth, Grafana) actually
-          connect to for this backend. Always `http://''${listenAddress}`
-          today (set via mkDefault in ${name}.nix), funneled through one
+          Internal: the base URL consumers (vmauth, Grafana, the MCP servers,
+          the self-monitoring push) actually connect to for this backend.
+          Always `http://''${listenAddress}` today (set via mkDefault in
+          storage-common.nix), funneled through one
           option specifically so that external/remote-backend support
           (docs/decisions/0019 -- explicitly out of scope for now) only
           ever needs to override ONE definition per service later,
@@ -240,9 +232,9 @@ let
           type = types.nullOr types.str;
           default = "30d";
           description = ''
-            `-snapshotsMaxAge` -- the binary prunes its own old snapshots
-            on this schedule (a binary-native mechanism, not something this
-            module's timer does). `null` disables automatic pruning (it passes
+            `-snapshotsMaxAge` -- the binary itself prunes snapshots older
+            than this (not the `schedule` timer, which only creates them).
+            `null` disables automatic pruning (it passes
             `-snapshotsMaxAge=0`; leaving the flag out would keep each
             binary's own 3d default): snapshots then accumulate under `dataDir` until deleted
             through the service's own snapshot-delete API (never with
@@ -262,7 +254,7 @@ let
       mcp = {
         enable = mkEnableOption "an MCP (Model Context Protocol) server fronting this ${name} instance";
 
-        package = mkPackageOption' "The mcp-${name} package to use. Defaults to this flake's own packages.mcp-${name}, set via mkDefault in config.nix.";
+        package = mkPackageOption' "The mcp-${name} package to use. Defaults to this flake's own packages.mcp-${name}.";
 
         listenAddress = mkOption {
           type = types.str;
@@ -373,14 +365,6 @@ in
       binaryName = "victoria-traces";
       defaultListenAddress = "127.0.0.1:4203";
       defaultMcpPort = 4207;
-      # Confirmed from victoria-traces' own --help/upstream docs: omitting
-      # -retentionPeriod defaults to 7 days, same as logs (confirmed
-      # independently, not assumed shared just because it's the same
-      # value) -- metrics defaults to 1 month. None of the 3 default to
-      # unbounded. See traces.nix's header comment and
-      # docs/decisions/0020 (which fixed this specifically for traces;
-      # Phase 39 fixed the same factually-wrong "unbounded" claim for
-      # metrics/logs).
       retentionPeriodNullBehavior = "a 7 day default for this binary, NOT unbounded";
       supportsDiskRetention = true;
     };
@@ -431,11 +415,12 @@ in
         type = types.strMatching "[0-9]+(ms|s|m|h)";
         default = "5m";
         description = ''
-          vmauth's `-http.idleConnTimeout`. The default of `1m` sits right
-          on top of a typical collector's own OTLP export interval
+          vmauth's `-http.idleConnTimeout`. vmauth's own default of `1m` sits
+          right on top of a typical collector's OTLP export interval
           (confirmed in production: ~52-60s), producing intermittent
           "connection reset by peer" retries as vmauth force-closes
-          connections collectors are about to reuse. 5m gives real headroom.
+          connections collectors are about to reuse. This module's default of
+          5m gives real headroom.
         '';
       };
 
@@ -512,20 +497,19 @@ in
           type = types.nullOr types.str;
           default = null;
           description = ''
-            Path (a plain string, never a Nix path literal -- same reason as
-            `writeTokensFile`) to the PEM certificate chain. Staged through
-            systemd `LoadCredential=`, so it never enters the Nix store.
-            Set together with `keyFile`, or use `acmeCertName` instead.
-            vmauth is a copy of the file, so replacing it restarts vmauth
-            automatically (ACME renewals do this through `reloadServices`,
-            see `acmeCertName`).
+            Path (plain string; see `writeTokensFile`) to the PEM certificate
+            chain. Staged through systemd `LoadCredential=`, so it never enters
+            the Nix store. Set together with `keyFile`, or use `acmeCertName`
+            instead. vmauth reads a copy (`LoadCredential=`) at start, so
+            replacing the file restarts vmauth through a path watcher (ACME
+            renewals use `reloadServices`, see `acmeCertName`).
           '';
         };
 
         keyFile = mkOption {
           type = types.nullOr types.str;
           default = null;
-          description = "Path (plain string) to the PEM private key matching `certFile`.";
+          description = "Path (plain string; see `writeTokensFile`) to the PEM private key matching `certFile`.";
         };
 
         acmeCertName = mkOption {
@@ -563,21 +547,17 @@ in
       extraFlags = mkOption {
         type = types.listOf types.str;
         default = [ ];
-        example = [
-          "-tls"
-          "-tlsCertFile=/path/to/cert.pem"
-          "-tlsKeyFile=/path/to/key.pem"
-        ];
+        example = [ "-maxConcurrentRequests=100" ];
         description = ''
           Extra command-line flags passed straight through to vmauth,
           appended last, for anything not worth promoting to its own
           typed option. Same shape as the storage services' `extraFlags`.
 
-          For a public HTTPS listener use `https` rather than `-tls` flags
-          (mixing them conflicts with the module's positional listener
-          arrays). Do not add authentication flags (`-httpAuth.*`) here: the
-          module's own callers (self-monitoring push, snapshots) carry no
-          credentials and would be refused.
+          For TLS use `https` rather than `-tls*` flags (mixing them conflicts
+          with the module's positional listener arrays). Do not set
+          `-httpAuth.*`: it would add Basic Auth on top of the generated
+          tokens and admin user, and the module's own helpers carry no
+          credentials.
         '';
       };
 
@@ -599,7 +579,7 @@ in
           description = ''
             vmauth's `-backend.tlsCAFile` -- CA bundle for verifying
             backend TLS certificates. A real Nix path is fine here (unlike
-            the credential options above): a CA bundle is public by
+            the credential options below): a CA bundle is public by
             nature, not a runtime-staged secret. It is still staged through
             systemd `LoadCredential=` like every other TLS file, so the file's
             owner and mode don't matter to vmauth's dynamic user.
@@ -611,11 +591,8 @@ in
           default = null;
           description = ''
             vmauth's `-backend.tlsCertFile` -- client certificate for
-            mTLS to HTTPS backends. Path as a plain string, staged via
-            `LoadCredential=` at runtime, same reasoning as
-            `adminPasswordFile` above -- paired with a private key, worth
-            treating with the same care even though a certificate alone
-            isn't secret.
+            mTLS to HTTPS backends. Plain string; see `writeTokensFile`.
+            Staged via `LoadCredential=` at runtime.
           '';
         };
 
@@ -624,11 +601,9 @@ in
           default = null;
           description = ''
             vmauth's `-backend.tlsKeyFile` -- the client private key
-            paired with `certFile`, for mTLS to HTTPS backends. Path as a
-            plain string, NOT a Nix path literal -- this is a real private
-            key; the exact same eval-crash/Nix-store-leak risk as
-            `adminPasswordFile` applies (docs/decisions/0020), staged via
-            `LoadCredential=` at runtime.
+            paired with `certFile`, for mTLS to HTTPS backends. Plain string;
+            see `writeTokensFile` (a private key must not reach the Nix
+            store). Staged via `LoadCredential=` at runtime.
           '';
         };
       };
@@ -698,8 +673,7 @@ in
           **Breaking change:** entries used to be bare strings
           (`- some-token`). That format is now rejected at vmauth start
           with a message saying so; migrate each line to `- token: some-token`.
-          See
-          docs/decisions/0003-vmauth-two-credential-tiers.md. Required
+          See docs/decisions/0003-vmauth-two-credential-tiers.md. Required
           when `requireAuthForWrites = true` and at least one storage
           service is enabled -- left unset in that combination, every
           write/ingest path through vmauth rejects every request with no
@@ -709,9 +683,10 @@ in
 
           Replacing this file (or `readTokensFile`, `adminPasswordFile`,
           `https.certFile`, `https.keyFile`) restarts vmauth automatically,
-          since vmauth reads them only at start. A file that is invalid
-          after the replacement makes vmauth fail at start with the
-          validation message (it fails closed).
+          since vmauth reads them only at start. The `backendTls.*` files are
+          NOT watched: restart vmauth yourself after replacing them. A file
+          that is invalid after the replacement makes vmauth fail at start
+          with the validation message (it fails closed).
         '';
       };
 
@@ -726,9 +701,7 @@ in
           `writeTokensFile` (inline `#` comments; optional `backends`
           list scoping a token to those backends' raw API *and* that
           signal's MCP route, e.g. `backends: ["traces"]` reaches
-          `/traces/*` and `/mcp/traces` only). Entries used to be bare
-          strings; that format is now rejected with a migration message --
-          see `writeTokensFile`. Deliberately a SEPARATE file
+          `/traces/*` and `/mcp/traces` only). Deliberately a SEPARATE file
           from `writeTokensFile` -- see
           docs/decisions/0003-vmauth-two-credential-tiers.md for why.
         '';
@@ -775,8 +748,11 @@ in
           every token and admin password to the backend); set your own
           `headers` on the entry if that route needs one.
 
-          A token scoped with `backends` never receives these entries: only
-          the module's own per-backend routes match a scope.
+          A token scoped with `backends` receives only those `src_paths` of
+          these entries that start, at a path boundary, with its backends'
+          prefixes (`/metrics`, `/logs`, `/traces`, `/mcp/<backend>`). Entries
+          without `src_paths`, or paths containing `|`, are dropped for scoped
+          tokens.
         '';
       };
 
@@ -791,8 +767,12 @@ in
         ];
         description = ''
           Like every route this module builds, these drop the caller's
-          `Authorization` header before forwarding, and a token scoped with
-          `backends` never receives them.
+          `Authorization` header before forwarding. A token scoped with
+          `backends` receives only those `src_paths` that start, at a path
+          boundary, with its backends' ingest prefixes (`/opentelemetry`,
+          `/insert/journald`, `/insert/opentelemetry/v1/traces`); entries
+          without `src_paths`, or paths containing `|`, are dropped for scoped
+          tokens.
 
           Escape hatch: extra vmauth url_map entries appended to the
           write-tier credential's url_map (the read tier is untouched --
@@ -810,15 +790,20 @@ in
 
     grafana.enable = mkEnableOption ''
       Grafana datasource provisioning for whichever of metrics/logs/traces
-      is enabled. Does NOT configure services.grafana itself (left entirely
-      to the consumer) and never routes through vmauth -- see
+      is enabled. Configures services.grafana only for the datasources and,
+      when `nginx.enable` is on, a default `root_url` for the `/grafana/`
+      sub-path; users and passwords are left to the consumer. Never routes
+      through vmauth, so anyone who can log in to Grafana effectively gets
+      full read access to every enabled backend, whatever their vmauth
+      credentials -- see
       docs/decisions/0010-grafana-direct-loopback-own-auth.md
     '';
 
     nginx = {
       enable = mkEnableOption ''
-        a single nginx vhost reverse-proxying to vmauth, covering every
-        currently-enabled service plus Grafana (if enabled). Requires
+        a single nginx vhost reverse-proxying to vmauth: `/victoria/` proxies
+        the READ routes only (not writes), plus `/grafana/` when Grafana is
+        enabled; everything else under `/victoria/` is a 404. Requires
         `vmauth.enable = true` -- see docs/decisions/0002-opt-in-everything.md
 
         Note: behind nginx, vmauth sees nginx's address instead of the real

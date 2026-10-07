@@ -30,17 +30,11 @@ let
         echo "[Upload]"
         echo "Header=Authorization: Bearer $(cat "$CREDENTIALS_DIRECTORY/write-token")"
       } > "$conf"
-      # systemd's own real systemd-journal-upload.service unit
-      # (confirmed directly from the installed systemd package) runs as
-      # DynamicUser=yes with SupplementaryGroups=systemd-journal -- the
-      # ephemeral per-boot UID has no other way to read a file this
-      # root-run oneshot wrote. chmod 600 (owner-only) left it genuinely
-      # unreadable: confirmed by actually running this for the first
-      # time (previously blocked locally by missing uid-range), which
-      # hit "Failed to open .../50-write-token.conf: Permission denied"
-      # and crash-looped forever. Matches nixpkgs' own journald-upload.nix
-      # module comment for ServerKeyFile: "must be readable by the
-      # systemd-journal group".
+      # systemd-journal-upload.service runs as DynamicUser=yes with
+      # SupplementaryGroups=systemd-journal: its per-boot UID can only read
+      # this root-written file through that group (owner-only 600 failed with
+      # "Permission denied"). Matches nixpkgs' journald-upload.nix comment on
+      # ServerKeyFile.
       chgrp systemd-journal "$conf"
       chmod 640 "$conf"
     '';
@@ -89,36 +83,14 @@ in
 
       environment.etc."alloy/config.alloy".text = configAlloyText;
 
-      # NOT systemd.services.alloy.restartTriggers -- nixpkgs' own alloy
-      # module (nixos/modules/services/monitoring/alloy.nix) already sets
-      # reloadTriggers against every environment.etc."alloy/*.alloy"
-      # source (which "alloy/config.alloy" above matches exactly),
-      # wired to ExecReload = kill -SIGHUP, specifically so config
-      # changes reload in place rather than restarting (Alloy's own
-      # module docs: "will continue running in last valid state" across
-      # a reload). A previously-added explicit restartTriggers here, set
-      # to the SAME content, shadowed that: confirmed directly in a real
-      # VM test (switch-to-configuration between two generations
-      # differing only in hostType) -- with restartTriggers present,
-      # alloy.service's MainPID changed (a genuine stop+start); with it
-      # removed, the PID stays stable (a genuine in-place reload).
-      # A hard restart here was never a deliberate choice, just an
-      # artifact of writing this before nixpkgs' own reloadTriggers
-      # existed for this module -- this fix costs a dropped OTLP
-      # receiver connection + host-metrics gap on every unrelated config
-      # change (hostType, queue size, TLS/retry tuning, writeEndpoint)
-      # for no reason.
+      # No restartTriggers: nixpkgs' alloy module reloads via reloadTriggers; an
+      # explicit one would turn every config change into a restart.
 
-      # Same-host ordering fix: if victoriaStack is composed on this same
-      # host (the all-in-one single-machine deployment shape), vmauth
-      # could otherwise still be starting (or not yet listening) when
-      # alloy's own first export attempt fires. A plain unit name here is
-      # a safe no-op on a collector-only host where no such unit exists
-      # at all -- systemd silently ignores an After=/Wants= target that
-      # isn't defined, confirmed behavior, not assumed. Cross-host
-      # collector/stack splits (this project's other real deployment
-      # shape) get no benefit from this -- see the startLimitIntervalSec
-      # fix below for that case instead.
+      # Same-host ordering: when victoriaStack is on this host, vmauth could
+      # still be starting when alloy's first export fires. A no-op on a
+      # collector-only host (systemd ignores an undefined After=/Wants=
+      # target). Cross-host splits get nothing from this; see
+      # startLimitIntervalSec below.
       systemd.services.alloy.after = [ "vmauth.service" ];
       systemd.services.alloy.wants = [ "vmauth.service" ];
 
@@ -150,7 +122,7 @@ in
       ) "d ${toString cfg.queue.directory} 0750 alloy alloy - -";
 
       # DynamicUser=yes implies this sandbox; DynamicUser=false drops it, so a
-      # static user gets it spelled out. ReadWritePaths (above) keeps the queue
+      # static user gets it spelled out. ReadWritePaths (below) keeps the queue
       # directory writable under ProtectSystem=strict.
       systemd.services.alloy.serviceConfig = lib.mkMerge [
         {
@@ -194,11 +166,9 @@ in
           ExecStart = lib.getExe renderAlloyWriteToken;
           CapabilityBoundingSet = "";
 
-          # Own DynamicUser + its own RuntimeDirectory (deliberately NOT
-          # alloy.service's own "alloy" StateDirectory -- two different
-          # dynamic UIDs sharing one directory is its own hazard) --
-          # see the long comment on renderAlloyWriteToken above for why
-          # this doesn't need root the way journal-upload's oneshot does.
+          # Own RuntimeDirectory, deliberately not alloy.service's StateDirectory
+          # (two dynamic UIDs must not share one directory); see
+          # renderAlloyWriteToken for why root is not needed.
           DynamicUser = true;
           RuntimeDirectory = "alloy-write-token";
           RuntimeDirectoryMode = "0700";
@@ -275,14 +245,9 @@ in
           # chgrp to systemd-journal: root is not a member of that group.
           CapabilityBoundingSet = [ "CAP_CHOWN" ];
 
-          # Stays root -- confirmed, not assumed: /run/systemd is mode
-          # 755, owned root:root on a real machine, so writing a new
-          # subdirectory under it genuinely requires root (unlike the
-          # alloy write-token oneshot above, which doesn't).
-          # Lighter hardening pass than the long-running services --
-          # this unit runs once per boot and exits, but the basics still
-          # cost nothing for a unit that handles a plaintext secret,
-          # however briefly (docs/decisions/0015).
+          # Stays root: /run/systemd is root:root 755, so creating a
+          # subdirectory under it requires root (unlike the alloy write-token
+          # oneshot above). Same lighter hardening pass as that unit.
           NoNewPrivileges = true;
           PrivateTmp = true;
           ProtectHome = true;
@@ -304,8 +269,7 @@ in
         "victoria-collector-journal-upload-token.service"
       ];
 
-      # Same-host ordering fix, same reasoning as alloy's above -- a safe
-      # no-op on a collector-only host where vmauth.service doesn't exist.
+      # Same-host ordering, same reasoning as alloy's above.
       systemd.services.systemd-journal-upload.after = [ "vmauth.service" ];
       systemd.services.systemd-journal-upload.wants = [ "vmauth.service" ];
 

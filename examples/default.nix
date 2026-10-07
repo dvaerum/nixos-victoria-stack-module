@@ -45,7 +45,7 @@
       enable = true;
       # domain = "victoria-stack.example.com"; -- optional, left unset
       # here (plain IP/hostname); this module has no ACME/TLS opinion
-      # either way (docs/decisions, stays infrastructure-agnostic).
+      # either way (docs/decisions/0022-nginx-tls-stable-virtualhost-name.md).
     };
   };
 

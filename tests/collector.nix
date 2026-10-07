@@ -6,10 +6,7 @@ let
   collectorModule = nixosModule.nixosModules.victoriaCollector;
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  # Shared with every other test group (Phase 30 unification) -- this
-  # file used to roll its own near-identical ad-hoc eval harness here,
-  # confirmed real drift from tests/lib.nix's victoriaStack-only
-  # evalWith, not hypothetical.
+  # Shared eval harness (tests/lib.nix) used by every test group.
   inherit (testLib) evalWithCollector;
 
   writeTokensFixture = pkgs.writeText "collector-test-write-tokens.yaml" ''
@@ -29,9 +26,8 @@ let
 
   # Pure eval, no container boot needed: confirms the https:// branch of
   # journaldWriteEndpoint actually renders the client-cert-disabling + CA-bundle
-  # settings it's supposed to -- the one branch with no prior coverage
-  # at all (the roundtrip test above only ever uses a plain http://
-  # writeEndpoint).
+  # settings it's supposed to (the roundtrip test above only ever uses a
+  # plain http:// writeEndpoint).
   # Fixtures for the cross-container tests below (the older tests in this
   # file inline the equivalent).
   twoWriteTokensFixture = pkgs.writeText "collector-test-two-write-tokens.yaml" ''
@@ -673,7 +669,7 @@ in
   # journal-upload token oneshot renders a config drop-in directory,
   # which systemd treats as optional -- without an explicit `requires`,
   # systemd-journal-upload.service would start anyway on a failed render,
-  # silently uploading unauthenticated. Found during Round 2 review.
+  # silently uploading unauthenticated.
   journal-upload-service-requires-its-token-render-oneshot =
     pkgs.runCommand "journal-upload-service-requires-its-token-render-oneshot" { }
       (
@@ -812,7 +808,7 @@ in
     '';
   };
 
-  # Phase 40: same-host ordering fix -- both services that export to a
+  # Same-host ordering: both services that export to a
   # (possibly co-located) vmauth gateway now carry after/wants on it.
   # A plain unit name is a safe no-op on a collector-only host where
   # vmauth.service doesn't exist at all (confirmed empirically: systemd
@@ -845,7 +841,7 @@ in
           throw "missing same-host ordering: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # Phase 40: cross-host fix -- a collector with an intermittent network
+  # Cross-host: a collector with an intermittent network
   # (e.g. a laptop) must retry systemd-journal-upload forever, never hit
   # a permanent start-limit stop requiring a manual `systemctl
   # reset-failed`. startLimitIntervalSec = 0 disables that ceiling
@@ -867,7 +863,7 @@ in
       throw "expected systemd-journal-upload.service's startLimitIntervalSec to be 0 (disabled), got ${toString startLimit}"
   );
 
-  # Phase 43 fresh-agent review finding: an explicit restartTriggers on
+  # An explicit restartTriggers on
   # alloy.service, set to the SAME content nixpkgs' own alloy module
   # already tracks via its own reloadTriggers (nixos/modules/services/
   # monitoring/alloy.nix, wired to ExecReload = kill -SIGHUP), shadowed

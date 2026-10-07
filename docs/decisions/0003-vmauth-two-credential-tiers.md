@@ -29,6 +29,6 @@ backends' routes (Phase 52; an entry without it is unscoped, the full
 tier). Originally each entry was a bare string -- that format is rejected
 with a migration message, not auto-migrated (Nix can't rewrite a
 runtime-supplied file). Parsed with `yq-go` (comments stripped natively by any real YAML
-parser) rather than `jq -R -s -c 'split("\n")...'` (today's mechanism, which
+parser) rather than `jq -R -s -c 'split("\n")...'` (the earlier mechanism, since replaced by `yq -o=json '.tokens'`; it
 treats the file as raw lines and has no comment concept at all). Self
 documenting without needing a side channel to remember which token is whose.

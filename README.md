@@ -126,8 +126,8 @@ else -- see `docs/decisions/0008-agnostic-secrets-file-options.md`.
 
 ## Escape hatches for things this module deliberately doesn't wrap
 
-Two things found useful in practice have no first-class option here on
-purpose -- both are already fully configurable through the generic NixOS
+Three things found useful in practice have no first-class option here on
+purpose -- all three are already fully configurable through the generic NixOS
 mechanism that already exists for them, so adding a second, narrower
 mechanism here would just be a worse version of something you already have:
 

@@ -8,13 +8,9 @@ let
   inherit (testLib) otlpMetricGenerator evalWith;
   otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
 
-  # Throwaway self-signed cert, mirroring victoriaCollector/config.nix's
-  # own dummyClientCert pattern -- generated at build time, not a secret.
-  # Unlike that pattern (a client cert vmauth never validates), this is
-  # a SERVER cert curl's own --cacert verification checks hostname
-  # against -- needs a real SAN for 127.0.0.1, not just a CN, confirmed
-  # directly: without it curl fails closed with exit 60 (cert verify
-  # failed) even though the cert chain itself is otherwise valid.
+  # Throwaway self-signed server cert, generated at build time (not a
+  # secret). Needs a SAN for 127.0.0.1, not just a CN: without it curl
+  # --cacert fails with exit 60 (cert verify failed).
   selfSignedCert =
     pkgs.runCommand "victoria-stack-nginx-test-self-signed-cert"
       { nativeBuildInputs = [ pkgs.openssl ]; }
@@ -408,15 +404,9 @@ in
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
-      # vmauth.service being "active" doesn't mean it's actually
-      # listening yet -- unlike the 3 storage services, vmauth has no
-      # postStart readiness probe of its own (nixosModule/victoriaStack/
-      # vmauth.nix), so systemd marks it active the instant the process
-      # forks, not once it's bound its HTTP port. Confirmed directly:
-      # without wait_for_open_port(4204), nginx's proxy_pass raced it
-      # and got "502 Bad Gateway" (connection refused upstream) often
-      # enough to fail this check -- the one test in this file with no
-      # Grafana migration delay to incidentally cover for it.
+      # Before nginx was ordered after vmauth (whose postStart now waits for
+      # its port), proxy_pass raced it and got "502 Bad Gateway" often enough
+      # to fail this check; the explicit port waits are kept as a guard.
       machine.wait_for_unit("victoriametrics.service")
       machine.wait_for_open_port(4201)
 
@@ -568,14 +558,10 @@ in
     '';
   };
 
-  # Phase 43 fresh-agent review finding: nginx had no systemd ordering
-  # on vmauth.service or grafana.service at all -- confirmed directly
-  # via `systemctl show nginx.service -p After` on a real running
-  # container, neither unit appeared anywhere in it, only generic boot
-  # targets. tests/nginx.nix's own existing comments already document
-  # hitting the resulting race live ("nginx's proxy_pass raced it and
-  # got 502 Bad Gateway"), previously worked around only in test
-  # scripts (wait_for_open_port), never fixed at the unit level.
+  # nginx needs systemd ordering on vmauth.service and grafana.service:
+  # `systemctl show nginx.service -p After` on a real container listed
+  # neither, and the resulting race gave "502 Bad Gateway" from
+  # nginx's proxy_pass.
   nginx-after-includes-vmauth-and-grafana-when-enabled =
     pkgs.runCommand "nginx-after-includes-vmauth-and-grafana" { }
       (

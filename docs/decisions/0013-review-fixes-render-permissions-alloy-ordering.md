@@ -36,7 +36,7 @@ and `ExecStart=`; vmauth's own process is the one that reads
 `config.json` directly, not systemd, so DynamicUser ownership must be
 preserved -- UMask narrows the mode without changing the owner). The
 two oneshots (journal-upload's existing one, Alloy's new one above)
-both run as root and `chmod 600` explicitly after each write, since
+both ran as root and `chmod 600` explicitly after each write (journal-upload's still runs as root but now does `chgrp systemd-journal` + `chmod 640`, written under umask 027; Alloy's later moved to its own DynamicUser, ADR 0015), since
 systemd itself (not the target unit's process) is what reads an
 `EnvironmentFile=`/drop-in via root privilege -- no ownership
 constraint there.
@@ -65,7 +65,7 @@ constraint there.
   no prior coverage), traces-alone sufficiency for
   `needsAlloyOtlp`'s OR logic (previously only tested in combination
   with metrics), and the HTTPS branch of `journaldWriteEndpoint`
-  (dummy-cert + CA-bundle rendering -- previously only the plain-HTTP
+  (client-cert-disabling + CA-bundle rendering -- previously only the plain-HTTP
   path was exercised anywhere in this repo).
 
 ## Reviewed, found sound, no change needed

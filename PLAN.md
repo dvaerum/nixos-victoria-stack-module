@@ -17,7 +17,7 @@ confirmed structural problems in nixpkgs' own `services.victoriametrics` /
 `victorialogs`) by not wrapping them at all — storage services are written
 from scratch directly on `pkgs.victoriametrics`'s binaries.
 
-## Repository layout (target)
+## Repository layout (original target, historical)
 
 ```
 flake.nix / flake.lock
@@ -40,7 +40,9 @@ examples/default.nix              — same config the `full` test exercises
 tests/{default,lib,assertions,storage,vmauth,grafana,nginx,mcp,collector,full}.nix
 ```
 
-## Options surface (agreed)
+## Options surface (original sketch, historical)
+
+Superseded: see `docs/options.md` for the real surface (e.g. `extraOptions` is now `extraFlags`; token files are `- token:` objects).
 
 ```
 services.victoriaStack = {
@@ -103,9 +105,9 @@ exposed directly via its own `listenAddress` when vmauth is off).
 - Alloy's write-token: `otelcol.auth.headers` + `sys.env()` + `EnvironmentFile=`
   — token never touches rendered `config.alloy` text.
 - journal-upload's write-token: nixpkgs' `services.journald.upload` module
-  kept for non-secret settings; a separate `conf.d/*.conf` drop-in symlinked
-  at a `sops.templates.*.path` carries just the `Header=` line. No hand-rolled
-  systemd unit for this one.
+  kept for non-secret settings; a root oneshot renders
+  `/run/systemd/journal-upload.conf.d/50-write-token.conf` with just the
+  `Header=` line (ADR 0012).
 - Every service (metrics/logs/traces/vmauth/all 3 MCP packages) gets its own
   `.package` option; vmauth's defaults from metrics' via `mkDefault`.
 - Secrets: fully agnostic `...File` path options everywhere. No sops-nix
@@ -622,7 +624,7 @@ committed and pushed separately. Deviations worth knowing:
 - **44** -- all 23 test gaps closed. The new tests found two pre-existing
   bugs: `hostType` arrived as the label `host.type` (not the documented
   `host_type`; fixed afterwards, see below) and a collector `writeEndpoint`
-  with a path but no port broke systemd-journal-upload (now an assertion).
+  with a path but no port broke systemd-journal-upload (now a warning).
   They also exposed a vacuous nginx assertion ("a different Host is refused"
   -- it is not, with a single virtualHost; the old probe passed on a 401).
 - **45** -- item 1 assumed `withExtraHeaders` was idempotent; it
@@ -659,8 +661,9 @@ Added during the round, beyond the plan:
 - `vmauth.accessLog` (default off) so successful writes log their source.
 - Every CA bundle (vmauth backend, Alloy, journal-upload) now goes through
   `LoadCredential`, like the other TLS/secret files.
-- Collector `host_type` label spelling fixed; a collector assertion for a
-  journald endpoint with a path but no port.
+- Collector `host_type` label spelling fixed; a collector warning for a
+  journald endpoint with no explicit port (journal-upload would append its
+  default 19532).
 - A latent race in the alloy-reload test (reload sent before Alloy was
   ready) fixed by waiting for `/-/ready`.
 

@@ -6,7 +6,7 @@ option's own description — it's a property of how the pieces combine.
 See the individual ADRs (`docs/decisions/`) for the reasoning behind each
 component's own choices; this page is purely the connective picture.
 
-## Default bind addresses — everything is loopback-only except nginx
+## Default bind addresses — everything is loopback-only except nginx and the opt-in vmauth doors
 
 ```
 ┌────────────────────────────┬───────────────────┬──────────────────────┐
@@ -17,7 +17,12 @@ component's own choices; this page is purely the connective picture.
 │   .metrics                   │ 127.0.0.1:4201      │ No                     │
 │   .logs                      │ 127.0.0.1:4202      │ No                     │
 │   .traces                     │ 127.0.0.1:4203      │ No                     │
-│   .vmauth                     │ 127.0.0.1:4204      │ No -- see note below   │
+│   .vmauth (listenAddress)     │ 127.0.0.1:4204      │ No -- internal data    │
+│                                │                     │ listener, see note     │
+│                                │                     │ below                  │
+│   .vmauth.internalListenAddress│ 127.0.0.1:4208      │ No -- /health /metrics │
+│                                │                     │ /flags /debug/pprof    │
+│                                │                     │ /-/reload (ADR 0027)   │
 │   .vmauth.https (opt-in)      │ 0.0.0.0:8443        │ YES once enabled --    │
 │                                │                     │ the collectors' write  │
 │                                │                     │ door (ADR 0025)        │
@@ -45,10 +50,8 @@ component's own choices; this page is purely the connective picture.
 ```
 
 **Writes and reads use different doors** (docs/decisions/0025): collectors
-write to vmauth's own `https` (:8443) / `http` (:8080) listeners; nginx
-(:80/:443) fronts reads and Grafana only, and answers 404 to any write path
-under `/victoria/`. vmauth's listeners share one routing config, so the
-public doors also accept (credentialed) reads.
+write to vmauth's own `https` / `http` listeners; nginx fronts reads and
+Grafana only. The public doors also accept (credentialed) reads.
 
 **Important note on vmauth's default:** vmauth is the one service in
 `victoriaStack` whose entire *purpose* is accepting traffic from other
@@ -56,9 +59,10 @@ hosts (fleet collectors, external Grafana/MCP clients) — but its default
 `listenAddress` is loopback-only, same as everything else, consistent
 with this project's "opt-in, nothing reachable until you say so"
 philosophy (ADR 0002). **A real multi-host deployment must explicitly
-override `services.victoriaStack.vmauth.listenAddress`** (e.g. to a
-tailnet address, or `0.0.0.0:4204` behind your own firewall) — nothing
-about vmauth being "the gateway" makes this happen automatically.
+enable `services.victoriaStack.vmauth.https` and/or `.http`** (ADR 0025) —
+extra listeners on the same vmauth; `listenAddress` stays the internal
+loopback listener. Nothing about vmauth being "the gateway" makes this
+happen automatically.
 
 ## Connection topology
 
@@ -67,9 +71,8 @@ about vmauth being "the gateway" makes this happen automatically.
                                     │   external / fleet       │
                                     │   collector hosts         │
                                     └───────────┬───────────────┘
-                                                │ (only if vmauth's
-                                                │  listenAddress is
-                                                │  explicitly exposed)
+                                                │ (only via vmauth.https /
+                                                │  vmauth.http, ADR 0025)
                                                 ▼
 ┌───────────────────────────────────────────────────────────────────┐
 │ this host                                                            │
@@ -131,9 +134,6 @@ What you still have behind a proxy:
   failed requests -- only the LAST entry, the one your proxy added, can be
   trusted, because a client can put anything before it.
 
-Collectors that write straight to vmauth's own doors
-(`vmauth.https` / `vmauth.http`, docs/decisions/0025) are not affected.
-
 ## Key properties this diagram makes explicit
 
 - **Grafana is never reached through vmauth**, in either direction —
@@ -149,11 +149,11 @@ Collectors that write straight to vmauth's own doors
   OTLP-speaking applications, unrelated to the fleet-shipping path the
   same Alloy instance also runs.
 - **Nothing in this topology is reachable from another host until you
-  explicitly widen a `listenAddress`** (vmauth's, mcp's, or a storage
-  service's directly) — the single documented exception is nginx, whose
-  entire purpose is being the externally-reachable front door, and even
-  that requires `services.victoriaStack.nginx.enable = true` to exist at
-  all.
+  explicitly widen a `listenAddress`** (mcp's or a storage service's
+  directly) — the documented exceptions are nginx, whose entire purpose is
+  being the externally-reachable front door (requires
+  `services.victoriaStack.nginx.enable = true`), and the opt-in
+  `vmauth.https` / `vmauth.http` doors (ADR 0025).
 - **nginx speaks plain HTTP only, by design** — `services.nginx.
   virtualHosts."victoria-stack"` is a stable extension point (ADR 0022)
   an operator adds `forceSSL`/`enableACME` (or any other real nginx TLS

@@ -34,14 +34,9 @@ let
 in
 {
   config = lib.mkIf cfg.enable {
-    # The only reason to reach for this module's own grafana.enable
-    # instead of plain services.grafana.enable directly is the
-    # auto-wired datasource provisioning above -- with zero backends
-    # enabled, datasourceSpecs is empty and that auto-wiring delivers
-    # nothing, unlike e.g. requireAuthForWrites+no-token or
-    # manageTmpfiles=false, which both have a real alternative deployment
-    # shape behind them. Still technically works (Grafana starts fine
-    # with no provisioned datasources), so a warning, not an assertion.
+    # Datasource provisioning is all this option adds over plain
+    # services.grafana.enable, so with no backend enabled it does nothing.
+    # Grafana still starts fine, hence a warning, not an assertion.
     warnings = lib.optional (datasourceSpecs == [ ]) ''
       services.victoriaStack.grafana.enable is set, but none of
       metrics/logs/traces.enable is -- this leaves datasourceSpecs empty,
@@ -64,38 +59,16 @@ in
 
     services.grafana.provision.datasources.settings = {
       apiVersion = 1;
-      # Grafana's own provisioning docs: without this, a datasource
-      # that disappears from the file entirely (a backend that was
-      # enabled, then later disabled) is simply left untouched forever
-      # -- NOT the same thing deleteDatasources below already handles
-      # (that list is built from the SAME datasourceSpecs as
-      # `datasources`, so a disabled backend's entry is absent from
-      # BOTH lists on the next provisioning run, and nothing ever
-      # revisits it again). Confirmed missing by a fresh-agent review
-      # and reproduced live via a real switch-to-configuration test
-      # (metrics.enable true -> false, same real generation switch an
-      # operator would do): the VictoriaMetrics datasource stayed behind
-      # permanently, still isDefault=true, still pointing at a port
-      # nothing listens on anymore, with its type/typeName degraded
-      # once declarativePlugins also stopped installing the matching
-      # plugin.
-      #
-      # `prune: true` is Grafana's own documented mechanism for exactly
-      # this case -- but confirmed live (same test, repeated after
-      # adding this) that it does NOT yet actually prune anything on the
-      # pinned Grafana version (13.1.6): a real, previously reported
-      # upstream bug (github.com/grafana/grafana/issues/94645, "Data
-      # source: pruning doesn't work"), fixed upstream only very
-      # recently (grafana/grafana#83034). Added anyway -- it's the
-      # textbook-correct, documented setting, costs nothing today, and
-      # starts working for free the moment the pinned nixpkgs grafana
-      # package picks up a version with that fix. Until then, an
-      # operator who disables a backend needs to delete the stale
-      # datasource manually (Grafana's own UI, or
-      # `curl -X DELETE .../api/datasources/uid/<uid>`) -- this module
-      # has no way to do it for them: a disabled backend's uid isn't
-      # knowable from the CURRENT generation's config alone, there's
-      # nothing left to build a deleteDatasources entry from.
+      # Without prune, a datasource whose backend was later disabled stays
+      # behind forever: deleteDatasources is built from the same
+      # datasourceSpecs, so the disabled entry is absent from both lists.
+      # Grafana documents `prune` for this, but it does not work on the pinned
+      # Grafana (github.com/grafana/grafana/issues/94645), so stale
+      # datasources must be deleted by hand (Grafana's UI, or
+      # `curl -X DELETE .../api/datasources/uid/<uid>`); a disabled backend's
+      # uid is no longer knowable from the current config. Kept so it takes
+      # effect once the pinned Grafana picks up the upstream fix
+      # (grafana/grafana#83034).
       prune = true;
       datasources = lib.forEach datasourceSpecs (spec: {
         inherit (spec)

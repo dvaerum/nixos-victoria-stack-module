@@ -24,7 +24,7 @@ writes       collectors --------------------------> vmauth :8443 (HTTPS)  [vmaut
 - Writes need their own address, port and TLS story; folding them into the
   read front door made a path prefix part of the write URL, which breaks
   `systemd-journal-upload` (it appends its default port after the path).
-  The collector now asserts an explicit port whenever its endpoint has a path.
+  The collector now warns when its journald endpoint has no explicit port (with or without a path).
 - vmauth runs several listeners with per-listener TLS natively (its
   `-httpListenAddr`/`-tls`/`-tlsCertFile`/`-tlsKeyFile` flags are positional
   arrays), so no extra program is needed.
@@ -37,7 +37,7 @@ writes       collectors --------------------------> vmauth :8443 (HTTPS)  [vmaut
 - vmauth cannot redirect (no routing key or code for it), so there is no
   8080-to-8443 redirect; `http` is either open, loopback, or off.
 - The certificate is staged by systemd `LoadCredential=` (a copy): replace
-  the files and restart vmauth. For ACME, add `vmauth.service` to the cert's
+  the files; path watchers (`systemd.paths` `vmauth-secret-watch-*`) restart vmauth on replacement. For ACME, add `vmauth.service` to the cert's
   `reloadServices` (a warning says so when missing).
 - On the write doors vmauth sees each collector's real address directly, so
   nothing like `X-Forwarded-For` handling is needed there. Behind a reverse

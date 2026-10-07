@@ -36,8 +36,8 @@ let
   # Every listener in positional order: the -tls/-tlsCertFile/-tlsKeyFile
   # array flags apply to -httpListenAddr by INDEX (confirmed in vmauth's
   # source), so all four flag lists are generated from this one list with
-  # identical length. With both doors off this is exactly the single
-  # internal listener and no -tls flags at all, i.e. the unit is unchanged.
+  # identical length. With both doors off this is just the internal listener
+  # and no -tls flags are emitted.
   listeners = [
     {
       addr = cfg.listenAddress;
@@ -59,13 +59,10 @@ let
   # routes alike) when configured, omitted entirely otherwise.
   #
   # Concatenates onto any headers an entry already carries (e.g. a
-  # user-supplied extraReadUrlMap entry with its own route-specific
-  # header) rather than overwriting via `//` -- an earlier version used
-  # `entry // extraHeadersAttrs`, which silently discarded any
-  # pre-existing `headers`/`response_headers` key on the entry the
-  # moment the module-wide default was also configured, with no error or
-  # warning. The entry's own values are listed last (closer to "more
-  # specific wins" for any name vmauth treats as last-value-wins).
+  # user-supplied extraReadUrlMap entry with its own route-specific header)
+  # rather than overwriting via `//`, which would silently discard them. The
+  # entry's own values are listed last (more specific wins for any name vmauth
+  # treats as last-value-wins).
   withExtraHeaders = map (
     entry:
     entry
@@ -86,8 +83,7 @@ let
   # Each enabled backend's own native read API, reached via vmauth as
   # /metrics/*, /logs/*, /traces/* -- src_paths are POST-STRIP (vmauth
   # itself strips nothing; whatever fronts vmauth, e.g. nginx, is
-  # responsible for any further prefix stripping of its own, same
-  # separation of concerns as deployment-a's real deployment).
+  # responsible for any further prefix stripping of its own).
   #
   # Read via each backend's own effectiveUrl (docs/decisions/0019), not
   # listenAddress directly -- MCP's own listenAddress stays a direct
@@ -230,8 +226,9 @@ let
     builtins.toJSON (withExtraHeaders (autoOpenIngestPaths ++ cfg.extraWriteUrlMap))
   );
 
-  # Renders /run/vmauth/config.json at service start from: the two
-  # Nix-known (non-secret) url_map JSON files above, plus whichever of
+  # Renders /run/vmauth/config.json at service start from: the three
+  # Nix-known (non-secret) url_map JSON files above (read, open-ingest,
+  # write), plus whichever of
   # adminPasswordFile/readTokensFile/writeTokensFile are actually
   # configured, staged by systemd's own LoadCredential= (never the Nix
   # store -- see docs/decisions/0008). readTokensFile/writeTokensFile are
@@ -245,18 +242,10 @@ let
       pkgs.yq-go
     ];
     text = ''
-      # systemd only exports $CREDENTIALS_DIRECTORY when at least one
-      # LoadCredential= entry exists -- with none of adminPasswordFile/
-      # readTokensFile/writeTokensFile configured (a legitimate state,
-      # e.g. requireAuthForWrites = false with no credentials at all),
-      # it's entirely absent from the environment, not just empty. Under
-      # writeShellApplication's `set -u`, referencing it unguarded
-      # crashes with "CREDENTIALS_DIRECTORY: unbound variable" -- found
-      # by actually running this service in a container for the first
-      # time (previously blocked locally by missing uid-range). The
-      # `:-` default keeps every `-f "$dir/..."` check working the same
-      # as before when the directory IS set, while tolerating "not set
-      # at all" as the same as "no credential files present".
+      # systemd leaves $CREDENTIALS_DIRECTORY unset when the unit has no
+      # LoadCredential= entries at all (e.g. requireAuthForWrites = false and
+      # no TLS files). `set -u` would crash on an unguarded reference, so
+      # default it to empty, which reads as "no credential files present".
       credentials_directory="''${CREDENTIALS_DIRECTORY:-}"
       users_json='[]'
 
@@ -434,15 +423,10 @@ in
     # (two settings that genuinely contradict each other, not a generic
     # "you might not understand security" nag -- docs/decisions/0014).
     #
-    # Deliberately NOT also warning on the inverse (requireAuthForWrites
-    # = true, the default, with writeTokensFile unset): tried this during
-    # review, reverted immediately -- it fired on every "just enable a
-    # backend, nothing else configured" setup (9+ existing tests), which
-    # is a legitimate, common shape (writes happen directly against the
-    # backend's own listenAddress, never through vmauth at all). Unlike
-    # the case below, there's no way to tell "forgot to configure this"
-    # apart from "never intended to write through vmauth" from the
-    # config alone -- not a genuine contradiction, so no warning.
+    # No warning for the inverse (requireAuthForWrites = true with
+    # writeTokensFile unset): it is indistinguishable from never writing
+    # through vmauth (writing straight to a backend's own listenAddress),
+    # a common legitimate setup.
     warnings =
       # A src_paths pattern that begins with a wildcard matches every path
       # -- almost certainly a mistake in an escape-hatch entry, but still
@@ -497,11 +481,8 @@ in
       ++ lib.optional topCfg.metrics.enable "victoriametrics.service"
       ++ lib.optional topCfg.logs.enable "victorialogs.service"
       ++ lib.optional topCfg.traces.enable "victoriatraces.service"
-      # The 3 MCP servers -- vmauth's own /mcp/* routing proxies directly
-      # to these, same ordering reasoning as the storage backends above.
-      # Each one's own postStart now has a real TCP readiness probe
-      # (mcp.nix), so `after` here means "actually listening", not just
-      # "systemd forked the process".
+      # The MCP servers vmauth's /mcp/* routes proxy to. Their postStart runs
+      # an HTTP readiness probe (mcp.nix), so `after` means "answering".
       ++ lib.optional topCfg.metrics.mcp.enable "mcp-victoriametrics.service"
       ++ lib.optional topCfg.logs.mcp.enable "mcp-victorialogs.service"
       ++ lib.optional topCfg.traces.mcp.enable "mcp-victoriatraces.service"
@@ -515,19 +496,9 @@ in
       ) "acme-${cfg.https.acmeCertName}.service";
       wantedBy = [ "multi-user.target" ];
 
-      # vmauth has no documented HTTP health endpoint of its own to poll
-      # (docs/decisions/0015's original reasoning) -- but Phase 37 set a
-      # real precedent for exactly this situation with the 3 MCP
-      # services: a TCP-only wait4x probe, not an HTTP one. Found
-      # missing here by a fresh-agent review: nginx.nix reverse-proxies
-      # to vmauth with no systemd ordering on it at all (fixed
-      # separately, nginx.nix), and that fix is only meaningful if
-      # vmauth's own `after` consumers (nginx, and vmauth's own callers)
-      # can tell "process forked" apart from "actually listening" --
-      # confirmed directly: tests/nginx.nix's own existing comments
-      # already document hitting a real 502 race against vmauth before
-      # this, worked around in the TEST SCRIPT with wait_for_open_port,
-      # never fixed at the systemd-unit level until now.
+      # TCP probe, not HTTP: with -httpInternalListenAddr, /health is not served
+      # on the data listener. Lets units ordered after vmauth (nginx) rely on it
+      # listening, not just having forked.
       path = [ pkgs.wait4x ];
       postStart = "wait4x tcp ${listen.connectAddr cfg.listenAddress} --timeout 90s";
 
@@ -558,12 +529,6 @@ in
         ];
 
         ExecStartPre = "${lib.getExe renderConfig}";
-        # idleConnTimeout's own default (1m) sits right on top of a
-        # typical collector's OTLP export interval (~52-60s), producing
-        # intermittent "connection reset by peer" retries as vmauth
-        # force-closes connections collectors are about to reuse --
-        # confirmed in production, see cfg.idleConnTimeout's own option
-        # description.
         # escapeShellArgs, like the storage services: one list element is exactly
         # one argument (a plain space-join split "-x=a b" in two).
         ExecStart = lib.escapeShellArgs (
@@ -574,8 +539,8 @@ in
           ++ map (l: "-httpListenAddr=${l.addr}") listeners
           # vmauth's own pages move off every -httpListenAddr listener onto this
           # one. It reads the SAME -tls/-tlsCertFile/-tlsKeyFile array slot as
-          # listener 0, which is why those arrays below are always explicit and
-          # keep a plain first entry.
+          # listener 0, which is why, whenever any listener uses TLS, those
+          # arrays are written out in full and keep a plain first entry.
           ++ [ "-httpInternalListenAddr=${cfg.internalListenAddress}" ]
           ++ lib.optionals anyTls (
             map (l: "-tls=${lib.boolToString l.tls}") listeners
@@ -619,12 +584,8 @@ in
         Restart = "on-failure";
         RestartSec = 5;
 
-        # Hardening -- same general-purpose systemd profile applied to
-        # the storage services (docs/decisions/0015), no nixpkgs vmauth
-        # module exists to diff against (confirmed: nixpkgs ships no
-        # vmauth module at all), and no LimitNOFILE/readiness-check
-        # addition here since neither has a confirmed, documented basis
-        # for this specific binary the way metrics/logs/traces did.
+        # Same hardening profile as the storage services (docs/decisions/0015),
+        # minus LimitNOFILE, which has no confirmed basis for vmauth.
         DeviceAllow = [ "/dev/null rw" ];
         DevicePolicy = "strict";
         LockPersonality = true;

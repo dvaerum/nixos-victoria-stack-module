@@ -1,6 +1,5 @@
-# None of the 3 storage binaries default to unbounded retention when
-# -retentionPeriod is omitted (traces: 7d, logs: 7d, metrics: 1M --
-# docs/decisions/0020); retentionPeriod = null means "don't pass the flag".
+# retentionPeriod = null means "don't pass the flag"; the binary's own default
+# applies (see options.nix, docs/decisions/0020).
 import ./storage-common.nix {
   name = "traces";
   unitName = "victoriatraces";

@@ -23,12 +23,8 @@ let
   # `Authorization: Bearer <token>` header -- VICTORIA_WRITE_TOKEN itself
   # holds just the raw token (matching its name), unlike
   # systemd-journal-upload's own rendered Header= drop-in, which already
-  # bakes "Bearer " in at render time (config.nix). Found by actually
-  # running Alloy against a real vmauth for the first time (previously
-  # blocked locally by missing uid-range): every write got a real but
-  # silent 401, "Dropping data" -- confirmed by checking vmauth's own
-  # real bearer-token docs, which specify the "Bearer " prefix is part of
-  # the Authorization header value, not implied.
+  # bakes "Bearer " in at render time (config.nix). Without the prefix every
+  # write got a silent 401 ("Dropping data").
   authBlock = ''
     otelcol.auth.headers "write_token" {
       header {
@@ -160,8 +156,8 @@ let
     }
 
     // Prometheus's own scrape meta-metrics (up, scrape_duration_seconds,
-    // etc.) also get generated independently by the gateway's own
-    // self-monitoring scrape jobs -- same names, unrelated meanings.
+    // etc.) share names with the series any other scraper writing into the
+    // same backend generates (another Alloy, vmagent), with unrelated meanings.
     // Renaming this collector's own copies with an "alloy_" prefix avoids
     // an unfiltered query silently mixing the two.
     otelcol.processor.transform "rename_scrape_meta" {
@@ -181,9 +177,8 @@ let
   '';
 
   tracesSection = lib.optionalString cfg.traces.enable ''
-    // Traces: local OTLP receiver, for any app on this host that already
-    // speaks OTLP. Tied 1:1 to traces.enable -- a receiver with nowhere
-    // to forward collected spans is a dead end.
+    // Traces: local OTLP receiver for any app on this host that already
+    // speaks OTLP.
     otelcol.receiver.otlp "local" {
       grpc {
         endpoint = "127.0.0.1:${toString cfg.traces.receiver.grpcPort}"
@@ -196,10 +191,8 @@ let
       }
     }
 
-    // host_type attribute on every trace span, same label this module
-    // already attaches to metrics -- a fleet-identification label that
-    // silently only covered one of two eligible signal types was more
-    // surprising than useful (docs/decisions/0020).
+    // Same host_type label as on metrics, so it covers both signal types
+    // (docs/decisions/0020).
     otelcol.processor.attributes "add_host_type_traces" {
       action {
         key    = "host_type"

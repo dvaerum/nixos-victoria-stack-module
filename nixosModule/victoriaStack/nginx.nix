@@ -9,22 +9,10 @@ let
   cfg = topCfg.nginx;
   listen = import ./listen.nix { inherit lib; };
 
-  # Grafana's own official reverse-proxy address -- same discipline as
-  # every other backend address in this module, read dynamically rather
-  # than assumed (nixpkgs' real defaults: 127.0.0.1:3000, but
-  # consumer-overridable per docs/decisions/0010).
-  #
-  # Bracket-wrapped only when it looks like a bare IPv6 literal (contains
-  # ":" and isn't already bracketed) -- nginx's proxy_pass (like every
-  # other URL-parsing consumer) requires "[::1]:3000", not "::1:3000",
-  # or it can't tell where the host ends and the port begins. Unreached
-  # by any test with this module's own defaults (IPv4 127.0.0.1), but a
-  # real break for an operator who sets http_addr to a bare IPv6
-  # literal -- a legitimate, if unusual, override of a fully generic
-  # upstream Grafana option this module doesn't otherwise constrain.
+  # Read from Grafana's own settings rather than assumed: the consumer may
+  # override them (docs/decisions/0010).
   grafanaHttpAddr = config.services.grafana.settings.server.http_addr;
-  # Empty/0.0.0.0/:: (Grafana's "all interfaces") dial loopback; a bare IPv6
-  # literal is bracketed (the same helper every other consumer uses).
+  # Wildcard and IPv6 handling lives in listen.nix.
   grafanaHost = listen.connectHost grafanaHttpAddr;
   grafanaUrl = "http://${grafanaHost}:${toString config.services.grafana.settings.server.http_port}";
 
@@ -39,11 +27,6 @@ let
   # Escaped: a "." in an operator's segment must not act as a regex wildcard.
   ++ map lib.escapeRegex cfg.extraReadPaths;
 
-  # Grafana's own official sub-path config
-  # (grafana.com/tutorials/run-grafana-behind-a-proxy/), fetched live and
-  # followed verbatim per docs/decisions/0016 -- never improvised. Shared
-  # between the main location and the dedicated websocket one below,
-  # since both need the same Host header + prefix-stripping rewrite.
   # Without these, vmauth/Grafana only ever see nginx's own loopback
   # address as the client. proxy_add_x_forwarded_for appends rather than
   # overwrites, so a client-supplied X-Forwarded-For stays in the chain
@@ -53,6 +36,10 @@ let
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
   '';
 
+  # Grafana's own official sub-path config
+  # (grafana.com/tutorials/run-grafana-behind-a-proxy/), followed verbatim per
+  # docs/decisions/0016. Shared by the main and websocket locations, which
+  # both need the same Host header and prefix-stripping rewrite.
   grafanaLocationExtraConfig = ''
     proxy_set_header Host $host;
     ${clientIpHeaders}
@@ -61,25 +48,10 @@ let
 in
 {
   config = lib.mkIf cfg.enable {
-    # nginx reverse-proxies to both vmauth ("/victoria/") and, when
-    # enabled, Grafana directly ("/grafana/") -- found missing by a
-    # fresh-agent review: nginx had no systemd ordering on either at
-    # all, both just `wantedBy multi-user.target` with nothing linking
-    # them, so systemd was free to start nginx concurrently with (or
-    # before) either backend on every boot. Confirmed directly:
-    # `systemctl show nginx.service -p After` on a real running
-    # container listed only generic boot targets, neither vmauth.service
-    # nor grafana.service anywhere in it -- and tests/nginx.nix's own
-    # existing comments already document hitting the resulting race
-    # live ("nginx's proxy_pass raced it and got 502 Bad Gateway"),
-    # previously worked around only in the TEST SCRIPT
-    # (wait_for_open_port), never fixed at the unit level. vmauth now
-    # has its own TCP readiness probe (vmauth.nix) so this `after` means
-    # "actually listening", not just "process forked" -- Grafana has no
-    # such probe of its own (not this module's service to harden,
-    # docs/decisions/0010), so that half only gets ordering, the same
-    # residual race the Grafana-datasource tests already document and
-    # work around with wait_until_succeeds.
+    # Without this ordering nginx can start before its upstreams and answer
+    # 502 (seen in tests/nginx.nix). vmauth has a readiness probe (vmauth.nix),
+    # so `after` there means "listening"; Grafana has none (not this module's
+    # service to harden, docs/decisions/0010), so it only gets ordering.
     systemd.services.nginx.after = [
       "vmauth.service"
     ]

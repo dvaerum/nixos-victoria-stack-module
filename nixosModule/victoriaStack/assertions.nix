@@ -44,7 +44,7 @@ in
     # credential) remains a deliberate, informed override -- see
     # docs/decisions/0002-opt-in-everything.md. A `true` value here has no
     # effect at all when no backend is enabled (nothing for vmauth to
-    # front); that's enforced structurally in vmauth.nix (Phase 6), not
+    # front); that's enforced structurally in vmauth.nix, not
     # here.
     services.victoriaStack.vmauth.enable = lib.mkDefault anyBackendEnabled;
 

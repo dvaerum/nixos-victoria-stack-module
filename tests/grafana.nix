@@ -297,7 +297,7 @@ in
     };
   };
 
-  # Phase 43 fresh-agent review finding: without Grafana's own `prune:
+  # Without Grafana's own `prune:
   # true` top-level provisioning key, a datasource removed from the
   # file entirely (a backend disabled after having been enabled) is
   # never actually deleted -- deleteDatasources (built from the SAME

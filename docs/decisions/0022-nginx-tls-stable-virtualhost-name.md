@@ -33,8 +33,8 @@ same severity as renaming an option.
 ## Why
 
 `options.nix` already states this module "deliberately has no ACME/TLS
-opinion" -- confirmed true, this module has zero server-side HTTPS
-termination anywhere. The two real deployments this project generalizes
+opinion" -- confirmed true, this module has no nginx-side TLS
+opinion (vmauth's own public write door is the one exception, ADR 0025). The two real deployments this project generalizes
 from both confirm this is the right boundary, not a gap:
 
 - One deployment serves plain HTTP directly (no TLS at all, trusted
@@ -62,8 +62,7 @@ wrappers.
 pins the literal attribute name via eval, so a future accidental rename
 is caught immediately. `nginx-http-and-https-coexist-on-the-stable-name`
 is a real container-boot test: a throwaway self-signed certificate
-(mirroring `victoriaCollector/config.nix`'s existing `dummyClientCert`
-pattern) layered onto `virtualHosts."victoria-stack"` via `addSSL`,
+(`selfSignedCert` in `tests/nginx.nix`) layered onto `virtualHosts."victoria-stack"` via `addSSL`,
 operator-style, exactly as the snippet above shows -- both
 `curl http://127.0.0.1:80/victoria/...` and
 `curl --cacert <fixture> https://127.0.0.1:443/victoria/...` succeed

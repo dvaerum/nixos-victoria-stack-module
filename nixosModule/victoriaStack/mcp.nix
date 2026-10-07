@@ -12,8 +12,7 @@ let
   # Each MCP server talks directly to its own backend over loopback, not
   # through vmauth -- by the time a request reaches the MCP server it's
   # already been authenticated (if at all) by vmauth's own /mcp/* routing,
-  # so no credential logic is needed here (matches the real deployment-a
-  # deployment this design generalizes from).
+  # so no credential logic is needed here.
   mkMcpService =
     {
       name, # "metrics" | "logs" | "traces"
@@ -23,18 +22,10 @@ let
       packagePath, # directory name under ../../packages
       binaryName,
       backendUnit, # "victoriametrics.service" | "victorialogs.service" | "victoriatraces.service"
-      # mcp-victoriametrics' own config.go hardcodes this EXACT string as
-      # its fallback when MCP_DISABLED_TOOLS is unset at all (confirmed
-      # directly from its source, pinned version 1.20.2) -- a disjoint
-      # upstream default from mcp-victorialogs/mcp-victoriatraces, which
-      # both have no such default (plain os.Getenv, empty when unset).
-      # Found by a fresh-agent review, confirmed live: setting
-      # disabledTools = ["documentation"] (this option's own documented
-      # `example`) silently RE-ENABLED all 6 of these, including
-      # test_rules -- a tool that WRITES synthetic series into the live
-      # instance, directly contradicting this very service's own
-      # description string ("read-only MCP server"). Empty for
-      # logs/traces -- there is no equivalent default to preserve there.
+      # mcp-victoriametrics hardcodes these as its fallback when
+      # MCP_DISABLED_TOOLS is unset (pinned version 1.20.2); logs/traces have
+      # no such default. Passing any value replaces it, so it is unioned in
+      # below. See the `disabledTools` option text for why.
       upstreamDefaultDisabledTools ? [ ],
     }:
     {
@@ -48,14 +39,8 @@ let
           wantedBy = [ "multi-user.target" ];
 
           environment = {
-            # effectiveUrl (docs/decisions/0019), not listenAddress
-            # directly -- this module's own documented seam for a future
-            # remote-backend option, read by vmauth.nix/grafana.nix/
-            # nginx.nix already; mcp.nix was a 4th consumer missed when
-            # that ADR was written, silently left pointing at the local
-            # listenAddress even if a future remoteUrl override changed
-            # effectiveUrl elsewhere. Already includes its own scheme, no
-            # "http://" prepend needed here.
+            # effectiveUrl, not listenAddress: see docs/decisions/0019. Already
+            # includes its scheme.
             "${envPrefix}_INSTANCE_ENTRYPOINT" = serviceCfg.effectiveUrl;
             MCP_SERVER_MODE = "http";
             MCP_LISTEN_ADDR = serviceCfg.mcp.listenAddress;
@@ -74,25 +59,15 @@ let
             MCP_LOG_FORMAT = serviceCfg.mcp.logFormat;
           }
           // lib.optionalAttrs (upstreamDefaultDisabledTools != [ ] || serviceCfg.mcp.disabledTools != [ ]) {
-            # Union, not just the user's own list -- preserves
-            # upstreamDefaultDisabledTools even when the user's list is
-            # non-empty (e.g. disabledTools = ["documentation"] must
-            # NOT silently drop metrics' own upstream-default-disabled
-            # set, see the comment on upstreamDefaultDisabledTools above).
+            # Union, so a user's list never drops upstreamDefaultDisabledTools.
             MCP_DISABLED_TOOLS = lib.concatStringsSep "," (
               lib.unique (upstreamDefaultDisabledTools ++ serviceCfg.mcp.disabledTools)
             );
           };
 
-          # wait4x http, matching the 3 storage services' own postStart
-          # probes -- all 3 mcp-victoria* binaries actually DO register
-          # a real /health/readiness endpoint (confirmed live: 200 OK
-          # against all 3), contrary to an earlier version of this
-          # comment claiming none existed. Without this, vmauth's own
-          # `after`/`wants` on this unit (vmauth.nix) only guaranteed
-          # this unit was started, not that it was actually listening
-          # yet -- the same class of race already fixed for vmauth
-          # itself against the storage services.
+          # HTTP probe, like the storage services': all 3 mcp-victoria* binaries
+          # serve /health/readiness. Without it vmauth's `after` on this unit
+          # (vmauth.nix) would only mean "started", not "answering".
           path = [ pkgs.wait4x ];
           postStart =
             let
