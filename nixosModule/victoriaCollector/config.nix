@@ -13,6 +13,9 @@ let
 
   journaldWriteEndpoint = common.journaldEndpoint cfg;
 
+  # `..` is rejected by assertions.nix, so a plain prefix test is sound here.
+  queueOutsideStateDir = !(lib.hasPrefix "/var/lib/alloy/" (toString cfg.queue.directory));
+
   # systemd-journal-upload has no option to skip client-certificate
   # loading for an https:// endpoint at all -- the server side (the
   # gateway's own open write/ingest path, when requireAuthForWrites is
@@ -32,7 +35,12 @@ let
   renderJournalUploadTokenHeader = pkgs.writeShellApplication {
     name = "victoria-collector-journal-upload-token-header";
     text = ''
+      # The directory keeps the default 755: the uploader's DynamicUser reaches the
+      # file through the systemd-journal group and must be able to traverse it.
       mkdir -p /run/systemd/journal-upload.conf.d
+      # The file holds the write token: never world-readable, not even before the
+      # chgrp/chmod below (this runs under the default umask 022).
+      umask 027
       conf=/run/systemd/journal-upload.conf.d/50-write-token.conf
       {
         echo "[Upload]"
@@ -130,26 +138,63 @@ in
       systemd.services.alloy.after = [ "vmauth.service" ];
       systemd.services.alloy.wants = [ "vmauth.service" ];
 
-      # DynamicUser implies ProtectSystem=strict (confirmed via
-      # systemd.exec(5)), which blocks writes anywhere not explicitly
-      # allow-listed via StateDirectory=/RuntimeDirectory=/
-      # ReadWritePaths=. The default queue.directory
-      # (/var/lib/alloy/queue) already sits inside alloy's own
-      # StateDirectory="alloy" (nixpkgs' own alloy module); anything
-      # outside that tree -- the exact "point it at a bigger disk" use
-      # case queue.directory's own docs invite -- needs an explicit
-      # ReadWritePaths entry or it fails silently at Alloy's own runtime,
-      # uncaught by Nix eval or systemd itself. See docs/decisions/0020.
-      # The CA bundle reaches Alloy's dynamic user as a systemd credential
-      # (config.alloy.nix points ca_file at it), so the file's owner and mode
-      # don't matter -- same rule as every other TLS/secret file here.
-      systemd.services.alloy.serviceConfig.LoadCredential = lib.optional (
-        cfg.alloy.tlsCaFile != null
-      ) "tls-ca:${toString cfg.alloy.tlsCaFile}";
+      # Same shape as the storage services (docs/decisions/0009): dynamic user by
+      # default; a queue directory the dynamic user cannot own draws a warning, and
+      # `alloy.dynamicUser = false` is the way out.
+      warnings =
+        lib.optional
+          (queueOutsideStateDir && cfg.alloy.dynamicUser && !cfg.alloy.suppressDynamicUserWarning)
+          ''
+            services.victoriaCollector.queue.directory (${toString cfg.queue.directory}) is
+            outside /var/lib/alloy while Alloy runs as a systemd DynamicUser. A
+            dynamic user can only write inside its own StateDirectory and nothing
+            owns that directory for it, so Alloy would fail to write its queue
+            there. Set services.victoriaCollector.alloy.dynamicUser = false (a
+            static "alloy" user; the module then creates the directory for it), or
+            services.victoriaCollector.alloy.suppressDynamicUserWarning = true once
+            you have made the directory writable for Alloy's runtime user yourself.
+          '';
 
-      systemd.services.alloy.serviceConfig.ReadWritePaths = lib.optional (
-        !(lib.hasPrefix "/var/lib/alloy/" (toString cfg.queue.directory))
-      ) (toString cfg.queue.directory);
+      users.users.alloy = lib.mkIf (!cfg.alloy.dynamicUser) {
+        isSystemUser = true;
+        group = "alloy";
+      };
+      users.groups.alloy = lib.mkIf (!cfg.alloy.dynamicUser) { };
+
+      systemd.tmpfiles.rules = lib.optional (
+        !cfg.alloy.dynamicUser && cfg.alloy.manageTmpfiles && queueOutsideStateDir
+      ) "d ${toString cfg.queue.directory} 0750 alloy alloy - -";
+
+      # DynamicUser=yes implies this sandbox; DynamicUser=false drops it, so a
+      # static user gets it spelled out. ReadWritePaths (above) keeps the queue
+      # directory writable under ProtectSystem=strict.
+      systemd.services.alloy.serviceConfig = lib.mkMerge [
+        {
+          # The CA bundle reaches Alloy's user as a systemd credential
+          # (config.alloy.nix points ca_file at it), so the file's owner and mode
+          # don't matter -- same rule as every other TLS/secret file here.
+          LoadCredential = lib.optional (
+            cfg.alloy.tlsCaFile != null
+          ) "tls-ca:${toString cfg.alloy.tlsCaFile}";
+          # DynamicUser implies ProtectSystem=strict, which blocks writes anywhere
+          # not allow-listed via StateDirectory=/ReadWritePaths=; the default
+          # queue.directory sits inside alloy's own StateDirectory, anything
+          # outside needs an explicit entry or it fails silently at Alloy's own
+          # runtime (docs/decisions/0020).
+          ReadWritePaths = lib.optional queueOutsideStateDir (toString cfg.queue.directory);
+        }
+        (lib.mkIf (!cfg.alloy.dynamicUser) {
+          DynamicUser = lib.mkForce false;
+          User = "alloy";
+          Group = "alloy";
+          ProtectSystem = "strict";
+          ProtectHome = "read-only";
+          PrivateTmp = true;
+          RemoveIPC = true;
+          NoNewPrivileges = true;
+          RestrictSUIDSGID = true;
+        })
+      ];
 
       # Rendered by victoria-collector-alloy-write-token (see above) --
       # NOT this unit's own preStart, which runs too late to satisfy its
@@ -185,6 +230,30 @@ in
     })
 
     (lib.mkIf cfg.logs.enable {
+      # systemd-journal-upload does not follow the https=443 / http=80 convention:
+      # it only recognises a port when a ":" appears somewhere after the scheme and
+      # otherwise appends ITS OWN default port after the URL's path
+      # ("https://gw/insert/journald:19532/upload", answered with a 400). A
+      # port-less endpoint is a valid URL (Alloy follows the standard), so this is a
+      # warning that explains the quirk, never an error and never a rewrite.
+      warnings =
+        lib.optional (lib.match "[A-Za-z][A-Za-z0-9+.-]*://[^:]*" journaldWriteEndpoint != null)
+          ''
+            services.victoriaCollector: the endpoint logs are shipped to (${journaldWriteEndpoint})
+            has no explicit port. systemd-journal-upload does not follow the usual
+            https = 443 / http = 80 convention: without a ":" in the URL it falls back to
+            its own default port (19532), so write the port out even when it is the
+            standard one (e.g. "https://host:443"). Alloy is unaffected; to give only the
+            log uploader a port, set services.victoriaCollector.journaldWriteEndpoint.
+          '';
+
+      # nixpkgs' journald-upload module sets no restart trigger, so changing only
+      # the endpoint or the CA rewrote /etc/systemd/journal-upload.conf and left the
+      # running uploader on the old URL until reboot.
+      systemd.services.systemd-journal-upload.restartTriggers = [
+        config.environment.etc."systemd/journal-upload.conf".source
+      ];
+
       services.journald.upload = {
         enable = true;
         settings.Upload = {

@@ -968,14 +968,16 @@ in
     containers.collector = {
       virtualisation.vlans = [ 1 ];
       imports = [ collectorModule ];
-      # DynamicUser alloy needs to be able to create files here.
-      systemd.tmpfiles.rules = [ "d /run/alloy-queue-test 0777 root root -" ];
       services.victoriaCollector = {
         metrics.enable = true;
         writeEndpoint = "http://stack:4204";
         writeTokenFile = "${writeTokenFixture}";
         hostType = "server";
         queue.directory = "/run/alloy-queue-test";
+        # A dynamic user cannot write outside its StateDirectory (nothing owns the
+        # directory for it); a static user plus the module's tmpfiles rule can, so
+        # no world-writable workaround is needed here any more.
+        alloy.dynamicUser = false;
       };
     };
 
@@ -999,6 +1001,10 @@ in
           timeout=120,
       )
       collector.succeed("test -n \"$(ls -A /run/alloy-queue-test)\"")
+      # Owned by the static user, not world-writable.
+      assert collector.succeed("stat -c '%U %a' /run/alloy-queue-test").strip() == "alloy 750"
+      # The sandbox a dynamic user would have implied is still in force.
+      assert collector.succeed("systemctl show -p ProtectSystem --value alloy.service").strip() == "strict"
     '';
   };
 
@@ -1344,52 +1350,6 @@ in
     '';
   };
 
-  # systemd-journal-upload appends its default :19532 after any path when
-  # the URL has no explicit port ("https://stack/victoria/insert/journald:19532/upload"),
-  # so logs fail with a 400 at runtime. Catch it at eval time instead.
-  journald-endpoint-with-a-path-needs-an-explicit-port =
-    pkgs.runCommand "journald-endpoint-needs-port-with-path" { }
-      (
-        let
-          failedFor =
-            m:
-            ownFailed (evalWithCollector {
-              services.victoriaCollector = {
-                logs.enable = true;
-                writeTokenFile = "${writeTokenFixture}";
-              }
-              // m;
-            });
-          fires = m: lib.any (lib.hasInfix "explicit port") (failedFor m);
-          checks = {
-            "path without port fires" = fires { writeEndpoint = "https://stack/victoria"; };
-            "path without port fires for plain http too" = fires { writeEndpoint = "http://stack/victoria"; };
-            "journaldWriteEndpoint override is what counts" = fires {
-              writeEndpoint = "https://stack:8443";
-              journaldWriteEndpoint = "https://stack/victoria";
-            };
-            "path with a port is fine" = !(fires { writeEndpoint = "https://stack:443/victoria"; });
-            "no path is fine" = !(fires { writeEndpoint = "https://stack"; });
-            "port and no path is fine" = !(fires { writeEndpoint = "https://stack:8443"; });
-            "bracketed IPv6 with port is fine" = !(fires { writeEndpoint = "https://[::1]:8443"; });
-            "does not apply when logs are off" =
-              ownFailed (evalWithCollector {
-                services.victoriaCollector = {
-                  metrics.enable = true;
-                  hostType = "server";
-                  writeEndpoint = "https://stack/victoria";
-                  writeTokenFile = "${writeTokenFixture}";
-                };
-              }) == [ ];
-          };
-          failed = lib.filterAttrs (_: ok: !ok) checks;
-        in
-        if failed == { } then
-          "echo OK > $out"
-        else
-          throw "journald endpoint assertion broken: ${builtins.toJSON (builtins.attrNames failed)}"
-      );
-
   # The label name is part of the documented contract: host_type with an
   # underscore, so a plain `{host_type="server"}` selector works. A dotted
   # `host.type` can only be matched with a quoted selector.
@@ -1518,6 +1478,11 @@ in
           m.wait_for_unit("network-online.target")
       for c in (collector, collector_untrusted):
           c.wait_until_succeeds("ping -c 1 stack")
+
+      # The token drop-in is owner/group-only.
+      assert collector.succeed(
+          "stat -c '%a %G' /run/systemd/journal-upload.conf.d/50-write-token.conf"
+      ).strip() == "640 systemd-journal"
 
       collector.succeed("logger --tag tls-test 'victoria_tls_trusted_marker'")
       collector_untrusted.succeed("logger --tag tls-test 'victoria_tls_untrusted_marker'")
@@ -1838,4 +1803,187 @@ in
       assert ":4317" not in listeners and ":4318" not in listeners, listeners
     '';
   };
+
+  # --- Alloy's user: dynamic by default, static on request (mirrors the storage
+  # services' dynamicUser / manageTmpfiles / suppressDynamicUserWarning) ---
+
+  alloy-static-user-wiring = pkgs.runCommand "alloy-static-user-wiring" { } (
+    let
+      evalFor =
+        m:
+        evalWithCollector {
+          services.victoriaCollector = {
+            metrics.enable = true;
+            hostType = "server";
+            writeEndpoint = "http://127.0.0.1:4204";
+          }
+          // m;
+        };
+      unit = e: e.config.systemd.services.alloy.serviceConfig;
+      warnsAbout =
+        e:
+        lib.any (lib.hasInfix "dynamicUser") (
+          lib.filter (lib.hasInfix "services.victoriaCollector") e.config.warnings
+        );
+      custom = {
+        queue.directory = "/srv/alloy-queue";
+      };
+      dynamicDefault = evalFor { };
+      dynamicCustom = evalFor custom;
+      staticCustom = evalFor (custom // { alloy.dynamicUser = false; });
+      staticNoTmpfiles = evalFor (
+        custom
+        // {
+          alloy = {
+            dynamicUser = false;
+            manageTmpfiles = false;
+          };
+        }
+      );
+      suppressed = evalFor (custom // { alloy.suppressDynamicUserWarning = true; });
+      checks = {
+        "default: dynamic user, nothing changed" =
+          (unit dynamicDefault).DynamicUser == true
+          && !((unit dynamicDefault) ? User)
+          && !(dynamicDefault.config.users.users ? alloy);
+        "default dir with a dynamic user: no warning" = !(warnsAbout dynamicDefault);
+        "dynamic user + a queue dir outside /var/lib/alloy: WARNING" = warnsAbout dynamicCustom;
+        "the warning can be suppressed" = !(warnsAbout suppressed);
+        "static user: no warning" = !(warnsAbout staticCustom);
+        "static: DynamicUser forced off, user and group alloy" =
+          (unit staticCustom).DynamicUser == false
+          && (unit staticCustom).User == "alloy"
+          && (unit staticCustom).Group == "alloy"
+          && staticCustom.config.users.users.alloy.isSystemUser
+          && staticCustom.config.users.groups ? alloy;
+        "static: the journal-reading group from nixpkgs is kept" =
+          lib.elem "systemd-journal" (unit staticCustom).SupplementaryGroups;
+        "static: the queue directory is created for the user" =
+          lib.elem "d /srv/alloy-queue 0750 alloy alloy - -" staticCustom.config.systemd.tmpfiles.rules;
+        "manageTmpfiles = false: no rule" =
+          !(lib.any (lib.hasInfix "/srv/alloy-queue") staticNoTmpfiles.config.systemd.tmpfiles.rules);
+        # DynamicUser=yes implied these; DynamicUser=false drops them, so they
+        # are set explicitly.
+        "static: the implied sandbox is re-added" =
+          (unit staticCustom).ProtectSystem == "strict"
+          && (unit staticCustom).ProtectHome == "read-only"
+          && (unit staticCustom).PrivateTmp == true
+          && (unit staticCustom).RemoveIPC == true
+          && (unit staticCustom).NoNewPrivileges == true;
+        "the queue dir is writable under ProtectSystem=strict" =
+          lib.elem "/srv/alloy-queue" (unit staticCustom).ReadWritePaths;
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "alloy user wiring wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # systemd-journal-upload does not follow the https=443 / http=80 convention: it
+  # only recognises a port when a ":" appears somewhere after the scheme, and
+  # otherwise appends its OWN default port after the URL's path
+  # ("https://gw/insert/journald:19532/upload", answered with a 400). A standard
+  # port-less endpoint is still a valid URL for Alloy, so this is a WARNING that
+  # explains the quirk, never an error and never a rewrite of the URL.
+  journald-endpoint-without-a-port-warns = pkgs.runCommand "journald-endpoint-port-warning" { } (
+    let
+      evalFor =
+        m:
+        evalWithCollector {
+          services.victoriaCollector = {
+            logs.enable = true;
+            writeTokenFile = "${writeTokenFixture}";
+          }
+          // m;
+        };
+      warns =
+        m:
+        lib.any (lib.hasInfix "explicit port") (
+          lib.filter (lib.hasInfix "services.victoriaCollector") (evalFor m).config.warnings
+        );
+      checks = {
+        "https without a port" = warns { writeEndpoint = "https://stack"; };
+        "http without a port" = warns { writeEndpoint = "http://stack"; };
+        "a path but no port" = warns { writeEndpoint = "https://stack/victoria"; };
+        "an explicit port" = !(warns { writeEndpoint = "https://stack:443"; });
+        "a port and a path" = !(warns { writeEndpoint = "https://stack:443/victoria"; });
+        "an IPv4 address with a port" = !(warns { writeEndpoint = "http://127.0.0.1:4204"; });
+        # The uploader sees a ":" inside an IPv6 literal or a path: it works.
+        "a bracketed IPv6 literal" = !(warns { writeEndpoint = "https://[::1]/pfx"; });
+        "a colon in the path" = !(warns { writeEndpoint = "https://gw/a:b"; });
+        "journaldWriteEndpoint is what counts (without a port)" = warns {
+          writeEndpoint = "https://stack:8443";
+          journaldWriteEndpoint = "https://stack";
+        };
+        "journaldWriteEndpoint is what counts (with a port)" =
+          !(warns {
+            writeEndpoint = "https://stack";
+            journaldWriteEndpoint = "https://stack:443";
+          });
+        "never an assertion: the build proceeds" =
+          ownFailed (evalFor {
+            writeEndpoint = "https://stack";
+          }) == [ ];
+        "no warning when logs are not shipped" =
+          !(lib.any (lib.hasInfix "explicit port") (
+            (evalWithCollector {
+              services.victoriaCollector = {
+                metrics.enable = true;
+                hostType = "server";
+                writeEndpoint = "https://stack";
+                writeTokenFile = "${writeTokenFixture}";
+              };
+            }).config.warnings
+          ));
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "journald port warning wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # nixpkgs' journald-upload module wires no restart trigger, so a rebuild that
+  # changed only the endpoint or the CA rewrote /etc/systemd/journal-upload.conf and
+  # left the running uploader on the old URL until reboot.
+  journal-upload-restarts-when-its-config-changes =
+    pkgs.runCommand "journal-upload-restart-trigger" { }
+      (
+        let
+          e = evalWithCollector {
+            services.victoriaCollector = {
+              logs.enable = true;
+              writeEndpoint = "http://127.0.0.1:4204";
+              writeTokenFile = "${writeTokenFixture}";
+            };
+          };
+          triggers = e.config.systemd.services.systemd-journal-upload.restartTriggers;
+        in
+        if lib.elem e.config.environment.etc."systemd/journal-upload.conf".source triggers then
+          "echo OK > $out"
+        else
+          throw "systemd-journal-upload has no restart trigger on its config"
+      );
+
+  # The write-token drop-in holds a secret: created owner/group-only from the start
+  # (the render script runs under the default umask 022, so it was 644 until the
+  # chmod ran).
+  journal-upload-token-dropin-is-never-world-readable =
+    let
+      e = evalWithCollector {
+        services.victoriaCollector = {
+          logs.enable = true;
+          writeEndpoint = "http://127.0.0.1:4204";
+          writeTokenFile = "${writeTokenFixture}";
+        };
+      };
+      script = e.config.systemd.services.victoria-collector-journal-upload-token.serviceConfig.ExecStart;
+    in
+    pkgs.runCommand "journal-upload-token-dropin-umask" { } ''
+      grep -q '^umask 027' ${script} || { echo "the token drop-in script does not set umask 027 before creating the file" >&2; exit 1; }
+      echo OK > $out
+    '';
 }

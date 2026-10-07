@@ -183,6 +183,42 @@ in
     };
 
     alloy = {
+      dynamicUser = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Whether Alloy runs as a systemd `DynamicUser` (nixpkgs' own default
+          for it) or as a static `alloy` user and group. A dynamic user can
+          only write inside its own `StateDirectory` (`/var/lib/alloy`), so a
+          `queue.directory` outside it needs `dynamicUser = false`: nothing
+          would otherwise own that directory for the dynamic user, and Alloy
+          would fail at run time. With a static user the module creates the
+          directory for it (`manageTmpfiles`) and re-adds the sandboxing a
+          dynamic user implies.
+        '';
+      };
+
+      manageTmpfiles = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          With `dynamicUser = false`, whether this module creates
+          `queue.directory` (mode 0750, owned by `alloy`) on every boot via
+          `systemd.tmpfiles.rules`. Set to `false` to manage the directory
+          yourself.
+        '';
+      };
+
+      suppressDynamicUserWarning = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Silence the build-time warning for a dynamic user with a
+          `queue.directory` outside `/var/lib/alloy` (use once you have made
+          that directory writable for Alloy's runtime user yourself).
+        '';
+      };
+
       package = mkOption {
         type = types.package;
         description = "The Alloy package to use. Defaults to pkgs.grafana-alloy, set via mkDefault in config.nix.";
