@@ -372,6 +372,23 @@ in
         '';
       };
 
+      extraFlags = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [
+          "-tls"
+          "-tlsCertFile=/path/to/cert.pem"
+          "-tlsKeyFile=/path/to/key.pem"
+        ];
+        description = ''
+          Extra command-line flags passed straight through to vmauth,
+          appended last, for anything not worth promoting to its own
+          typed option -- e.g. vmauth's own TLS listener
+          (`-tls`/`-tlsCertFile`/`-tlsKeyFile`). Same shape as the storage
+          services' `extraFlags`.
+        '';
+      };
+
       backendTls = {
         insecureSkipVerify = mkOption {
           type = types.bool;

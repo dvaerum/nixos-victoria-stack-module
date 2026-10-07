@@ -359,6 +359,7 @@ in
           # LoadCredential= at runtime.
           ++ lib.optional (cfg.backendTls.certFile != null) "-backend.tlsCertFile=%d/backend-tls-cert"
           ++ lib.optional (cfg.backendTls.keyFile != null) "-backend.tlsKeyFile=%d/backend-tls-key"
+          ++ cfg.extraFlags
         );
         RuntimeDirectory = "vmauth";
         RuntimeDirectoryMode = "0700";

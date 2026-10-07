@@ -31,6 +31,18 @@ let
 
   adminPasswordFixture = pkgs.writeText "admin-password" "admin-password-value";
 
+  # Throwaway server cert for vmauth's own TLS listener (same shape as
+  # tests/nginx.nix's selfSignedCert): the SAN must cover the address
+  # curl dials or verification fails closed.
+  selfSignedCert =
+    pkgs.runCommand "vmauth-test-self-signed-cert" { nativeBuildInputs = [ pkgs.openssl ]; }
+      ''
+        mkdir -p $out
+        openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
+          -subj "/CN=vmauth-test" -addext "subjectAltName=IP:127.0.0.1" \
+          -keyout $out/key.pem -out $out/cert.pem
+      '';
+
   # One of the 3 url_map JSON files vmauth's unit points at via its
   # Environment (READ_URL_MAP_FILE / WRITE_URL_MAP_FILE /
   # OPEN_INGEST_PATHS_FILE), parsed.
@@ -1328,6 +1340,73 @@ in
           assert anon == "401", f"anonymous POST to {path} should be rejected (401), got {anon}"
           authed = status("-H 'Authorization: Bearer write-token-one'", path)  # gitleaks:allow
           assert authed != "401", f"write-tier token must still reach {path}, got {authed}"
+    '';
+  };
+
+  # vmauth.extraFlags is the generic pass-through, same as the storage
+  # services' extraFlags: reaches ExecStart verbatim, and last.
+  vmauth-extra-flags-reach-execstart-verbatim =
+    pkgs.runCommand "vmauth-extra-flags-reach-execstart" { }
+      (
+        let
+          execStart = m: (evalWith m).config.systemd.services.vmauth.serviceConfig.ExecStart;
+          unset = execStart { services.victoriaStack.metrics.enable = true; };
+          set = execStart {
+            services.victoriaStack = {
+              metrics.enable = true;
+              vmauth.extraFlags = [
+                "-tlsCertFile=/foo"
+                "-tlsKeyFile=/bar"
+              ];
+            };
+          };
+          checks = {
+            "absent by default" = !(lib.hasInfix "-tlsCertFile" unset);
+            "flags present verbatim" = lib.hasInfix "-tlsCertFile=/foo -tlsKeyFile=/bar" set;
+            "flags are last" = lib.hasSuffix "-tlsCertFile=/foo -tlsKeyFile=/bar" set;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "vmauth.extraFlags broken: ${builtins.toJSON (builtins.attrNames failed)}\n${set}"
+      );
+
+  # extraFlags used for something real: vmauth's own TLS listener, reached
+  # directly (no nginx in front).
+  vmauth-serves-https-via-extra-flags = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-https-via-extra-flags";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          extraFlags = [
+            "-tls"
+            "-tlsCertFile=${selfSignedCert}/cert.pem"
+            "-tlsKeyFile=${selfSignedCert}/key.pem"
+          ];
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(4201)
+
+      url = "https://127.0.0.1:4204/metrics/api/v1/labels"
+      machine.succeed(
+          "curl -sf --cacert ${selfSignedCert}/cert.pem -u admin:admin-password-value '" + url + "'"  # gitleaks:allow
+      )
+      # Plain HTTP on the TLS listener must not work, and verification
+      # must fail closed without the CA.
+      machine.fail("curl -sf --max-time 5 -u admin:admin-password-value 'http://127.0.0.1:4204/metrics/api/v1/labels'")  # gitleaks:allow
+      machine.fail("curl -sf --max-time 5 -u admin:admin-password-value '" + url + "'")  # gitleaks:allow
     '';
   };
 }
