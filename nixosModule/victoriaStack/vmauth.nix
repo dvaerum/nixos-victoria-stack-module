@@ -11,10 +11,10 @@ let
 
   anyBackendEnabled = topCfg.metrics.enable || topCfg.logs.enable || topCfg.traces.enable;
   selfMonitoring = import ./self-monitoring.nix { inherit lib; };
+  listen = import ./listen.nix { inherit lib; };
 
   # `ip:port`, bracketing a bare IPv6 literal.
-  hostPort =
-    ip: port: if lib.hasInfix ":" ip then "[${ip}]:${toString port}" else "${ip}:${toString port}";
+  inherit (listen) hostPort;
 
   # The ACME cert directory this module reads when https.acmeCertName is set.
   acmeDir = "/var/lib/acme/${cfg.https.acmeCertName}";
@@ -138,17 +138,17 @@ let
     ++ lib.optional topCfg.metrics.mcp.enable {
       src_paths = [ "/mcp/metrics(/.*)?" ];
       drop_src_path_prefix_parts = 2;
-      url_prefix = "http://${topCfg.metrics.mcp.listenAddress}/mcp";
+      url_prefix = "http://${listen.connectAddr topCfg.metrics.mcp.listenAddress}/mcp";
     }
     ++ lib.optional topCfg.logs.mcp.enable {
       src_paths = [ "/mcp/logs(/.*)?" ];
       drop_src_path_prefix_parts = 2;
-      url_prefix = "http://${topCfg.logs.mcp.listenAddress}/mcp";
+      url_prefix = "http://${listen.connectAddr topCfg.logs.mcp.listenAddress}/mcp";
     }
     ++ lib.optional topCfg.traces.mcp.enable {
       src_paths = [ "/mcp/traces(/.*)?" ];
       drop_src_path_prefix_parts = 2;
-      url_prefix = "http://${topCfg.traces.mcp.listenAddress}/mcp";
+      url_prefix = "http://${listen.connectAddr topCfg.traces.mcp.listenAddress}/mcp";
     }
     ++ cfg.extraReadUrlMap
   );
@@ -518,19 +518,7 @@ in
       # this, worked around in the TEST SCRIPT with wait_for_open_port,
       # never fixed at the systemd-unit level until now.
       path = [ pkgs.wait4x ];
-      postStart =
-        let
-          isWildcard =
-            lib.hasPrefix "0.0.0.0:" cfg.listenAddress
-            || lib.hasPrefix "[::]:" cfg.listenAddress
-            || lib.hasPrefix ":" cfg.listenAddress;
-          bindAddr =
-            if isWildcard then
-              "127.0.0.1:${lib.last (lib.splitString ":" cfg.listenAddress)}"
-            else
-              cfg.listenAddress;
-        in
-        "wait4x tcp ${bindAddr} --timeout 90s";
+      postStart = "wait4x tcp ${listen.connectAddr cfg.listenAddress} --timeout 90s";
 
       serviceConfig = {
         LoadCredential =

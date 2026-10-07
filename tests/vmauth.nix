@@ -1897,6 +1897,21 @@ in
               has "-httpListenAddr=127.0.0.1:4204 -httpListenAddr=0.0.0.0:8080" httpOnly
               && !(has "-tls" httpOnly);
             "IPv6 address is bracketed" = has "-httpListenAddr=[::]:9443" v6;
+            "an already-bracketed IPv6 address is not bracketed twice" =
+              has "-httpListenAddr=[::1]:8443" (eval {
+                https = {
+                  enable = true;
+                  ipAddress = "[::1]";
+                }
+                // certs;
+              })
+              && !(has "[[" (eval {
+                https = {
+                  enable = true;
+                  ipAddress = "[::1]";
+                }
+                // certs;
+              }));
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in

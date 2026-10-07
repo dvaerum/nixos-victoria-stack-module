@@ -7,6 +7,7 @@
 let
   topCfg = config.services.victoriaStack;
   cfg = topCfg.nginx;
+  listen = import ./listen.nix { inherit lib; };
 
   # Grafana's own official reverse-proxy address -- same discipline as
   # every other backend address in this module, read dynamically rather
@@ -22,11 +23,9 @@ let
   # literal -- a legitimate, if unusual, override of a fully generic
   # upstream Grafana option this module doesn't otherwise constrain.
   grafanaHttpAddr = config.services.grafana.settings.server.http_addr;
-  grafanaHost =
-    if lib.hasInfix ":" grafanaHttpAddr && !lib.hasPrefix "[" grafanaHttpAddr then
-      "[${grafanaHttpAddr}]"
-    else
-      grafanaHttpAddr;
+  # Empty/0.0.0.0/:: (Grafana's "all interfaces") dial loopback; a bare IPv6
+  # literal is bracketed (the same helper every other consumer uses).
+  grafanaHost = listen.connectHost grafanaHttpAddr;
   grafanaUrl = "http://${grafanaHost}:${toString config.services.grafana.settings.server.http_port}";
 
   # First path segments of what nginx's /victoria/ lets through: the 3
@@ -142,7 +141,7 @@ in
           # url_map regexes are written assuming "/victoria" is already
           # gone (nixosModule/victoriaStack/vmauth.nix).
           "~ ^/victoria/(${lib.concatStringsSep "|" readPrefixes})(/|$)" = {
-            proxyPass = "http://${topCfg.vmauth.listenAddress}";
+            proxyPass = "http://${listen.connectAddr topCfg.vmauth.listenAddress}";
 
             # Mirrors vmauth's own tuning, never an independently-chosen
             # nginx default (docs/decisions/0016 -- "nginx mirrors what

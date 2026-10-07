@@ -3,6 +3,7 @@
 let
   cfg = config.services.victoriaStack;
   anyBackendEnabled = cfg.metrics.enable || cfg.logs.enable || cfg.traces.enable;
+  listen = import ./listen.nix { inherit lib; };
 
   # Every listener this module would bind -- vmauth only counts when it
   # actually activates (vmauth.nix needs a backend too).
@@ -13,14 +14,27 @@ let
     ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled) cfg.vmauth.listenAddress
     ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled) cfg.vmauth.internalListenAddress
     ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled && cfg.vmauth.https.enable) (
-      "${cfg.vmauth.https.ipAddress}:${toString cfg.vmauth.https.port}"
+      listen.hostPort cfg.vmauth.https.ipAddress cfg.vmauth.https.port
     )
     ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled && cfg.vmauth.http.enable) (
-      "${cfg.vmauth.http.ipAddress}:${toString cfg.vmauth.http.port}"
+      listen.hostPort cfg.vmauth.http.ipAddress cfg.vmauth.http.port
     )
     ++ lib.optional (cfg.metrics.enable && cfg.metrics.mcp.enable) cfg.metrics.mcp.listenAddress
     ++ lib.optional (cfg.logs.enable && cfg.logs.mcp.enable) cfg.logs.mcp.listenAddress
     ++ lib.optional (cfg.traces.enable && cfg.traces.mcp.enable) cfg.traces.mcp.listenAddress;
+
+  # Two listeners collide when they cannot both be bound -- the same address, or a
+  # wildcard (`0.0.0.0:p`, `:p`, `[::]:p`) next to an address it covers; comparing
+  # the raw strings missed `0.0.0.0:4204` next to vmauth's `127.0.0.1:4204`.
+  listenIndexes = lib.range 0 (builtins.length enabledListenAddrs - 1);
+  anyListenersCollide = lib.any (
+    i:
+    lib.any (
+      j:
+      j > i
+      && listen.overlaps (builtins.elemAt enabledListenAddrs i) (builtins.elemAt enabledListenAddrs j)
+    ) listenIndexes
+  ) listenIndexes;
 in
 {
   config = {
@@ -85,7 +99,7 @@ in
 
     assertions = [
       {
-        assertion = lib.length enabledListenAddrs == lib.length (lib.unique enabledListenAddrs);
+        assertion = !anyListenersCollide;
         message = ''
           services.victoriaStack: two enabled services are configured with
           the same listenAddress -- the second one to start would fail to

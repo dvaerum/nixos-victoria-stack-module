@@ -7,6 +7,7 @@
 
 let
   topCfg = config.services.victoriaStack;
+  listen = import ./listen.nix { inherit lib; };
 
   # Each MCP server talks directly to its own backend over loopback, not
   # through vmauth -- by the time a request reaches the MCP server it's
@@ -95,15 +96,7 @@ let
           path = [ pkgs.wait4x ];
           postStart =
             let
-              isWildcard =
-                lib.hasPrefix "0.0.0.0:" serviceCfg.mcp.listenAddress
-                || lib.hasPrefix "[::]:" serviceCfg.mcp.listenAddress
-                || lib.hasPrefix ":" serviceCfg.mcp.listenAddress;
-              bindAddr =
-                if isWildcard then
-                  "127.0.0.1:${lib.last (lib.splitString ":" serviceCfg.mcp.listenAddress)}"
-                else
-                  serviceCfg.mcp.listenAddress;
+              bindAddr = listen.connectAddr serviceCfg.mcp.listenAddress;
             in
             "wait4x http http://${bindAddr}/health/readiness --timeout 90s";
 

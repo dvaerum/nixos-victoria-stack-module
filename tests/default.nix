@@ -4,6 +4,7 @@ let
 
   groups = {
     assertions = import ./assertions.nix { inherit pkgs nixosModule; };
+    listen = import ./listen.nix { inherit pkgs nixosModule; };
     storage = import ./storage.nix { inherit pkgs nixosModule; };
     vmauth = import ./vmauth.nix { inherit pkgs nixosModule; };
     grafana = import ./grafana.nix { inherit pkgs nixosModule; };

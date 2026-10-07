@@ -29,26 +29,10 @@ let
   cfg = topCfg.${name};
   selfMonitoring = import ./self-monitoring.nix { inherit lib; };
 
-  # The IPv4 (0.0.0.0), IPv6 ([::]), and bare (":<port>", no
-  # host part at all -- a real, upstream-recognized form: the
-  # pinned nixpkgs victoria* modules' own postStart handles
-  # this exact same prefix) wildcard forms are all legitimate
-  # -httpListenAddr values -- probing the wildcard address
-  # itself as a *destination* is unreliable across
-  # kernels/configurations, so all three substitute to
-  # loopback. lib.last (lib.splitString ":" ...) extracts the
-  # port correctly in every case: the port is always the
-  # final fragment regardless of how many colons appear in
-  # the host part (or whether there's a host part at all).
-  isWildcard =
-    lib.hasPrefix "0.0.0.0:" cfg.listenAddress
-    || lib.hasPrefix "[::]:" cfg.listenAddress
-    || lib.hasPrefix ":" cfg.listenAddress;
-  bindAddr =
-    if isWildcard then
-      "127.0.0.1:${lib.last (lib.splitString ":" cfg.listenAddress)}"
-    else
-      cfg.listenAddress;
+  listen = import ./listen.nix { inherit lib; };
+  # What the module itself dials (readiness probe, snapshot call, effectiveUrl):
+  # loopback for a wildcard listenAddress (:port, 0.0.0.0:port, [::]:port).
+  bindAddr = listen.connectAddr cfg.listenAddress;
 in
 {
   # Renamed from extraOptions to match vmauth.extraFlags and the
@@ -70,7 +54,7 @@ in
           package = lib.mkDefault pkgs.${packageAttr};
           # docs/decisions/0019's structural seam -- consumers (vmauth,
           # Grafana) read this, never cfg.listenAddress directly.
-          effectiveUrl = lib.mkDefault "http://${cfg.listenAddress}";
+          effectiveUrl = lib.mkDefault "http://${bindAddr}";
         };
       }
 
