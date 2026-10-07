@@ -89,6 +89,26 @@ section):
 }
 ```
 
+### Where collectors write
+
+Collectors write to vmauth's own doors, not through nginx (which is reads
+and Grafana only):
+
+```nix
+services.victoriaStack.vmauth = {
+  https = {                       # 0.0.0.0:8443 by default
+    enable = true;
+    certFile = "/run/secrets/gateway-cert.pem";   # or acmeCertName = "...";
+    keyFile = "/run/secrets/gateway-key.pem";
+  };
+  http.enable = true;             # optional plain door; ipAddress = "127.0.0.1"
+                                  # makes it a target for `tailscale serve`
+};
+```
+
+Collectors then use `writeEndpoint = "https://host:8443"`. See
+[`docs/decisions/0025`](./docs/decisions/0025-vmauth-public-write-doors.md).
+
 ### Fleet topology
 
 One gateway host running `victoriaStack`, N other hosts running

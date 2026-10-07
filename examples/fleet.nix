@@ -24,11 +24,16 @@
         traces.enable = true;
 
         vmauth = {
-          # Collectors are remote, so vmauth must listen on a reachable
-          # address -- its loopback default is a deliberate security
-          # default (docs/architecture.md), and nothing here changes it
-          # silently.
-          listenAddress = "0.0.0.0:4204";
+          # Collectors write to vmauth's own public HTTPS door
+          # (docs/decisions/0025). Its internal listener (127.0.0.1:4204)
+          # stays loopback-only for nginx and local callers.
+          https = {
+            enable = true; # 0.0.0.0:8443 by default
+            certFile = "/run/secrets/victoria/gateway-cert.pem";
+            keyFile = "/run/secrets/victoria/gateway-key.pem";
+            # Or reuse an ACME certificate NixOS already manages:
+            # acmeCertName = "victoria-gateway.example.internal";
+          };
 
           # One bearer token per collector host (a YAML `tokens:` list), so
           # one host's token can be revoked without touching the others.
@@ -38,7 +43,7 @@
 
       # This module never opens firewall ports itself (infrastructure-
       # agnostic); the gateway's operator does.
-      networking.firewall.allowedTCPPorts = [ 4204 ];
+      networking.firewall.allowedTCPPorts = [ 8443 ];
     };
 
   # One call per fleet host: its own label and its own token file.
@@ -55,10 +60,8 @@
         metrics.enable = true;
         logs.enable = true;
 
-        # The gateway's real network address, not loopback. For HTTPS put
-        # nginx in front of the gateway (docs/decisions/0022) and use an
-        # https:// endpoint with an explicit port.
-        writeEndpoint = "http://victoria-gateway.example.internal:4204";
+        # The gateway's HTTPS write door: host and port, no path.
+        writeEndpoint = "https://victoria-gateway.example.internal:8443";
 
         inherit hostType writeTokenFile;
       };

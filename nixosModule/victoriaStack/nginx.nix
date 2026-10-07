@@ -29,6 +29,16 @@ let
       grafanaHttpAddr;
   grafanaUrl = "http://${grafanaHost}:${toString config.services.grafana.settings.server.http_port}";
 
+  # First path segments of what nginx's /victoria/ lets through: the 3
+  # backends' read APIs plus the MCP routes, plus operator additions.
+  readPrefixes = [
+    "metrics"
+    "logs"
+    "traces"
+    "mcp"
+  ]
+  ++ cfg.extraReadPaths;
+
   # Grafana's own official sub-path config
   # (grafana.com/tutorials/run-grafana-behind-a-proxy/), fetched live and
   # followed verbatim per docs/decisions/0016 -- never improvised. Shared
@@ -113,17 +123,21 @@ in
         # breaking change for any such operator config, same severity as
         # changing an option's own name.
         locations = {
-          "/victoria/" = {
-            # vmauth has no subpath awareness of its own -- its url_map
-            # regexes are written assuming "/victoria/" is already
-            # stripped (nixosModule/victoriaStack/vmauth.nix), so this
-            # keeps the trailing-slash-stripping proxy_pass behavior.
-            proxyPass = "http://${topCfg.vmauth.listenAddress}/";
+          # Reads only (docs/decisions/0025): the read prefixes are
+          # proxied to vmauth, with "/victoria" stripped by hand -- a
+          # regex location cannot use proxy_pass's own URI rewriting,
+          # which is what the old single "/victoria/" prefix location
+          # relied on. vmauth has no subpath awareness of its own: its
+          # url_map regexes are written assuming "/victoria" is already
+          # gone (nixosModule/victoriaStack/vmauth.nix).
+          "~ ^/victoria/(${lib.concatStringsSep "|" readPrefixes})(/|$)" = {
+            proxyPass = "http://${topCfg.vmauth.listenAddress}";
 
             # Mirrors vmauth's own tuning, never an independently-chosen
             # nginx default (docs/decisions/0016 -- "nginx mirrors what
             # it fronts").
             extraConfig = ''
+              rewrite ^/victoria/(.*) /$1 break;
               proxy_connect_timeout ${topCfg.vmauth.idleConnTimeout};
               proxy_send_timeout ${topCfg.vmauth.idleConnTimeout};
               proxy_read_timeout ${topCfg.vmauth.idleConnTimeout};
@@ -137,6 +151,11 @@ in
               client_max_body_size 0;
               ${clientIpHeaders}
             '';
+          };
+
+          # Everything else under /victoria/ -- notably every write path.
+          "/victoria/" = {
+            return = "404";
           };
         }
         // lib.optionalAttrs topCfg.grafana.enable {

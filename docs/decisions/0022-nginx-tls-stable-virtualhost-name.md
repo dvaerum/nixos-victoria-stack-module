@@ -1,5 +1,11 @@
 # 0022: nginx TLS is an operator concern against a stable virtualHost name
 
+## Status
+
+Still true for nginx. vmauth's own public HTTPS door ([0025](./0025-vmauth-public-write-doors.md))
+is a separate, deliberate exception: it takes a cert/key (or an existing
+ACME cert name) because collectors' writes bypass nginx entirely.
+
 ## Decision
 
 This module adds no TLS/ACME option of its own for the `nginx` reverse

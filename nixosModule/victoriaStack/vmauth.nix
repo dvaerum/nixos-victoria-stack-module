@@ -11,6 +11,37 @@ let
 
   anyBackendEnabled = topCfg.metrics.enable || topCfg.logs.enable || topCfg.traces.enable;
 
+  # `ip:port`, bracketing a bare IPv6 literal.
+  hostPort =
+    ip: port: if lib.hasInfix ":" ip then "[${ip}]:${toString port}" else "${ip}:${toString port}";
+
+  # The ACME cert directory this module reads when https.acmeCertName is set.
+  acmeDir = "/var/lib/acme/${cfg.https.acmeCertName}";
+  httpsCertSource =
+    if cfg.https.acmeCertName != null then "${acmeDir}/fullchain.pem" else cfg.https.certFile;
+  httpsKeySource = if cfg.https.acmeCertName != null then "${acmeDir}/key.pem" else cfg.https.keyFile;
+
+  # Every listener in positional order: the -tls/-tlsCertFile/-tlsKeyFile
+  # array flags apply to -httpListenAddr by INDEX (confirmed in vmauth's
+  # source), so all four flag lists are generated from this one list with
+  # identical length. With both doors off this is exactly the single
+  # internal listener and no -tls flags at all, i.e. the unit is unchanged.
+  listeners = [
+    {
+      addr = cfg.listenAddress;
+      tls = false;
+    }
+  ]
+  ++ lib.optional cfg.https.enable {
+    addr = hostPort cfg.https.ipAddress cfg.https.port;
+    tls = true;
+  }
+  ++ lib.optional cfg.http.enable {
+    addr = hostPort cfg.http.ipAddress cfg.http.port;
+    tls = false;
+  };
+  anyTls = lib.any (l: l.tls) listeners;
+
   # vmauth's own `headers`/`response_headers` url_map keys -- applied
   # uniformly to every entry this module builds (read, write, and MCP
   # routes alike) when configured, omitted entirely otherwise.
@@ -345,7 +376,23 @@ in
           entries:
           lib.any (e: lib.any (p: lib.hasPrefix ".*" (lib.removePrefix "/" p)) (e.src_paths or [ ])) entries;
       in
-      lib.optional (matchesEverything cfg.extraWriteUrlMap) ''
+      # LoadCredential= copies the cert at start, so vmauth only sees a
+      # renewed one if it is restarted: the ACME cert must list it.
+      lib.optional
+        (
+          cfg.https.enable
+          && cfg.https.acmeCertName != null
+          && !(lib.elem "vmauth.service" (
+            (config.security.acme.certs.${cfg.https.acmeCertName} or { }).reloadServices or [ ]
+          ))
+        )
+        ''
+          services.victoriaStack.vmauth.https.acmeCertName = "${cfg.https.acmeCertName}",
+          but security.acme.certs."${cfg.https.acmeCertName}".reloadServices does
+          not include "vmauth.service" -- vmauth would keep serving the old
+          certificate after a renewal until it is restarted.
+        ''
+      ++ lib.optional (matchesEverything cfg.extraWriteUrlMap) ''
         services.victoriaStack.vmauth.extraWriteUrlMap has a src_paths
         pattern that matches every path (it starts with a wildcard) --
         every write-tier request would be routed by that entry.
@@ -377,7 +424,15 @@ in
       # "systemd forked the process".
       ++ lib.optional topCfg.metrics.mcp.enable "mcp-victoriametrics.service"
       ++ lib.optional topCfg.logs.mcp.enable "mcp-victorialogs.service"
-      ++ lib.optional topCfg.traces.mcp.enable "mcp-victoriatraces.service";
+      ++ lib.optional topCfg.traces.mcp.enable "mcp-victoriatraces.service"
+      # The cert files only exist once ACME has issued them (a first boot
+      # would otherwise fail LoadCredential= and crash-loop until it has).
+      ++ lib.optional (
+        cfg.https.enable && cfg.https.acmeCertName != null
+      ) "acme-${cfg.https.acmeCertName}.service";
+      wants = lib.optional (
+        cfg.https.enable && cfg.https.acmeCertName != null
+      ) "acme-${cfg.https.acmeCertName}.service";
       wantedBy = [ "multi-user.target" ];
 
       # vmauth has no documented HTTP health endpoint of its own to poll
@@ -414,7 +469,11 @@ in
           ++ lib.optional (cfg.readTokensFile != null) "read-tokens:${cfg.readTokensFile}"
           ++ lib.optional (cfg.writeTokensFile != null) "write-tokens:${cfg.writeTokensFile}"
           ++ lib.optional (cfg.backendTls.certFile != null) "backend-tls-cert:${cfg.backendTls.certFile}"
-          ++ lib.optional (cfg.backendTls.keyFile != null) "backend-tls-key:${cfg.backendTls.keyFile}";
+          ++ lib.optional (cfg.backendTls.keyFile != null) "backend-tls-key:${cfg.backendTls.keyFile}"
+          ++ lib.optionals cfg.https.enable [
+            "https-cert:${httpsCertSource}"
+            "https-key:${httpsKeySource}"
+          ];
 
         Environment = [
           "READ_URL_MAP_FILE=${readUrlMapFile}"
@@ -436,7 +495,14 @@ in
           [
             "${cfg.package}/bin/vmauth"
             "-auth.config=/run/vmauth/config.json"
-            "-httpListenAddr=${cfg.listenAddress}"
+          ]
+          ++ map (l: "-httpListenAddr=${l.addr}") listeners
+          ++ lib.optionals anyTls (
+            map (l: "-tls=${lib.boolToString l.tls}") listeners
+            ++ map (l: "-tlsCertFile=${lib.optionalString l.tls "%d/https-cert"}") listeners
+            ++ map (l: "-tlsKeyFile=${lib.optionalString l.tls "%d/https-key"}") listeners
+          )
+          ++ [
             "-http.idleConnTimeout=${cfg.idleConnTimeout}"
           ]
           ++ lib.optional (

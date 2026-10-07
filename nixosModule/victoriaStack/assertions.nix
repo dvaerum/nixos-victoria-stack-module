@@ -11,6 +11,12 @@ let
     ++ lib.optional cfg.logs.enable cfg.logs.listenAddress
     ++ lib.optional cfg.traces.enable cfg.traces.listenAddress
     ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled) cfg.vmauth.listenAddress
+    ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled && cfg.vmauth.https.enable) (
+      "${cfg.vmauth.https.ipAddress}:${toString cfg.vmauth.https.port}"
+    )
+    ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled && cfg.vmauth.http.enable) (
+      "${cfg.vmauth.http.ipAddress}:${toString cfg.vmauth.http.port}"
+    )
     ++ lib.optional (cfg.metrics.enable && cfg.metrics.mcp.enable) cfg.metrics.mcp.listenAddress
     ++ lib.optional (cfg.logs.enable && cfg.logs.mcp.enable) cfg.logs.mcp.listenAddress
     ++ lib.optional (cfg.traces.enable && cfg.traces.mcp.enable) cfg.traces.mcp.listenAddress;
@@ -110,6 +116,36 @@ in
           it never enables the Grafana service itself; without it there is
           nothing to provision datasources into, and nginx would otherwise
           reverse-proxy "/grafana/" at a service that was never started.
+        '';
+      }
+      {
+        assertion =
+          !cfg.vmauth.https.enable
+          || (
+            let
+              filesSet = cfg.vmauth.https.certFile != null || cfg.vmauth.https.keyFile != null;
+              filesBoth = cfg.vmauth.https.certFile != null && cfg.vmauth.https.keyFile != null;
+              acme = cfg.vmauth.https.acmeCertName != null;
+            in
+            if acme then !filesSet else filesBoth
+          );
+        message = ''
+          services.victoriaStack.vmauth.https.enable needs a certificate:
+          set BOTH vmauth.https.certFile and vmauth.https.keyFile, OR
+          vmauth.https.acmeCertName -- not both, and not just one of the
+          two files.
+        '';
+      }
+      {
+        assertion =
+          !(cfg.vmauth.https.enable && cfg.vmauth.https.acmeCertName != null)
+          || (config.security.acme.certs ? ${cfg.vmauth.https.acmeCertName});
+        message = ''
+          services.victoriaStack.vmauth.https.acmeCertName names
+          "${toString cfg.vmauth.https.acmeCertName}", but there is no
+          security.acme.certs."${toString cfg.vmauth.https.acmeCertName}" entry --
+          this module reads an ACME cert the operator already defines, it
+          never creates one.
         '';
       }
       {

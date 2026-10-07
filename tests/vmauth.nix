@@ -1782,4 +1782,239 @@ in
       metrics.enable = true;
     };
   };
+
+  # --- public write doors (vmauth.https / vmauth.http) ---
+
+  write-doors-listener-flags-are-aligned-for-every-mode =
+    pkgs.runCommand "vmauth-write-doors-listener-flags" { }
+      (
+        let
+          eval =
+            vmauth:
+            evalWith {
+              services.victoriaStack = {
+                metrics.enable = true;
+                inherit vmauth;
+              };
+            };
+          execStart = e: e.config.systemd.services.vmauth.serviceConfig.ExecStart;
+          has = needle: e: lib.hasInfix needle (execStart e);
+          certs = {
+            certFile = "/run/secrets/door.pem";
+            keyFile = "/run/secrets/door.key";
+          };
+          none = eval { };
+          httpsOnly = eval {
+            https = {
+              enable = true;
+            }
+            // certs;
+          };
+          both = eval {
+            https = {
+              enable = true;
+            }
+            // certs;
+            http = {
+              enable = true;
+              ipAddress = "127.0.0.1";
+            };
+          };
+          v6 = eval {
+            https = {
+              enable = true;
+              ipAddress = "::";
+              port = 9443;
+            }
+            // certs;
+          };
+          httpOnly = eval { http.enable = true; };
+          lc = e: e.config.systemd.services.vmauth.serviceConfig.LoadCredential;
+          checks = {
+            "default: exactly one listener, no -tls flags (unchanged from before)" =
+              has "-httpListenAddr=127.0.0.1:4204" none && !(has "-tls" none) && !(has "https-cert" none);
+            "https only: internal + https listeners, arrays aligned" =
+              has "-httpListenAddr=127.0.0.1:4204 -httpListenAddr=0.0.0.0:8443" httpsOnly
+              && has "-tls=false -tls=true" httpsOnly
+              && has "-tlsCertFile= -tlsCertFile=%d/https-cert" httpsOnly
+              && has "-tlsKeyFile= -tlsKeyFile=%d/https-key" httpsOnly;
+            "https only: cert and key staged as credentials, not store paths" =
+              lib.elem "https-cert:/run/secrets/door.pem" (lc httpsOnly)
+              && lib.elem "https-key:/run/secrets/door.key" (lc httpsOnly);
+            "https + loopback http: three aligned listeners" =
+              has "-httpListenAddr=127.0.0.1:4204 -httpListenAddr=0.0.0.0:8443 -httpListenAddr=127.0.0.1:8080" both
+              && has "-tls=false -tls=true -tls=false" both
+              && has "-tlsCertFile= -tlsCertFile=%d/https-cert -tlsCertFile=" both
+              && has "-tlsKeyFile= -tlsKeyFile=%d/https-key -tlsKeyFile=" both;
+            "http only: plain second listener, no TLS flags needed" =
+              has "-httpListenAddr=127.0.0.1:4204 -httpListenAddr=0.0.0.0:8080" httpOnly
+              && !(has "-tls" httpOnly);
+            "IPv6 address is bracketed" = has "-httpListenAddr=[::]:9443" v6;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "write-door flags broken: ${builtins.toJSON (builtins.attrNames failed)}\n${execStart both}"
+      );
+
+  write-doors-assertions = pkgs.runCommand "vmauth-write-doors-assertions" { } (
+    let
+      # Own messages only: the bare eval harness never satisfies the
+      # unrelated base-NixOS assertions (root fs, bootloader).
+      failedFor =
+        vmauth:
+        lib.filter (lib.hasInfix "services.victoriaStack") (
+          map (a: a.message) (
+            builtins.filter (a: !a.assertion)
+              (evalWith {
+                services.victoriaStack = {
+                  metrics.enable = true;
+                  inherit vmauth;
+                };
+              }).config.assertions
+          )
+        );
+      fires = sub: vmauth: lib.any (lib.hasInfix sub) (failedFor vmauth);
+      certs = {
+        certFile = "/run/secrets/door.pem";
+        keyFile = "/run/secrets/door.key";
+      };
+      checks = {
+        "https without any certificate" = fires "vmauth.https" { https.enable = true; };
+        "certFile without keyFile" = fires "vmauth.https" {
+          https = {
+            enable = true;
+            certFile = "/run/secrets/door.pem";
+          };
+        };
+        "both files AND an ACME name" = fires "vmauth.https" {
+          https = {
+            enable = true;
+            acmeCertName = "example.test";
+          }
+          // certs;
+        };
+        "ACME name that the operator never defined" = fires "example.test" {
+          https = {
+            enable = true;
+            acmeCertName = "example.test";
+          };
+        };
+        "http and https on the same ip:port" = fires "same listenAddress" {
+          https = {
+            enable = true;
+            port = 8080;
+          }
+          // certs;
+          http = {
+            enable = true;
+            ipAddress = "0.0.0.0";
+          };
+        };
+        "a valid https door raises nothing" =
+          failedFor {
+            https = {
+              enable = true;
+            }
+            // certs;
+          } == [ ];
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "write-door assertions broken: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # Both doors for real: HTTPS on 8443 with an operator-supplied cert (this
+  # also proves the positional -tls array with empty slots parses), plain
+  # HTTP on loopback 8080 (the tailscale-serve shape), and the internal
+  # 4204 listener still plain.
+  write-doors-https-and-loopback-http-boot = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-write-doors";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          writeTokensFile = "${writeTokensFixture}";
+          https = {
+            enable = true;
+            certFile = "${selfSignedCert}/cert.pem";
+            keyFile = "${selfSignedCert}/key.pem";
+          };
+          http = {
+            enable = true;
+            ipAddress = "127.0.0.1";
+          };
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(8443)
+      machine.wait_for_open_port(8080)
+      machine.wait_for_open_port(4201)
+
+      machine.succeed("${otlpMetric} victoria_stack_write_doors_metric 1 > /tmp/otlp.bin")
+      post = (
+          "curl -sf -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
+          "-X POST -H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+      )
+      path = "/opentelemetry/v1/metrics"
+
+      # HTTPS door: verified against the CA, and refused without credentials.
+      machine.succeed(post + "--cacert ${selfSignedCert}/cert.pem 'https://127.0.0.1:8443" + path + "'")
+      machine.fail("curl -sf --max-time 5 -X POST --data-binary x 'https://127.0.0.1:8443" + path + "'")
+      machine.fail(post + "--max-time 5 'https://127.0.0.1:8443" + path + "'")  # no CA -> verification fails
+
+      # Plain loopback HTTP door and the unchanged internal listener.
+      machine.succeed(post + "'http://127.0.0.1:8080" + path + "'")
+      machine.succeed(post + "'http://127.0.0.1:4204" + path + "'")
+      # TLS is per listener: the internal one must NOT speak TLS.
+      machine.fail("curl -sf --max-time 5 --cacert ${selfSignedCert}/cert.pem 'https://127.0.0.1:4204/'")
+
+      # Reachability matches the config: 8443 on every interface, 8080 only on loopback.
+      listeners = machine.succeed("ss -Hltn")
+      assert "0.0.0.0:8443" in listeners or "*:8443" in listeners, listeners
+      assert "127.0.0.1:8080" in listeners, listeners
+      assert "0.0.0.0:8080" not in listeners and "*:8080" not in listeners, listeners
+
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_write_doors_metric' | grep -q '\"value\"'"
+      )
+    '';
+  };
+
+  write-door-http-open-on-all-interfaces = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-write-door-http-open";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          writeTokensFile = "${writeTokensFixture}";
+          http.enable = true; # 0.0.0.0:8080
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(8080)
+      listeners = machine.succeed("ss -Hltn")
+      assert "0.0.0.0:8080" in listeners or "*:8080" in listeners, listeners
+      assert "8443" not in listeners, listeners
+      machine.fail("curl -sf --max-time 5 -X POST --data-binary x 'http://127.0.0.1:8080/opentelemetry/v1/metrics'")  # no token
+    '';
+  };
 }

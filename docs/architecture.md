@@ -18,6 +18,12 @@ component's own choices; this page is purely the connective picture.
 │   .logs                      │ 127.0.0.1:4202      │ No                     │
 │   .traces                     │ 127.0.0.1:4203      │ No                     │
 │   .vmauth                     │ 127.0.0.1:4204      │ No -- see note below   │
+│   .vmauth.https (opt-in)      │ 0.0.0.0:8443        │ YES once enabled --    │
+│                                │                     │ the collectors' write  │
+│                                │                     │ door (ADR 0025)        │
+│   .vmauth.http (opt-in)       │ 0.0.0.0:8080        │ As configured: open,   │
+│                                │ (or 127.0.0.1)      │ or loopback for        │
+│                                │                     │ `tailscale serve`      │
 │   .metrics.mcp                │ 127.0.0.1:4205      │ No                     │
 │   .logs.mcp                   │ 127.0.0.1:4206      │ No                     │
 │   .traces.mcp                 │ 127.0.0.1:4207      │ No                     │
@@ -37,6 +43,12 @@ component's own choices; this page is purely the connective picture.
 │                                │                     │ config.alloy.nix        │
 └────────────────────────────┴───────────────────┴──────────────────────┘
 ```
+
+**Writes and reads use different doors** (docs/decisions/0025): collectors
+write to vmauth's own `https` (:8443) / `http` (:8080) listeners; nginx
+(:80/:443) fronts reads and Grafana only, and answers 404 to any write path
+under `/victoria/`. vmauth's listeners share one routing config, so the
+public doors also accept (credentialed) reads.
 
 **Important note on vmauth's default:** vmauth is the one service in
 `victoriaStack` whose entire *purpose* is accepting traffic from other
@@ -120,8 +132,9 @@ about vmauth being "the gateway" makes this happen automatically.
   entire purpose is being the externally-reachable front door, and even
   that requires `services.victoriaStack.nginx.enable = true` to exist at
   all.
-- **nginx speaks plain HTTP only, by design** — no server-side TLS
-  termination exists anywhere in this diagram. `services.nginx.
+- **nginx speaks plain HTTP only, by design** — `services.nginx.
   virtualHosts."victoria-stack"` is a stable extension point (ADR 0022)
   an operator adds `forceSSL`/`enableACME` (or any other real nginx TLS
-  option) to directly; this module itself never does.
+  option) to directly; this module itself never does. The one TLS this
+  module does configure is vmauth's own opt-in write door (`vmauth.https`,
+  ADR 0025), which takes a cert/key pair or an existing ACME cert name.

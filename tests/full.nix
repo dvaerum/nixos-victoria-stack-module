@@ -259,6 +259,13 @@ in
             writeTokensFile = lib.mkForce "${writeTokensFixture}";
           };
           nginx.domain = "stack";
+          # Collectors write to vmauth's own HTTPS door; nginx on 80/443
+          # is reads and Grafana only (docs/decisions/0025).
+          vmauth.https = {
+            enable = true;
+            certFile = "${stackSelfSignedCert}/cert.pem";
+            keyFile = "${stackSelfSignedCert}/key.pem";
+          };
         };
         services.nginx.virtualHosts."victoria-stack" = {
           addSSL = true;
@@ -268,6 +275,7 @@ in
         networking.firewall.allowedTCPPorts = [
           80
           443
+          8443
         ];
         services.grafana.settings.security = {
           secret_key = lib.mkForce "$__file{${grafanaSecretKeyFixture}}";
@@ -283,11 +291,7 @@ in
         metrics.enable = true;
         logs.enable = true;
         traces.enable = true;
-        # Explicit :443 on purpose: with a path but no port,
-        # systemd-journal-upload appends its default :19532 after the
-        # path ("https://stack/victoria/insert/journald:19532/upload")
-        # and logs fail with a 400.
-        writeEndpoint = "https://stack:443/victoria";
+        writeEndpoint = "https://stack:8443";
         writeTokenFile = "${collectorWriteTokenFixture}";
         hostType = "edge-device";
         alloy.tlsCaFile = "${stackSelfSignedCert}/cert.pem";
@@ -315,7 +319,7 @@ in
       tls = "--cacert ${stackSelfSignedCert}/cert.pem --resolve stack:443:127.0.0.1"
       base = "https://stack/victoria"
 
-      # Remote collector: all 3 signals over verified TLS through nginx.
+      # Remote collector: all 3 signals over verified TLS, straight to the vmauth HTTPS door.
       collector.succeed("logger --tag victoria-maximal 'victoria_stack_maximal_log_marker'")
       collector.succeed(
           "now=$(date +%s%N); "

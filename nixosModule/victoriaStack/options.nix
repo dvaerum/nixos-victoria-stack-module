@@ -406,6 +406,78 @@ in
         '';
       };
 
+      # Public write doors (docs/decisions/0025). `listenAddress` above stays
+      # the internal plain listener nginx and local callers use; these are
+      # additional listeners on the same vmauth process. They share vmauth's
+      # one routing/auth config, so they ALSO accept reads (still behind
+      # credentials) -- restrict reachability with a firewall or Tailscale if
+      # that matters.
+      https = {
+        enable = mkEnableOption "a public HTTPS listener on vmauth, meant for collectors' writes (`writeEndpoint = \"https://host:<port>\"`)";
+
+        ipAddress = mkOption {
+          type = types.str;
+          default = "0.0.0.0";
+          description = "Address the HTTPS listener binds. An IPv6 address (contains `:`) is bracketed automatically.";
+        };
+
+        port = mkOption {
+          type = types.port;
+          default = 8443;
+          description = "Port of the HTTPS listener.";
+        };
+
+        certFile = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = ''
+            Path (a plain string, never a Nix path literal -- same reason as
+            `writeTokensFile`) to the PEM certificate chain. Staged through
+            systemd `LoadCredential=`, so it never enters the Nix store.
+            Set together with `keyFile`, or use `acmeCertName` instead.
+            vmauth is a copy of the file: restart it after replacing the
+            file (ACME renewals do this for you, see `acmeCertName`).
+          '';
+        };
+
+        keyFile = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Path (plain string) to the PEM private key matching `certFile`.";
+        };
+
+        acmeCertName = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          example = "victoria-stack.example.com";
+          description = ''
+            Reuse a certificate NixOS already manages: the name of an entry in
+            `security.acme.certs` (typically the one nginx's `enableACME`
+            uses). The operator defines the entry; this module reads
+            `fullchain.pem`/`key.pem` from its directory and orders vmauth
+            after it. Add `"vmauth.service"` to that cert's `reloadServices`
+            so renewals restart vmauth (a warning says so if it is missing).
+            Mutually exclusive with `certFile`/`keyFile`.
+          '';
+        };
+      };
+
+      http = {
+        enable = mkEnableOption "a second, plain-HTTP public listener on vmauth (e.g. `0.0.0.0` open for writes, or `127.0.0.1` as a target for `tailscale serve`)";
+
+        ipAddress = mkOption {
+          type = types.str;
+          default = "0.0.0.0";
+          description = "Address the plain-HTTP listener binds. `127.0.0.1` keeps it local (a place for `tailscale serve` to forward into). An IPv6 address is bracketed automatically.";
+        };
+
+        port = mkOption {
+          type = types.port;
+          default = 8080;
+          description = "Port of the plain-HTTP listener.";
+        };
+      };
+
       extraFlags = mkOption {
         type = types.listOf types.str;
         default = [ ];
@@ -648,6 +720,22 @@ in
           default) serves on plain IP/hostname with no domain-specific
           behavior -- this module deliberately has no ACME/TLS opinion
           either way.
+        '';
+      };
+
+      extraReadPaths = mkOption {
+        type = types.listOf (types.strMatching "[A-Za-z0-9_.-]+");
+        default = [ ];
+        example = [ "custom-route" ];
+        description = ''
+          nginx's `/victoria/` is reads-only (docs/decisions/0025): only
+          `/victoria/{metrics,logs,traces,mcp}/...` is proxied to vmauth,
+          everything else under it is a 404. List the FIRST path segment
+          of any additional READ route you added through
+          `vmauth.extraReadUrlMap` (e.g. `"custom-route"` for
+          `/victoria/custom-route/...`) to let it through too. Writes
+          belong on vmauth's own doors (`vmauth.https` / `vmauth.http`),
+          not here.
         '';
       };
     };

@@ -28,6 +28,10 @@ let
 
   secretKeyFixture = pkgs.writeText "grafana-secret-key" "test-fixture-secret-key-not-real";
   adminPasswordFixture = pkgs.writeText "nginx-test-admin-password" "nginx-admin-password";
+  writeTokensFixture = pkgs.writeText "nginx-test-write-tokens.yaml" ''
+    tokens:
+      - token: nginx-write-token
+  '';
 
   # Pure eval, no container boot needed -- confirms the rendered nginx
   # config shape directly (docs/decisions/0016's "mirror what it fronts"
@@ -53,6 +57,17 @@ let
     ];
   };
   vhost = evaluated.config.services.nginx.virtualHosts."victoria-stack";
+
+  # /victoria/ is reads-only: the proxying lives on one regex location
+  # allow-listing the read prefixes; the plain "/victoria/" location is the
+  # 404 catch-all for everything else (docs/decisions/0025).
+  readLocationOf =
+    e:
+    let
+      locs = e.config.services.nginx.virtualHosts."victoria-stack".locations;
+    in
+    locs.${lib.findFirst (lib.hasPrefix "~ ^/victoria/") "MISSING" (builtins.attrNames locs)};
+  victoriaReadLocation = readLocationOf evaluated;
 in
 {
   # A real, previously-undetected regression found while implementing
@@ -87,7 +102,7 @@ in
     pkgs.runCommand "nginx-victoria-location-mirrors-vmauth" { }
       (
         let
-          extraConfig = vhost.locations."/victoria/".extraConfig or "";
+          extraConfig = victoriaReadLocation.extraConfig or "";
           idleConnTimeout = evaluated.config.services.victoriaStack.vmauth.idleConnTimeout;
           checks = {
             "proxy_connect_timeout mirrors vmauth.idleConnTimeout" =
@@ -120,8 +135,7 @@ in
               vmauth.idleConnTimeout = "45s";
             };
           };
-          extraConfig =
-            custom.config.services.nginx.virtualHosts."victoria-stack".locations."/victoria/".extraConfig;
+          extraConfig = (readLocationOf custom).extraConfig;
           checks = lib.genAttrs [ "connect" "send" "read" ] (
             kind: lib.hasInfix "proxy_${kind}_timeout 45s;" extraConfig
           );
@@ -139,8 +153,11 @@ in
     pkgs.runCommand "nginx-forwards-real-client-ip" { }
       (
         let
+          readLocationName = lib.findFirst (lib.hasPrefix "~ ^/victoria/") "MISSING" (
+            builtins.attrNames vhost.locations
+          );
           locs = [
-            "/victoria/"
+            readLocationName
             "/grafana/"
             "/grafana/api/live/"
           ];
@@ -212,7 +229,7 @@ in
         metrics.enable = true;
         grafana.enable = true;
         nginx.enable = true;
-        vmauth.requireAuthForWrites = false;
+        vmauth.adminPasswordFile = "${adminPasswordFixture}";
       };
       services.grafana = {
         enable = true;
@@ -244,20 +261,11 @@ in
       machine.wait_until_succeeds("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
 
       # /victoria/ reaches vmauth through nginx, which in turn reaches the
-      # metrics backend -- confirmed via the open (auth-disabled) write
-      # path, the simplest reachability check that doesn't need a
-      # credential. Real OTLP protobuf, not plaintext: VictoriaMetrics'
-      # actual /opentelemetry/v1/metrics handler rejects both a bare
-      # "/opentelemetry" path and non-protobuf bodies (confirmed directly
-      # against a real instance -- see otlpMetricGenerator's own comment
-      # in tests/lib.nix).
+      # metrics backend -- a credentialed read, since /victoria/ is
+      # reads-only (docs/decisions/0025; writes go to vmauth's own doors).
       machine.succeed(
-          "${otlpMetric} victoria_stack_nginx_test_metric 1 > /tmp/otlp.bin"
-      )
-      machine.succeed(
-          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' "
-          "--data-binary @/tmp/otlp.bin "
-          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
+          "curl -sf -u admin:nginx-admin-password "  # gitleaks:allow
+          "'http://127.0.0.1:80/victoria/metrics/api/v1/labels'"
       )
     '';
   };
@@ -314,7 +322,7 @@ in
           enable = true;
           domain = "victoria-stack-test.example.com";
         };
-        vmauth.requireAuthForWrites = false;
+        vmauth.adminPasswordFile = "${adminPasswordFixture}";
       };
       services.grafana = {
         enable = true;
@@ -355,12 +363,8 @@ in
           "'http://127.0.0.1:80/grafana/login' | grep -qi grafana"
       )
       machine.succeed(
-          "${otlpMetric} victoria_stack_nginx_test_metric 1 > /tmp/otlp.bin"
-      )
-      machine.succeed(
-          "curl -sf -X POST -H 'Host: victoria-stack-test.example.com' "
-          "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
-          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
+          "curl -sf -H 'Host: victoria-stack-test.example.com' -u admin:nginx-admin-password "  # gitleaks:allow
+          "'http://127.0.0.1:80/victoria/metrics/api/v1/labels'"
       )
     '';
   };
@@ -374,7 +378,7 @@ in
         metrics.enable = true;
         nginx.enable = true;
         # grafana.enable left at its default (false).
-        vmauth.requireAuthForWrites = false;
+        vmauth.adminPasswordFile = "${adminPasswordFixture}";
       };
     };
 
@@ -399,12 +403,8 @@ in
       # /victoria/ must still work on its own (no grafana.nix location
       # merged in to clobber or interfere with it).
       machine.succeed(
-          "${otlpMetric} victoria_stack_nginx_test_metric 1 > /tmp/otlp.bin"
-      )
-      machine.succeed(
-          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' "
-          "--data-binary @/tmp/otlp.bin "
-          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
+          "curl -sf -u admin:nginx-admin-password "  # gitleaks:allow
+          "'http://127.0.0.1:80/victoria/metrics/api/v1/labels'"
       )
 
       # /grafana/ must not exist at all when grafana.enable = false --
@@ -435,7 +435,7 @@ in
           domain = "victoria-stack-test.example.com";
         };
         # grafana.enable left at its default (false).
-        vmauth.requireAuthForWrites = false;
+        vmauth.adminPasswordFile = "${adminPasswordFixture}";
       };
     };
 
@@ -449,20 +449,16 @@ in
       machine.wait_for_open_port(4201)
 
       machine.succeed(
-          "${otlpMetric} victoria_stack_nginx_test_metric 1 > /tmp/otlp.bin"
-      )
-      machine.succeed(
-          "curl -sf -X POST -H 'Host: victoria-stack-test.example.com' "
-          "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
-          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
+          "curl -sf -H 'Host: victoria-stack-test.example.com' -u admin:nginx-admin-password "  # gitleaks:allow
+          "'http://127.0.0.1:80/victoria/metrics/api/v1/labels'"
       )
 
-      # The default (no Host header / wrong Host) must NOT reach this
-      # virtualHost -- it's name-based now, not the catch-all default.
-      machine.fail(
-          "curl -sf -X POST --data-binary 'x 1' "
-          "'http://127.0.0.1:80/victoria/opentelemetry'"
-      )
+      # NOT asserted: that a request with a different Host is refused. It
+      # isn't -- with a single virtualHost nginx serves unmatched Hosts from
+      # it as the default server, so `domain` sets server_name (checked by
+      # nginx-domain-sets-server-name) but is no access control. An earlier
+      # version of this test claimed otherwise and only passed because its
+      # probe carried no credentials and got a 401 anyway.
 
       # /grafana/ must not exist at all here either.
       status = machine.succeed(
@@ -515,7 +511,7 @@ in
       services.victoriaStack = {
         metrics.enable = true;
         nginx.enable = true;
-        vmauth.requireAuthForWrites = false;
+        vmauth.adminPasswordFile = "${adminPasswordFixture}";
       };
       # Operator-added TLS config, directly on the stable virtualHost
       # name -- not anything this module itself configures.
@@ -536,23 +532,18 @@ in
       machine.wait_for_unit("victoriametrics.service")
       machine.wait_for_open_port(4201)
 
-      machine.succeed(
-          "${otlpMetric} victoria_stack_nginx_tls_test_metric 1 > /tmp/otlp.bin"
-      )
 
       # Plain HTTP still works, unaffected by the added TLS config.
       machine.succeed(
-          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' "
-          "--data-binary @/tmp/otlp.bin "
-          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
+          "curl -sf -u admin:nginx-admin-password "  # gitleaks:allow
+          "'http://127.0.0.1:80/victoria/metrics/api/v1/labels'"
       )
 
       # HTTPS reaches the exact same backend through the same
       # virtualHost/location configuration this module defines.
       machine.succeed(
-          "curl -sf --cacert ${selfSignedCert}/cert.pem -X POST "
-          "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
-          "'https://127.0.0.1:443/victoria/opentelemetry/v1/metrics'"
+          "curl -sf --cacert ${selfSignedCert}/cert.pem -u admin:nginx-admin-password "  # gitleaks:allow
+          "'https://127.0.0.1:443/victoria/metrics/api/v1/labels'"
       )
     '';
   };
@@ -610,7 +601,7 @@ in
         metrics.enable = true;
         vmauth = {
           listenAddress = "127.0.0.1:19999";
-          requireAuthForWrites = false;
+          adminPasswordFile = "${adminPasswordFixture}";
         };
         nginx.enable = true;
       };
@@ -627,11 +618,8 @@ in
 
       machine.fail("curl -sf --max-time 3 'http://127.0.0.1:4204/'")
       machine.succeed(
-          "${otlpMetric} victoria_stack_nginx_listen_override_metric 1 > /tmp/otlp.bin"
-      )
-      machine.succeed(
-          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
-          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
+          "curl -sf -u admin:nginx-admin-password "  # gitleaks:allow
+          "'http://127.0.0.1:80/victoria/metrics/api/v1/labels'"
       )
     '';
   };
@@ -670,6 +658,106 @@ in
           f"curl -s -o /dev/null -w '%{{http_code}}' {host} -u admin:wrong-password '{url}'"  # gitleaks:allow
       )
       assert wrong == "401", f"expected 401 with a wrong password via the named vhost, got {wrong}"
+    '';
+  };
+
+  # --- /victoria/ is reads-only ---
+
+  nginx-victoria-allows-only-read-prefixes-and-404s-the-rest =
+    pkgs.runCommand "nginx-victoria-reads-only" { }
+      (
+        let
+          read = victoriaReadLocation;
+          catchAll = vhost.locations."/victoria/";
+          custom = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              nginx = {
+                enable = true;
+                extraReadPaths = [ "custom-route" ];
+              };
+            };
+          };
+          customRegexName = lib.findFirst (lib.hasPrefix "~ ^/victoria/") "" (
+            builtins.attrNames custom.config.services.nginx.virtualHosts."victoria-stack".locations
+          );
+          checks = {
+            "read location proxies to vmauth" =
+              lib.hasInfix "proxy_pass" (read.extraConfig or "") || (read ? proxyPass);
+            "read location strips the /victoria prefix" = lib.hasInfix "rewrite ^/victoria/(.*) /$1 break;" (
+              read.extraConfig or ""
+            );
+            "catch-all /victoria/ answers 404 and never proxies" =
+              (catchAll.return or null) == "404" && (catchAll.proxyPass or null) == null;
+            "extraReadPaths widens the allow-list" = lib.hasInfix "custom-route" customRegexName;
+          };
+          names = lib.findFirst (lib.hasPrefix "~ ^/victoria/") "" (builtins.attrNames vhost.locations);
+          allowList = {
+            "metrics" = lib.hasInfix "metrics" names;
+            "logs" = lib.hasInfix "logs" names;
+            "traces" = lib.hasInfix "traces" names;
+            "mcp" = lib.hasInfix "mcp" names;
+            "no write prefixes" = !(lib.hasInfix "opentelemetry" names) && !(lib.hasInfix "insert" names);
+          };
+          failed = lib.filterAttrs (_: ok: !ok) (checks // allowList);
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "nginx /victoria/ is not reads-only: ${builtins.toJSON (builtins.attrNames failed)} (regex location: ${names})"
+      );
+
+  # For real: a read through /victoria/ works, a WRITE through it is 404 --
+  # even with a valid write token -- while the same write succeeds on
+  # vmauth's own internal port.
+  nginx-victoria-serves-reads-and-refuses-writes = pkgs.testers.nixosTest {
+    name = "victoria-stack-nginx-reads-only";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        nginx.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          writeTokensFile = "${writeTokensFixture}";
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("nginx.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(80)
+      machine.wait_for_open_port(4204)
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
+
+      machine.succeed(
+          "curl -sf -u admin:nginx-admin-password "  # gitleaks:allow
+          "'http://127.0.0.1:80/victoria/metrics/api/v1/labels'"
+      )
+
+      machine.succeed("${otlpMetric} victoria_stack_nginx_reads_only_metric 1 > /tmp/otlp.bin")
+      write = (
+          "-X POST -H 'Authorization: Bearer nginx-write-token' "  # gitleaks:allow
+          "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+      )
+      code = machine.succeed(
+          f"curl -s -o /dev/null -w '%{{http_code}}' {write} "
+          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
+      )
+      assert code == "404", f"a write through nginx /victoria/ must be 404, got {code}"
+      # Any other non-read path under /victoria/ is refused the same way.
+      code = machine.succeed(
+          "curl -s -o /dev/null -w '%{http_code}' -u admin:nginx-admin-password "  # gitleaks:allow
+          "'http://127.0.0.1:80/victoria/something-else'"
+      )
+      assert code == "404", f"unknown /victoria/ path must be 404, got {code}"
+
+      # The same write works on vmauth's own port -- the door writes belong on.
+      machine.succeed(f"curl -sf {write} 'http://127.0.0.1:4204/opentelemetry/v1/metrics'")
     '';
   };
 }

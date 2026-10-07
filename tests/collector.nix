@@ -1139,8 +1139,9 @@ in
           map (x: x.message) (builtins.filter (x: !x.assertion) e.config.assertions)
         );
       checks = {
-        "gateway: vmauth is reachable beyond loopback" =
-          gateway.config.services.victoriaStack.vmauth.listenAddress == "0.0.0.0:4204";
+        "gateway: vmauth has a public HTTPS door and keeps its internal listener on loopback" =
+          gateway.config.services.victoriaStack.vmauth.https.enable
+          && lib.hasPrefix "127.0.0.1:" gateway.config.services.victoriaStack.vmauth.listenAddress;
         "gateway: no failed assertions" = ownFailed' gateway == [ ];
         "collectors: no failed assertions" = ownFailed' a == [ ] && ownFailed' b == [ ];
         "collectors: distinct hostType" =
@@ -1300,4 +1301,50 @@ in
       assert '"result":[]' in has("node_load1"), has("node_load1")
     '';
   };
+
+  # systemd-journal-upload appends its default :19532 after any path when
+  # the URL has no explicit port ("https://stack/victoria/insert/journald:19532/upload"),
+  # so logs fail with a 400 at runtime. Catch it at eval time instead.
+  journald-endpoint-with-a-path-needs-an-explicit-port =
+    pkgs.runCommand "journald-endpoint-needs-port-with-path" { }
+      (
+        let
+          failedFor =
+            m:
+            ownFailed (evalWithCollector {
+              services.victoriaCollector = {
+                logs.enable = true;
+                writeTokenFile = "${writeTokenFixture}";
+              }
+              // m;
+            });
+          fires = m: lib.any (lib.hasInfix "explicit port") (failedFor m);
+          checks = {
+            "path without port fires" = fires { writeEndpoint = "https://stack/victoria"; };
+            "path without port fires for plain http too" = fires { writeEndpoint = "http://stack/victoria"; };
+            "journaldWriteEndpoint override is what counts" = fires {
+              writeEndpoint = "https://stack:8443";
+              journaldWriteEndpoint = "https://stack/victoria";
+            };
+            "path with a port is fine" = !(fires { writeEndpoint = "https://stack:443/victoria"; });
+            "no path is fine" = !(fires { writeEndpoint = "https://stack"; });
+            "port and no path is fine" = !(fires { writeEndpoint = "https://stack:8443"; });
+            "bracketed IPv6 with port is fine" = !(fires { writeEndpoint = "https://[::1]:8443"; });
+            "does not apply when logs are off" =
+              ownFailed (evalWithCollector {
+                services.victoriaCollector = {
+                  metrics.enable = true;
+                  hostType = "server";
+                  writeEndpoint = "https://stack/victoria";
+                  writeTokenFile = "${writeTokenFixture}";
+                };
+              }) == [ ];
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "journald endpoint assertion broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
 }
