@@ -30,6 +30,18 @@ let
   '';
 
   adminPasswordFixture = pkgs.writeText "admin-password" "admin-password-value";
+
+  # One of the 3 url_map JSON files vmauth's unit points at via its
+  # Environment (READ_URL_MAP_FILE / WRITE_URL_MAP_FILE /
+  # OPEN_INGEST_PATHS_FILE), parsed.
+  urlMapFile =
+    prefix: evaluated:
+    let
+      v =
+        lib.findFirst (lib.hasPrefix "${prefix}=") null
+          evaluated.config.systemd.services.vmauth.serviceConfig.Environment;
+    in
+    builtins.fromJSON (builtins.readFile (lib.removePrefix "${prefix}=" v));
 in
 {
   # --- eval-only ---
@@ -709,6 +721,7 @@ in
       imports = [ module ];
       services.victoriaStack = {
         metrics.enable = true;
+        metrics.mcp.enable = true;
         vmauth = {
           adminPasswordFile = "${adminPasswordFixture}";
           readTokensFile = "${readTokensFixture}";
@@ -769,6 +782,23 @@ in
           "'http://127.0.0.1:4204/custom-escape-hatch?query=up' "
           "| grep -qi '^X-Full-Combo-Response: yes'"
       )
+      # MCP stays reachable with the admin credential alongside everything
+      # above, still behind auth, and still carries the module-wide
+      # response header.
+      mcp_init = (
+          "-X POST 'http://127.0.0.1:4204/mcp/metrics' "
+          "-H 'Content-Type: application/json' "
+          "-H 'Accept: application/json, text/event-stream' "
+          "-d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":"
+          "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},"
+          "\"clientInfo\":{\"name\":\"combo-test\",\"version\":\"1\"}}}'"
+      )
+      machine.succeed(
+          f"curl -sfD - -o /dev/null -u admin:admin-password-value {mcp_init} "  # gitleaks:allow
+          "| grep -qi '^X-Full-Combo-Response: yes'"
+      )
+      machine.fail(f"curl -sf {mcp_init}")
+
       # extraRequestHeaders reaching the real outbound backend request
       # (not just the generated config) isn't independently observable
       # here -- VictoriaMetrics' own log doesn't surface custom request
@@ -1154,6 +1184,150 @@ in
           "journalctl -u vmauth.service --no-pager "
           "| grep -q \"read-tokens must contain a top-level 'tokens:' key\""
       )
+    '';
+  };
+
+  # Mirror of the read-tier test above for writeTokensFile -- the two
+  # share validate_tokens_shape but are separate branches in the script.
+  malformed-write-tokens-file-fails-with-a-legible-error = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-malformed-write-tokens-legible-error";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.writeTokensFile = "${pkgs.writeText "malformed-write-tokens.yaml" ''
+          not_tokens:
+            - this-key-is-wrong
+        ''}";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.fail("systemctl is-active vmauth.service")
+      machine.succeed(
+          "journalctl -u vmauth.service --no-pager "
+          "| grep -q \"write-tokens must contain a top-level 'tokens:' key\""
+      )
+    '';
+  };
+
+  # No /mcp/* route may exist anywhere unless that service's own MCP is on.
+  mcp-url-map-entries-absent-when-mcp-disabled =
+    pkgs.runCommand "vmauth-no-mcp-routes-when-mcp-disabled" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              logs.enable = true;
+              traces.enable = true;
+              # every *.mcp.enable left at its false default
+            };
+          };
+          mentionsMcp = e: lib.any (lib.hasPrefix "/mcp") (e.src_paths or [ ]);
+        in
+        if !(lib.any mentionsMcp (urlMapFile "READ_URL_MAP_FILE" evaluated)) then
+          "echo OK > $out"
+        else
+          throw "found an /mcp route in the read url_map with every mcp.enable = false"
+      );
+
+  # The vmauth side of the effectiveUrl seam (docs/decisions/0019): every
+  # url_prefix this module builds for a backend derives from effectiveUrl.
+  vmauth-url-prefixes-use-effective-url =
+    pkgs.runCommand "vmauth-url-prefixes-use-effective-url" { }
+      (
+        let
+          fake = n: "http://${n}.example.invalid:9999";
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics = {
+                enable = true;
+                effectiveUrl = lib.mkForce (fake "m");
+              };
+              logs = {
+                enable = true;
+                effectiveUrl = lib.mkForce (fake "l");
+              };
+              traces = {
+                enable = true;
+                effectiveUrl = lib.mkForce (fake "t");
+              };
+            };
+          };
+          prefixes = file: map (e: e.url_prefix) (urlMapFile file evaluated);
+          expected = [
+            "${fake "m"}/"
+            "${fake "l"}/"
+            "${fake "t"}/"
+          ];
+          checks = {
+            "read url_map" = prefixes "READ_URL_MAP_FILE" == expected;
+            "write url_map" = prefixes "WRITE_URL_MAP_FILE" == expected;
+            "open ingest paths" = prefixes "OPEN_INGEST_PATHS_FILE" == expected;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "url_prefix did not track effectiveUrl for: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # openIngestPaths overridden to exactly ONE entry (metrics' own door)
+  # while logs and traces are also enabled: only metrics' unauthenticated
+  # door opens; logs'/traces' stay closed to anonymous callers -- yet a
+  # write-tier token still reaches them (docs/decisions/0014: the write
+  # tier never follows the open-door override).
+  open-ingest-paths-genuine-partial-override = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-open-ingest-paths-partial-override";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        logs.enable = true;
+        traces.enable = true;
+        vmauth = {
+          requireAuthForWrites = false;
+          writeTokensFile = "${writeTokensFixture}";
+          openIngestPaths = [
+            {
+              src_paths = [ "/opentelemetry.*" ];
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+          ];
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(4201)
+
+      machine.succeed(
+          "${otlpMetric} victoria_stack_partial_override_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
+          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
+      )
+
+      def status(extra, path):
+          return machine.succeed(
+              f"curl -s -o /dev/null -w '%{{http_code}}' -X POST {extra} --data-binary '{{}}' "
+              f"'http://127.0.0.1:4204{path}'"
+          )
+
+      for path in ["/insert/journald/upload", "/insert/opentelemetry/v1/traces"]:
+          anon = status("", path)
+          assert anon == "401", f"anonymous POST to {path} should be rejected (401), got {anon}"
+          authed = status("-H 'Authorization: Bearer write-token-one'", path)  # gitleaks:allow
+          assert authed != "401", f"write-tier token must still reach {path}, got {authed}"
     '';
   };
 }

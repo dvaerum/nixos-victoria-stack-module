@@ -114,6 +114,12 @@ in
       services.victoriaStack = {
         metrics.enable = true;
         grafana.enable = true;
+        # nginx fronting everything must not drag the datasource URL
+        # through vmauth/nginx either.
+        nginx = {
+          enable = true;
+          domain = "victoria-stack-test.example.com";
+        };
         # vmauth ends up auto-enabled (any backend on) but Grafana's own
         # datasource URL must NOT route through it -- confirmed by
         # checking the provisioned datasource's own url field points at
@@ -326,5 +332,123 @@ in
           "echo OK > $out"
         else
           throw "expected services.grafana.provision.datasources.settings.prune = true, got ${builtins.toJSON prune}"
+      );
+
+  # The grafana side of the effectiveUrl seam (docs/decisions/0019): every
+  # datasource URL must derive from the backend's effectiveUrl, not
+  # listenAddress. Mirrors mcp.nix's mcp-metrics-entrypoint-uses-effective-url.
+  datasource-urls-use-effective-url =
+    pkgs.runCommand "grafana-datasource-urls-use-effective-url" { }
+      (
+        let
+          fake = name: "http://${name}.example.invalid:9999";
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics = {
+                enable = true;
+                effectiveUrl = lib.mkForce (fake "m");
+              };
+              logs = {
+                enable = true;
+                effectiveUrl = lib.mkForce (fake "l");
+              };
+              traces = {
+                enable = true;
+                effectiveUrl = lib.mkForce (fake "t");
+              };
+              grafana.enable = true;
+            };
+          };
+          urls = map (d: d.url) evaluated.config.services.grafana.provision.datasources.settings.datasources;
+          expected = [
+            (fake "m")
+            (fake "l")
+            "${fake "t"}/select/jaeger"
+          ];
+        in
+        if urls == expected then
+          "echo OK > $out"
+        else
+          throw "datasource urls did not track effectiveUrl: expected ${builtins.toJSON expected}, got ${builtins.toJSON urls}"
+      );
+
+  # ADR 0020's documented workaround for tweaking one auto-provisioned
+  # datasource: mkForce the whole list, reconstructing the 3 built-in
+  # entries by hand, plus an extra one. Proves the workaround the README
+  # tells operators to use really yields exactly 4 entries.
+  mkforce-reconstruct-workaround-yields-the-builtin-three-plus-one =
+    pkgs.runCommand "grafana-mkforce-reconstruct-workaround" { }
+      (
+        let
+          builtinThree = [
+            {
+              name = "VictoriaMetrics";
+              type = "victoriametrics-metrics-datasource";
+              uid = "victoriametrics-ds";
+              url = "http://127.0.0.1:4201";
+              isDefault = true;
+              access = "proxy";
+              editable = false;
+            }
+            {
+              name = "VictoriaLogs";
+              type = "victoriametrics-logs-datasource";
+              uid = "victorialogs-ds";
+              url = "http://127.0.0.1:4202";
+              isDefault = false;
+              access = "proxy";
+              editable = false;
+            }
+            {
+              name = "VictoriaTraces";
+              type = "jaeger";
+              uid = "victoriatraces-ds";
+              url = "http://127.0.0.1:4203/select/jaeger";
+              isDefault = false;
+              access = "proxy";
+              editable = false;
+            }
+          ];
+          extra = {
+            name = "Extra";
+            type = "prometheus";
+            uid = "extra-ds";
+            url = "http://127.0.0.1:9090";
+            isDefault = false;
+            access = "proxy";
+            editable = false;
+          };
+          datasourcesOf =
+            extraModule:
+            (evalWith {
+              imports = [ extraModule ];
+              services.victoriaStack = {
+                metrics.enable = true;
+                logs.enable = true;
+                traces.enable = true;
+                grafana.enable = true;
+              };
+            }).config.services.grafana.provision.datasources.settings.datasources;
+          untouched = datasourcesOf { };
+          forced = datasourcesOf {
+            services.grafana.provision.datasources.settings.datasources = lib.mkForce (
+              builtinThree ++ [ extra ]
+            );
+          };
+          names = map (d: d.name) forced;
+        in
+        if
+          builtins.length untouched == 3
+          &&
+            names == [
+              "VictoriaMetrics"
+              "VictoriaLogs"
+              "VictoriaTraces"
+              "Extra"
+            ]
+        then
+          "echo OK > $out"
+        else
+          throw "mkForce workaround broken: untouched=${toString (builtins.length untouched)} forced=${builtins.toJSON names}"
       );
 }

@@ -27,6 +27,7 @@ let
       '';
 
   secretKeyFixture = pkgs.writeText "grafana-secret-key" "test-fixture-secret-key-not-real";
+  adminPasswordFixture = pkgs.writeText "nginx-test-admin-password" "nginx-admin-password";
 
   # Pure eval, no container boot needed -- confirms the rendered nginx
   # config shape directly (docs/decisions/0016's "mirror what it fronts"
@@ -597,4 +598,78 @@ in
         else
           throw "nginx.service's after is missing expected ordering: ${builtins.toJSON (builtins.attrNames failed)}"
       );
+
+  # vmauth.listenAddress moved off its default: nginx must follow it
+  # (nginx reads vmauth.listenAddress rather than hardcoding the port).
+  nginx-follows-a-non-default-vmauth-listen-address = pkgs.testers.nixosTest {
+    name = "victoria-stack-nginx-follows-vmauth-listen-address";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          listenAddress = "127.0.0.1:19999";
+          requireAuthForWrites = false;
+        };
+        nginx.enable = true;
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("nginx.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(19999)
+      machine.wait_for_open_port(80)
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
+
+      machine.fail("curl -sf --max-time 3 'http://127.0.0.1:4204/'")
+      machine.succeed(
+          "${otlpMetric} victoria_stack_nginx_listen_override_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
+          "curl -sf -X POST -H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+          "'http://127.0.0.1:80/victoria/opentelemetry/v1/metrics'"
+      )
+    '';
+  };
+
+  # A credentialed vmauth tier behind the name-based virtualHost: nginx
+  # must pass the Authorization header through untouched.
+  nginx-custom-domain-passes-credentials-through = pkgs.testers.nixosTest {
+    name = "victoria-stack-nginx-custom-domain-credentials";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.adminPasswordFile = "${adminPasswordFixture}";
+        nginx = {
+          enable = true;
+          domain = "victoria-stack-test.example.com";
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("nginx.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(80)
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
+
+      url = "http://127.0.0.1:80/victoria/metrics/api/v1/labels"
+      host = "-H 'Host: victoria-stack-test.example.com'"
+      machine.succeed(f"curl -sf {host} -u admin:nginx-admin-password '{url}'")  # gitleaks:allow
+      anon = machine.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {host} '{url}'")
+      assert anon == "401", f"expected 401 without credentials via the named vhost, got {anon}"
+      wrong = machine.succeed(
+          f"curl -s -o /dev/null -w '%{{http_code}}' {host} -u admin:wrong-password '{url}'"  # gitleaks:allow
+      )
+      assert wrong == "401", f"expected 401 with a wrong password via the named vhost, got {wrong}"
+    '';
+  };
 }

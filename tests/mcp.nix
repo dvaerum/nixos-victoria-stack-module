@@ -435,4 +435,74 @@ in
       machine.wait_for_open_port(4205)
     '';
   };
+
+  # Same wildcard handling storage.nix pins for the 3 storage services:
+  # probing a wildcard address as a destination is unreliable, so the
+  # readiness probe must substitute loopback for each wildcard form.
+  mcp-wildcard-listen-address-readiness-substitutes-loopback =
+    pkgs.runCommand "mcp-wildcard-readiness-substitutes-loopback" { }
+      (
+        let
+          postStart =
+            listenAddress:
+            (evalWith {
+              services.victoriaStack.metrics = {
+                enable = true;
+                mcp = {
+                  enable = true;
+                  inherit listenAddress;
+                };
+              };
+            }).config.systemd.services.mcp-victoriametrics.postStart;
+          checks = {
+            "IPv4 wildcard" = lib.hasInfix "http://127.0.0.1:19997/health/readiness" (
+              postStart "0.0.0.0:19997"
+            );
+            "IPv6 wildcard" = lib.hasInfix "http://127.0.0.1:19997/health/readiness" (postStart "[::]:19997");
+            "bare :port" = lib.hasInfix "http://127.0.0.1:19997/health/readiness" (postStart ":19997");
+            "specific address is probed as-is" = lib.hasInfix "http://10.1.2.3:19997/health/readiness" (
+              postStart "10.1.2.3:19997"
+            );
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "mcp wildcard readiness substitution broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # vmauth off + MCP's listenAddress left at its loopback default: the
+  # unit must come up cleanly and stay loopback-only -- no crash loop, no
+  # surprise wildcard bind.
+  mcp-without-vmauth-stays-loopback-by-default = pkgs.testers.nixosTest {
+    name = "victoria-stack-mcp-loopback-default-without-vmauth";
+
+    containers.machine =
+      { lib, ... }:
+      {
+        imports = [ module ];
+        services.victoriaStack = {
+          metrics.enable = true;
+          metrics.mcp.enable = true;
+          vmauth.enable = lib.mkForce false;
+        };
+      };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("mcp-victoriametrics.service")
+      machine.wait_for_open_port(4205)
+
+      restarts = machine.succeed(
+          "systemctl show mcp-victoriametrics.service --property=NRestarts --value"
+      ).strip()
+      assert restarts == "0", f"mcp unit restarted {restarts} times -- crash loop"
+
+      listeners = machine.succeed("ss -Hltn 'sport = :4205'")
+      assert "127.0.0.1:4205" in listeners, f"expected a loopback listener: {listeners!r}"
+      for wildcard in ["0.0.0.0:4205", "[::]:4205", "*:4205"]:
+          assert wildcard not in listeners, f"unexpected wildcard bind {wildcard}: {listeners!r}"
+    '';
+  };
 }

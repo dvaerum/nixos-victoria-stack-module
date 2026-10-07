@@ -161,7 +161,7 @@ let
     {
       name,
       serviceAttr, # "metrics" | "logs" | "traces"
-      dataDir,
+      dataDir ? null, # null: leave dataDir at its default
       expectRule, # true: default (manageTmpfiles unset) should render a rule;
       # false: manageTmpfiles = false should suppress it entirely
     }:
@@ -170,20 +170,21 @@ let
         evaluated = evalWith {
           services.victoriaStack.${serviceAttr} = {
             enable = true;
-            inherit dataDir;
             dynamicUser = false;
           }
+          // lib.optionalAttrs (dataDir != null) { inherit dataDir; }
           // lib.optionalAttrs (!expectRule) { manageTmpfiles = false; };
         };
         rules = evaluated.config.systemd.tmpfiles.rules;
-        hasRule = lib.any (lib.hasInfix dataDir) rules;
+        effectiveDir = toString evaluated.config.services.victoriaStack.${serviceAttr}.dataDir;
+        hasRule = lib.any (lib.hasInfix effectiveDir) rules;
       in
       if hasRule == expectRule then
         "echo OK > $out"
       else if expectRule then
-        throw "manageTmpfiles defaults to true -- expected a tmpfiles rule for ${dataDir}"
+        throw "manageTmpfiles defaults to true -- expected a tmpfiles rule for ${effectiveDir}"
       else
-        throw "manageTmpfiles = false must suppress the every-boot tmpfiles ownership rule entirely for ${dataDir}"
+        throw "manageTmpfiles = false must suppress the every-boot tmpfiles ownership rule entirely for ${effectiveDir}"
     );
 in
 {
@@ -951,4 +952,22 @@ in
         else
           throw "expected a mutual-exclusion assertion for both logs and traces (logs=${builtins.toJSON (fires "logs")} traces=${builtins.toJSON (fires "traces")})"
       );
+
+  metrics-manage-tmpfiles-false-rule-absent-at-default-data-dir = mkManageTmpfilesCheck {
+    name = "metrics-manage-tmpfiles-false-rule-absent-at-default-data-dir";
+    serviceAttr = "metrics";
+    expectRule = false;
+  };
+
+  logs-manage-tmpfiles-false-rule-absent-at-default-data-dir = mkManageTmpfilesCheck {
+    name = "logs-manage-tmpfiles-false-rule-absent-at-default-data-dir";
+    serviceAttr = "logs";
+    expectRule = false;
+  };
+
+  traces-manage-tmpfiles-false-rule-absent-at-default-data-dir = mkManageTmpfilesCheck {
+    name = "traces-manage-tmpfiles-false-rule-absent-at-default-data-dir";
+    serviceAttr = "traces";
+    expectRule = false;
+  };
 }

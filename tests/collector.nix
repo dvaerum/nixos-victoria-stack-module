@@ -32,6 +32,50 @@ let
   # settings it's supposed to -- the one branch with no prior coverage
   # at all (the roundtrip test above only ever uses a plain http://
   # writeEndpoint).
+  # Fixtures for the cross-container tests below (the older tests in this
+  # file inline the equivalent).
+  twoWriteTokensFixture = pkgs.writeText "collector-test-two-write-tokens.yaml" ''
+    tokens:
+      - collector-test-write-token-a # test fixture, not real
+      - collector-test-write-token-b # test fixture, not real
+  '';
+  writeTokenAFixture = pkgs.writeText "collector-test-write-token-a" "collector-test-write-token-a";
+  writeTokenBFixture = pkgs.writeText "collector-test-write-token-b" "collector-test-write-token-b";
+
+  # SAN for the container hostname "stack": Alloy verifies the gateway's
+  # certificate against this CA, so the name must match what the collector
+  # dials (same lesson as tests/nginx.nix's selfSignedCert -- without a
+  # SAN, verification fails closed).
+  stackSelfSignedCert =
+    pkgs.runCommand "collector-test-stack-self-signed-cert" { nativeBuildInputs = [ pkgs.openssl ]; }
+      ''
+        mkdir -p $out
+        openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
+          -subj "/CN=stack" -addext "subjectAltName=DNS:stack" \
+          -keyout $out/key.pem -out $out/cert.pem
+      '';
+
+  # The stack side every new cross-container test needs: a gateway
+  # reachable from the other containers, accepting the write tokens above.
+  mkStackContainer =
+    {
+      services,
+      tokensFile ? writeTokensFixture,
+      extra ? { },
+    }:
+    {
+      virtualisation.vlans = [ 1 ];
+      imports = [ stackModule ];
+      services.victoriaStack = services // {
+        vmauth = {
+          writeTokensFile = "${tokensFile}";
+          listenAddress = "0.0.0.0:4204";
+        };
+      };
+      networking.firewall.allowedTCPPorts = [ 4204 ];
+    }
+    // extra;
+
   httpsEvaluated = import (pkgs.path + "/nixos/lib/eval-config.nix") {
     inherit (pkgs) system;
     modules = [
@@ -824,6 +868,241 @@ in
           f"a hostType-only config change, not restart -- before={pid_before!r}, "
           f"after={pid_after!r}"
       )
+    '';
+  };
+
+  # Alloy's tls.ca_file / https:// path, for real: the gateway sits behind
+  # a TLS-terminating nginx and the collector verifies it against the CA
+  # (the existing alloy-tls-and-retry-options-are-inert-unless-configured
+  # only string-matches the rendered config).
+  metrics-roundtrip-over-verified-tls = pkgs.testers.nixosTest {
+    name = "victoria-collector-metrics-roundtrip-over-verified-tls";
+
+    containers.stack = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ stackModule ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
+        # vmauth stays on its loopback default: only nginx is reachable.
+      };
+      services.nginx = {
+        enable = true;
+        virtualHosts."stack" = {
+          onlySSL = true;
+          sslCertificate = "${stackSelfSignedCert}/cert.pem";
+          sslCertificateKey = "${stackSelfSignedCert}/key.pem";
+          locations."/".proxyPass = "http://127.0.0.1:4204";
+        };
+      };
+      networking.firewall.allowedTCPPorts = [ 443 ];
+    };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        writeEndpoint = "https://stack";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+        alloy.tlsCaFile = "${stackSelfSignedCert}/cert.pem";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      stack.wait_for_unit("nginx.service")
+      stack.wait_for_unit("vmauth.service")
+      stack.wait_for_unit("victoriametrics.service")
+      collector.wait_for_unit("alloy.service")
+      stack.systemctl("start network-online.target")
+      collector.systemctl("start network-online.target")
+      stack.wait_for_unit("network-online.target")
+      collector.wait_for_unit("network-online.target")
+
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          timeout=120,
+      )
+      # The data really arrived over TLS, through nginx.
+      stack.succeed("grep -q 'POST /opentelemetry/v1/metrics' /var/log/nginx/access.log")
+    '';
+  };
+
+  # queue.directory outside alloy's own StateDirectory: Alloy must really
+  # write its queue there (not just have the path in ReadWritePaths).
+  queue-directory-outside-statedir-is-really-written = pkgs.testers.nixosTest {
+    name = "victoria-collector-queue-directory-outside-statedir";
+
+    containers.stack = mkStackContainer { services.metrics.enable = true; };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      # DynamicUser alloy needs to be able to create files here.
+      systemd.tmpfiles.rules = [ "d /run/alloy-queue-test 0777 root root -" ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+        queue.directory = "/run/alloy-queue-test";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      stack.wait_for_unit("vmauth.service")
+      stack.wait_for_unit("victoriametrics.service")
+      collector.wait_for_unit("alloy.service")
+      stack.systemctl("start network-online.target")
+      collector.systemctl("start network-online.target")
+      stack.wait_for_unit("network-online.target")
+      collector.wait_for_unit("network-online.target")
+
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          timeout=120,
+      )
+      collector.succeed("test -n \"$(ls -A /run/alloy-queue-test)\"")
+    '';
+  };
+
+  # All three signals on ONE collector, each with a real roundtrip.
+  three-signals-roundtrip-from-one-collector = pkgs.testers.nixosTest {
+    name = "victoria-collector-three-signals-one-collector";
+
+    containers.stack = mkStackContainer {
+      services = {
+        metrics.enable = true;
+        logs.enable = true;
+        traces.enable = true;
+      };
+    };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        logs.enable = true;
+        traces.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      stack.wait_for_unit("vmauth.service")
+      stack.wait_for_unit("victoriametrics.service")
+      stack.wait_for_unit("victorialogs.service")
+      stack.wait_for_unit("victoriatraces.service")
+      collector.wait_for_unit("alloy.service")
+      collector.wait_for_unit("systemd-journal-upload.service")
+      collector.wait_for_open_port(4318)
+      stack.systemctl("start network-online.target")
+      collector.systemctl("start network-online.target")
+      stack.wait_for_unit("network-online.target")
+      collector.wait_for_unit("network-online.target")
+
+      collector.succeed("logger --tag victoria-collector-test 'victoria_stack_three_signals_log_marker'")
+      collector.succeed(
+          "now=$(date +%s%N); "
+          "payload=$(cat <<JSON\n"
+          "{\"resourceSpans\":[{\"resource\":{\"attributes\":["
+          "{\"key\":\"service.name\",\"value\":{\"stringValue\":\"victoria_stack_three_signals_service\"}}"
+          "]},\"scopeSpans\":[{\"spans\":[{"
+          "\"traceId\":\"00000000000000000000000000000006\","
+          "\"spanId\":\"0000000000000006\","
+          "\"name\":\"victoria_stack_three_signals_span\","
+          "\"kind\":1,"
+          "\"startTimeUnixNano\":\"$now\","
+          "\"endTimeUnixNano\":\"$now\""
+          "}]}]}]}\nJSON\n); "
+          "curl -sf -X POST -H 'Content-Type: application/json' --data-binary \"$payload\" "
+          "'http://127.0.0.1:4318/v1/traces'"
+      )
+
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          timeout=120,
+      )
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4202/select/logsql/query' "
+          "-d 'query=victoria_stack_three_signals_log_marker' "
+          "| grep -q victoria_stack_three_signals_log_marker",
+          timeout=120,
+      )
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4203/select/jaeger/api/services' "
+          "| grep -q victoria_stack_three_signals_service",
+          timeout=120,
+      )
+    '';
+  };
+
+  # A fleet: two collectors with distinct hostType and distinct write
+  # tokens shipping concurrently to one gateway.
+  two-collectors-ship-distinguishable-series-concurrently = pkgs.testers.nixosTest {
+    name = "victoria-collector-two-collector-fleet";
+
+    containers.stack = mkStackContainer {
+      services.metrics.enable = true;
+      tokensFile = twoWriteTokensFixture;
+    };
+
+    containers.collector-a = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${writeTokenAFixture}";
+        hostType = "server";
+      };
+    };
+
+    containers.collector-b = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${writeTokenBFixture}";
+        hostType = "edge-device";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      stack.wait_for_unit("vmauth.service")
+      stack.wait_for_unit("victoriametrics.service")
+      for c in (collector_a, collector_b):
+          c.wait_for_unit("alloy.service")
+      for m in (stack, collector_a, collector_b):
+          m.systemctl("start network-online.target")
+          m.wait_for_unit("network-online.target")
+
+      # The hostType label lands on VictoriaMetrics as `host.type` (an
+      # OTLP resource attribute name, dot included) -- NOT `host_type` as
+      # options.nix/config.alloy.nix's comments claim; the quoted-label
+      # selector below is the only form that matches it.
+      for host_type in ("server", "edge-device"):
+          stack.wait_until_succeeds(
+              "curl -sfG 'http://127.0.0.1:4201/api/v1/query' "
+              f"--data-urlencode 'query=alloy_up{{\"host.type\"=\"{host_type}\"}}' "
+              "| grep -q '\"value\"'",
+              timeout=120,
+          )
+
+      # Both hosts' series are present side by side and distinguishable.
+      hosts = stack.succeed(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up'"
+      )
+      assert "collector-a" in hosts and "collector-b" in hosts, hosts
     '';
   };
 }
