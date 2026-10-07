@@ -532,7 +532,13 @@ in
           countOccurrences = needle: haystack: (lib.length (lib.splitString needle haystack)) - 1;
           checks = {
             "no tls block when unset" = !(lib.hasInfix "tls {" textUnset);
-            "no retry_on_failure block when unset" = !(lib.hasInfix "retry_on_failure {" textUnset);
+            # Retrying forever is now the default (the disk queue is what bounds
+            # data held during an outage), so the block exists with ONLY that.
+            "unset: retry block holds only max_elapsed_time = 0s" =
+              lib.hasInfix "retry_on_failure {" textUnset
+              && lib.hasInfix ''max_elapsed_time = "0s"'' textUnset
+              && !(lib.hasInfix "initial_interval" textUnset)
+              && !(lib.hasInfix "max_interval" textUnset);
             "insecure_skip_verify set on both exporters" =
               countOccurrences "insecure_skip_verify = true" textSet == 2;
             "ca_file set on both exporters" = countOccurrences "ca_file" textSet == 2;
@@ -1532,6 +1538,304 @@ in
           "| grep -iE 'certificate|verif|ssl|tls|could not connect|failed'",
           timeout=60,
       )
+    '';
+  };
+
+  # --- Alloy config generation: scrape timeout, types, escaping, defaults ---
+
+  scrape-timeout-follows-the-interval = pkgs.runCommand "scrape-timeout-follows-the-interval" { } (
+    let
+      textFor =
+        interval:
+        (evalWithCollector {
+          services.victoriaCollector = {
+            metrics = {
+              enable = true;
+              scrapeInterval = interval;
+            };
+            writeEndpoint = "http://127.0.0.1:4204";
+            hostType = "server";
+          };
+        }).config.environment.etc."alloy/config.alloy".text;
+      hasTimeout = interval: lib.hasInfix "scrape_timeout" (textFor interval);
+      timeoutIs = interval: lib.hasInfix ''scrape_timeout = "${interval}"'' (textFor interval);
+      checks = {
+        # Alloy's own scrape_timeout default is 10s and it exits at start when
+        # that is GREATER than the interval ("scrape_timeout (10s) greater than
+        # scrape_interval (5s)"); `alloy validate` does not notice.
+        "5s -> timeout 5s" = timeoutIs "5s";
+        "500ms -> timeout 500ms" = timeoutIs "500ms";
+        "9s999ms (combined form) -> timeout 9s999ms" = timeoutIs "9s999ms";
+        "1s -> timeout 1s" = timeoutIs "1s";
+        "10s needs none" = !(hasTimeout "10s");
+        "30s needs none" = !(hasTimeout "30s");
+        "1m30s needs none" = !(hasTimeout "1m30s");
+        "1h needs none" = !(hasTimeout "1h");
+        "null needs none" = !(hasTimeout null);
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "scrape_timeout wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # A zero-length interval fails at run time as well.
+  zero-scrape-interval-is-rejected = pkgs.runCommand "zero-scrape-interval-rejected" { } (
+    let
+      fires =
+        interval:
+        lib.any (lib.hasInfix "scrapeInterval") (
+          ownFailed (evalWithCollector {
+            services.victoriaCollector = {
+              metrics = {
+                enable = true;
+                scrapeInterval = interval;
+              };
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+            };
+          })
+        );
+    in
+    if fires "0s" && fires "0ms" && fires "0m0s" && !(fires "1s") && !(fires null) then
+      "echo OK > $out"
+    else
+      throw "zero scrapeInterval handling wrong"
+  );
+
+  # REAL boot: validate passes on the broken config (verified), so a validate-only
+  # test would hide the crash loop.
+  scrape-interval-below-ten-seconds-really-boots = pkgs.testers.nixosTest {
+    name = "victoria-collector-scrape-interval-below-ten-seconds";
+
+    containers.collector = {
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics = {
+          enable = true;
+          scrapeInterval = "5s";
+        };
+        # Nothing listens here; the exporter just retries.
+        writeEndpoint = "http://127.0.0.1:4204";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      collector.wait_for_unit("alloy.service")
+      collector.wait_until_succeeds("curl -sf http://127.0.0.1:12345/-/ready")
+      collector.sleep(12)
+      collector.succeed("systemctl is-active alloy.service")
+      journal = collector.succeed("journalctl -u alloy.service --no-pager")
+      assert "greater than scrape_interval" not in journal, journal[-800:]
+    '';
+  };
+
+  alloy-option-types-reject-values-alloy-cannot-run = pkgs.runCommand "alloy-option-types" { } (
+    let
+      opts = (evalWithCollector { }).options.services.victoriaCollector;
+      retry = opts.alloy.retryOnFailure;
+      queueSize = opts.queue.maxSizeBytes.type;
+      dur = o: o.type.nestedTypes.elemType;
+      checks = {
+        "queue size 1 accepted" = queueSize.check 1;
+        "queue size 0 rejected (alloy run: queue_size must be greater than zero)" = !(queueSize.check 0);
+        "queue size -5 rejected" = !(queueSize.check (-5));
+        "initialInterval 5s accepted" = (dur retry.initialInterval).check "5s";
+        "initialInterval abc rejected" = !((dur retry.initialInterval).check "abc");
+        "maxInterval with a quote rejected" = !((dur retry.maxInterval).check ''5s"'');
+        "maxElapsedTime 1m30s accepted" = (dur retry.maxElapsedTime).check "1m30s";
+        "maxElapsedTime five seconds rejected" = !((dur retry.maxElapsedTime).check "five seconds");
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "alloy option types wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # Interpolated options used to reach the generated config unescaped: a quote in
+  # writeEndpoint or queue.directory broke the syntax. The real alloy binary is the
+  # judge, with a control proving the check can fail.
+  hostile-config-values-render-valid-alloy =
+    let
+      textFor =
+        m:
+        (evalWithCollector {
+          services.victoriaCollector = {
+            metrics.enable = true;
+            traces.enable = true;
+            hostType = "server";
+            writeEndpoint = "http://127.0.0.1:4204";
+          }
+          // m;
+        }).config.environment.etc."alloy/config.alloy".text;
+      cases = {
+        quote-in-endpoint = textFor { writeEndpoint = ''http://h"x''; };
+        quote-in-queue-dir = textFor { queue.directory = ''/var/lib/alloy/q"x''; };
+        newline-in-queue-dir = textFor { queue.directory = "/var/lib/alloy/q\nx"; };
+        backslash-in-endpoint = textFor { writeEndpoint = ''http://h\x''; };
+      };
+    in
+    pkgs.runCommand "hostile-config-values-render-valid-alloy"
+      { nativeBuildInputs = [ pkgs.grafana-alloy ]; }
+      ''
+        export HOME=$TMPDIR
+        ${lib.concatStringsSep "\n" (
+          lib.mapAttrsToList (name: text: ''
+            cat > ${name}.alloy <<'ALLOY_EOF'
+            ${text}
+            ALLOY_EOF
+            alloy validate --stability.level=public-preview ${name}.alloy \
+              || { echo "alloy rejects the config rendered for ${name}" >&2; exit 1; }
+          '') cases
+        )}
+        # Control: the same hostile value interpolated RAW (what the generator used
+        # to do) must be rejected, or this check proves nothing.
+        cat > control.alloy <<'ALLOY_EOF'
+        otelcol.exporter.otlphttp "m" {
+          client {
+            endpoint = "http://h"x/opentelemetry"
+          }
+        }
+        ALLOY_EOF
+        if alloy validate --stability.level=public-preview control.alloy 2>/dev/null; then
+          echo "the control (raw interpolation) was accepted: this test cannot fail" >&2
+          exit 1
+        fi
+        echo OK > $out
+      '';
+
+  queue-directory-with-dotdot-is-rejected = pkgs.runCommand "queue-directory-dotdot" { } (
+    let
+      fires =
+        dir:
+        lib.any (lib.hasInfix "queue.directory") (
+          ownFailed (evalWithCollector {
+            services.victoriaCollector = {
+              metrics.enable = true;
+              hostType = "server";
+              writeEndpoint = "http://127.0.0.1:4204";
+              queue.directory = dir;
+            };
+          })
+        );
+    in
+    if
+      fires "/var/lib/alloy/../etc/q"
+      && fires "/var/lib/alloy/q/.."
+      && !(fires "/var/lib/alloy/queue")
+      && !(fires "/srv/bigdisk/alloy.queue")
+    then
+      "echo OK > $out"
+    else
+      throw "queue.directory .. guard wrong"
+  );
+
+  retry-forever-is-the-default-and-the-operator-can-override =
+    pkgs.runCommand "retry-forever-default" { }
+      (
+        let
+          textFor =
+            m:
+            (evalWithCollector {
+              services.victoriaCollector = {
+                metrics.enable = true;
+                hostType = "server";
+                writeEndpoint = "http://127.0.0.1:4204";
+                alloy.retryOnFailure = m;
+              };
+            }).config.environment.etc."alloy/config.alloy".text;
+          checks = {
+            "default retries forever on both exporters" =
+              lib.length (lib.splitString ''max_elapsed_time = "0s"'' (textFor { })) == 2;
+            "an operator value wins" =
+              lib.hasInfix ''max_elapsed_time = "5m"'' (textFor {
+                maxElapsedTime = "5m";
+              })
+              && !(lib.hasInfix ''max_elapsed_time = "0s"'' (textFor {
+                maxElapsedTime = "5m";
+              }));
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "retry default wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  otlp-receiver-ports-are-configurable = pkgs.runCommand "otlp-receiver-ports" { } (
+    let
+      textFor =
+        m:
+        (evalWithCollector {
+          services.victoriaCollector = {
+            traces = {
+              enable = true;
+            }
+            // m;
+            hostType = "server";
+            writeEndpoint = "http://127.0.0.1:4204";
+          };
+        }).config.environment.etc."alloy/config.alloy".text;
+      checks = {
+        "defaults unchanged" =
+          lib.hasInfix ''endpoint = "127.0.0.1:4317"'' (textFor { })
+          && lib.hasInfix ''endpoint = "127.0.0.1:4318"'' (textFor { });
+        "custom ports render" =
+          lib.hasInfix ''endpoint = "127.0.0.1:14317"'' (textFor {
+            receiver = {
+              grpcPort = 14317;
+              httpPort = 14318;
+            };
+          })
+          && lib.hasInfix ''endpoint = "127.0.0.1:14318"'' (textFor {
+            receiver = {
+              grpcPort = 14317;
+              httpPort = 14318;
+            };
+          });
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "receiver ports wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  otlp-receiver-listens-on-custom-ports = pkgs.testers.nixosTest {
+    name = "victoria-collector-custom-otlp-receiver-ports";
+
+    containers.collector = {
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        traces = {
+          enable = true;
+          receiver = {
+            grpcPort = 14317;
+            httpPort = 14318;
+          };
+        };
+        writeEndpoint = "http://127.0.0.1:4204";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      collector.wait_for_unit("alloy.service")
+      collector.wait_for_open_port(14317)
+      collector.wait_for_open_port(14318)
+      listeners = collector.succeed("ss -Hltn")
+      assert ":4317" not in listeners and ":4318" not in listeners, listeners
     '';
   };
 }

@@ -3,9 +3,9 @@
 let
   cfg = config.services.victoriaCollector;
 
+  common = import ./common.nix { inherit lib; };
   # What systemd-journal-upload is actually pointed at (config.nix).
-  journaldEndpoint =
-    if cfg.journaldWriteEndpoint != null then cfg.journaldWriteEndpoint else cfg.writeEndpoint;
+  journaldEndpoint = common.journaldEndpoint cfg;
   # scheme://host[:port][/path]; host is a name, an IPv4, or a bracketed IPv6.
   parts = lib.match "[A-Za-z][A-Za-z0-9+.-]*://([[][^]]+[]]|[^/:]+)(:[0-9]+)?(/.+)?" journaldEndpoint;
   hasPort = parts != null && builtins.elemAt parts 1 != null;
@@ -13,6 +13,24 @@ let
 in
 {
   config.assertions = [
+    {
+      # A zero-length interval makes Alloy exit at start, like a timeout longer
+      # than the interval does (config.alloy.nix handles that one).
+      assertion = cfg.metrics.scrapeInterval == null || common.durationNs cfg.metrics.scrapeInterval > 0;
+      message = ''
+        services.victoriaCollector.metrics.scrapeInterval must be longer than
+        zero (got "${toString cfg.metrics.scrapeInterval}").
+      '';
+    }
+    {
+      # `..` would let a path pass config.nix's "is it under /var/lib/alloy/"
+      # test while pointing outside it.
+      assertion = !(lib.any (c: c == "..") (lib.splitString "/" (toString cfg.queue.directory)));
+      message = ''
+        services.victoriaCollector.queue.directory (${toString cfg.queue.directory})
+        must not contain a ".." component; write the real path.
+      '';
+    }
     {
       # systemd-journal-upload appends its default :19532 after any path
       # when the URL has no explicit port, e.g.

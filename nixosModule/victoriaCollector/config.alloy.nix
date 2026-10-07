@@ -1,7 +1,14 @@
 { lib, cfg }:
 
 let
-  needsAlloyOtlp = cfg.metrics.enable || cfg.traces.enable;
+  common = import ./common.nix { inherit lib; };
+  needsAlloyOtlp = common.needsAlloyOtlp cfg;
+
+  # Every interpolated string literal goes through JSON encoding: it escapes
+  # quotes, backslashes and control characters, and Alloy accepts the result as a
+  # string literal (a quote in writeEndpoint or queue.directory used to break the
+  # syntax).
+  str = builtins.toJSON;
 
   # Shared bearer-token auth handler for whichever OTLP exporters are
   # enabled -- the token itself never appears in this rendered text (it's
@@ -33,7 +40,7 @@ let
 
   queueBlock = ''
     otelcol.storage.file "queue" {
-      directory = "${toString cfg.queue.directory}"
+      directory = ${str (toString cfg.queue.directory)}
     }
   '';
 
@@ -61,6 +68,12 @@ let
         }
       '';
 
+  # Alloy's scrape_timeout defaults to 10s and Alloy refuses to start when that is
+  # greater than scrape_interval (`alloy validate` does not notice). Below 10s the
+  # timeout is set to the interval (equal is accepted).
+  needsScrapeTimeout =
+    cfg.metrics.scrapeInterval != null && common.durationNs cfg.metrics.scrapeInterval < 10000000000;
+
   alloyStringList = names: "[" + lib.concatMapStringsSep ", " (n: ''"${n}"'') names + "]";
 
   metricsSection = lib.optionalString cfg.metrics.enable ''
@@ -79,6 +92,7 @@ let
       ${lib.optionalString (
         cfg.metrics.scrapeInterval != null
       ) ''scrape_interval = "${cfg.metrics.scrapeInterval}"''}
+      ${lib.optionalString needsScrapeTimeout ''scrape_timeout = "${cfg.metrics.scrapeInterval}"''}
     }
 
     otelcol.receiver.prometheus "host" {
@@ -172,10 +186,10 @@ let
     // to forward collected spans is a dead end.
     otelcol.receiver.otlp "local" {
       grpc {
-        endpoint = "127.0.0.1:4317"
+        endpoint = "127.0.0.1:${toString cfg.traces.receiver.grpcPort}"
       }
       http {
-        endpoint = "127.0.0.1:4318"
+        endpoint = "127.0.0.1:${toString cfg.traces.receiver.httpPort}"
       }
       output {
         traces = [otelcol.processor.attributes.add_host_type_traces.input]
@@ -214,7 +228,7 @@ let
     // /opentelemetry/v1/metrics.
     otelcol.exporter.otlphttp "metrics" {
       client {
-        endpoint = "${cfg.writeEndpoint}/opentelemetry"
+        endpoint = ${str "${cfg.writeEndpoint}/opentelemetry"}
         auth     = otelcol.auth.headers.write_token.handler
         ${tlsBlock}
       }
@@ -231,7 +245,7 @@ let
     // Resolves to /insert/opentelemetry/v1/traces.
     otelcol.exporter.otlphttp "traces" {
       client {
-        endpoint = "${cfg.writeEndpoint}/insert/opentelemetry"
+        endpoint = ${str "${cfg.writeEndpoint}/insert/opentelemetry"}
         auth     = otelcol.auth.headers.write_token.handler
         ${tlsBlock}
       }

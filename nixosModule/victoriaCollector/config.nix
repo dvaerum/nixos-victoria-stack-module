@@ -7,11 +7,11 @@
 
 let
   cfg = config.services.victoriaCollector;
-  needsAlloyOtlp = cfg.metrics.enable || cfg.traces.enable;
+  common = import ./common.nix { inherit lib; };
+  needsAlloyOtlp = common.needsAlloyOtlp cfg;
   configAlloyText = import ./config.alloy.nix { inherit lib cfg; };
 
-  journaldWriteEndpoint =
-    if cfg.journaldWriteEndpoint != null then cfg.journaldWriteEndpoint else cfg.writeEndpoint;
+  journaldWriteEndpoint = common.journaldEndpoint cfg;
 
   # systemd-journal-upload has no option to skip client-certificate
   # loading for an https:// endpoint at all -- the server side (the

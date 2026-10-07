@@ -6,6 +6,7 @@ let
     mkEnableOption
     types
     ;
+  common = import ./common.nix { inherit lib; };
 in
 {
   options.services.victoriaCollector = {
@@ -46,13 +47,16 @@ in
     };
 
     metrics.scrapeInterval = mkOption {
-      type = types.nullOr (types.strMatching "([0-9]+(ns|us|ms|s|m|h))+");
+      type = types.nullOr common.durationType;
       default = null;
       example = "30s";
       description = ''
         Overrides Alloy's own `prometheus.scrape` default (60s) for the
         host-metrics scrape job. `null` (the default) omits the argument
-        entirely, matching Alloy's upstream default.
+        entirely, matching Alloy's upstream default. Must be longer than zero.
+        Below 10s the module also sets `scrape_timeout` to the interval:
+        Alloy's own 10s timeout default makes it exit at start when it
+        exceeds the interval.
       '';
     };
     logs.enable = mkEnableOption "shipping this host's journal (via systemd-journal-upload) to a victoriaStack gateway";
@@ -64,6 +68,24 @@ in
       docs/decisions/0002-opt-in-everything.md's same reasoning applied
       here).
     '';
+
+    traces.receiver.grpcPort = mkOption {
+      type = types.port;
+      default = 4317;
+      description = ''
+        Port of the local OTLP/gRPC receiver `traces.enable` stands up (loopback
+        only, for apps on this host). Change it when 4317 is already taken.
+      '';
+    };
+
+    traces.receiver.httpPort = mkOption {
+      type = types.port;
+      default = 4318;
+      description = ''
+        Port of the local OTLP/HTTP receiver (loopback only). Change it when 4318
+        is already taken.
+      '';
+    };
 
     writeEndpoint = mkOption {
       type = types.str;
@@ -141,7 +163,7 @@ in
 
     queue = {
       maxSizeBytes = mkOption {
-        type = types.int;
+        type = types.ints.positive;
         default = 1073741824; # 1GiB
         description = ''
           Size cap for Alloy's disk-backed write-back queue (per exporter),
@@ -198,7 +220,7 @@ in
 
       retryOnFailure = {
         initialInterval = mkOption {
-          type = types.nullOr types.str;
+          type = types.nullOr common.durationType;
           default = null;
           example = "5s";
           description = ''
@@ -209,7 +231,7 @@ in
         };
 
         maxInterval = mkOption {
-          type = types.nullOr types.str;
+          type = types.nullOr common.durationType;
           default = null;
           example = "30s";
           description = ''
@@ -220,17 +242,20 @@ in
         };
 
         maxElapsedTime = mkOption {
-          type = types.nullOr types.str;
-          default = null;
+          type = types.nullOr common.durationType;
+          default = "0s";
           example = "5m";
           description = ''
             `otelcol.exporter.otlphttp`'s
             `retry_on_failure.max_elapsed_time` -- how long a gateway
-            outage can last before Alloy gives up on a batch entirely
-            (the disk-backed `queue` block is what actually protects
-            against data loss during that window, this just bounds how
-            long any ONE batch keeps retrying). `null` (the default)
-            omits the block entirely, matching Alloy's own default (`5m`).
+            outage can last before Alloy gives up on a batch entirely.
+            The default `"0s"` means never: a batch keeps retrying until the
+            gateway is back, and the disk-backed `queue` is what bounds the
+            data held (when it is full the oldest data is dropped). Alloy's
+            own default is `5m`, after which it logs "Dropping data" even
+            though the queue still has room -- so a longer outage would lose
+            data the queue was meant to protect. Set a duration to give up
+            sooner; `null` omits the setting (Alloy's own `5m`).
           '';
         };
       };
