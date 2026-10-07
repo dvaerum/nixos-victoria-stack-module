@@ -22,6 +22,17 @@ let
     if cfg.https.acmeCertName != null then "${acmeDir}/fullchain.pem" else cfg.https.certFile;
   httpsKeySource = if cfg.https.acmeCertName != null then "${acmeDir}/key.pem" else cfg.https.keyFile;
 
+  # Secret files vmauth only reads at start (LoadCredential= copies them, the
+  # render script runs once). ACME certs are excluded: reloadServices covers them.
+  watchedSecrets = lib.filterAttrs (_: path: path != null) {
+    admin-password = cfg.adminPasswordFile;
+    read-tokens = cfg.readTokensFile;
+    write-tokens = cfg.writeTokensFile;
+    https-cert =
+      if cfg.https.enable && cfg.https.acmeCertName == null then cfg.https.certFile else null;
+    https-key = if cfg.https.enable && cfg.https.acmeCertName == null then cfg.https.keyFile else null;
+  };
+
   # Every listener in positional order: the -tls/-tlsCertFile/-tlsKeyFile
   # array flags apply to -httpListenAddr by INDEX (confirmed in vmauth's
   # source), so all four flag lists are generated from this one list with
@@ -648,5 +659,28 @@ in
         ];
       };
     };
+
+    # try-restart: a rotation while vmauth is stopped must not start it. A bad
+    # file written mid-rotation restarts vmauth into the render script's error,
+    # i.e. it fails closed.
+    systemd.services.vmauth-secret-restart = lib.mkIf (watchedSecrets != { }) {
+      description = "Restart vmauth after one of its secret files changed";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${config.systemd.package}/bin/systemctl try-restart vmauth.service";
+      };
+    };
+
+    systemd.paths = lib.mapAttrs' (
+      name: path:
+      lib.nameValuePair "vmauth-secret-watch-${name}" {
+        description = "Watch vmauth's ${name} file for replacement";
+        wantedBy = [ "multi-user.target" ];
+        pathConfig = {
+          PathChanged = path;
+          Unit = "vmauth-secret-restart.service";
+        };
+      }
+    ) watchedSecrets;
   };
 }

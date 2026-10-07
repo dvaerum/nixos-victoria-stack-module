@@ -677,6 +677,66 @@ in
     '';
   };
 
+  # Credentials are staged copies and config.json is rendered once at start, so
+  # without help a replaced token file changes nothing until vmauth restarts
+  # (verified: old token kept working after an in-place write and after a rename).
+  # The module therefore watches each secret file and restarts vmauth. Covers an
+  # in-place write and the write-new-then-rename that sops-nix does.
+  token-file-replacement-restarts-vmauth = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-token-rotation-restarts";
+
+    containers.machine = {
+      imports = [ module ];
+      # A runtime path (not a store path) so the test can replace it.
+      systemd.tmpfiles.rules = [
+        "d /var/lib/rotation 0700 root root -"
+        "f /var/lib/rotation/read.yaml 0600 root root - tokens:\\n  - token: token-generation-one\\n"
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.readTokensFile = "/var/lib/rotation/read.yaml";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_unit("vmauth-secret-watch-read-tokens.path")
+
+      def status(token):
+          return machine.succeed(
+              "curl -s -o /dev/null -w '%{http_code}' "
+              f"-H 'Authorization: Bearer {token}' "
+              "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+          ).strip()
+
+      def serves(token):
+          # vmauth restarts asynchronously after the file changes.
+          machine.wait_until_succeeds(
+              "curl -s -o /dev/null -w '%{http_code}' "
+              f"-H 'Authorization: Bearer {token}' "
+              "'http://127.0.0.1:4204/metrics/api/v1/query?query=up' | grep -qx 200",
+              timeout=60,
+          )
+
+      assert status("token-generation-one") == "200"
+
+      # In-place rewrite.
+      machine.succeed("printf 'tokens:\\n  - token: token-generation-two\\n' > /var/lib/rotation/read.yaml")
+      serves("token-generation-two")
+      assert status("token-generation-one") == "401"
+
+      # Atomic rename into place.
+      machine.succeed(
+          "printf 'tokens:\\n  - token: token-generation-three\\n' > /var/lib/rotation/read.yaml.new"
+          " && mv /var/lib/rotation/read.yaml.new /var/lib/rotation/read.yaml"
+      )
+      serves("token-generation-three")
+      assert status("token-generation-two") == "401"
+    '';
+  };
+
   # Reverse of write_token_cannot_read above, and the admin-password
   # equivalent of both -- renderConfig only ever gives the admin user
   # READ_URL_MAP_FILE (nixosModule/victoriaStack/vmauth.nix), so neither
@@ -2213,6 +2273,64 @@ in
 
   # acmeCertName is the one door option with no boot test (a real ACME issuance
   # is impossible in the sandbox): pin its wiring instead.
+  secret-watchers-cover-exactly-the-configured-secret-files =
+    pkgs.runCommand "vmauth-secret-watchers" { }
+      (
+        let
+          watchers =
+            extra:
+            let
+              e = evalWith {
+                services.victoriaStack = lib.recursiveUpdate {
+                  metrics.enable = true;
+                } extra;
+              };
+            in
+            lib.filterAttrs (n: _: lib.hasPrefix "vmauth-secret-watch-" n) e.config.systemd.paths;
+          names = extra: lib.sort (a: b: a < b) (lib.attrNames (watchers extra));
+          pathOf = extra: n: (watchers extra).${n}.pathConfig.PathChanged;
+          all = {
+            vmauth = {
+              adminPasswordFile = "/run/s/admin";
+              readTokensFile = "/run/s/read";
+              writeTokensFile = "/run/s/write";
+              https = {
+                enable = true;
+                certFile = "/run/s/cert";
+                keyFile = "/run/s/key";
+              };
+            };
+          };
+          checks = {
+            "none configured, none watched" = names { } == [ ];
+            "every operator secret is watched" =
+              names all == [
+                "vmauth-secret-watch-admin-password"
+                "vmauth-secret-watch-https-cert"
+                "vmauth-secret-watch-https-key"
+                "vmauth-secret-watch-read-tokens"
+                "vmauth-secret-watch-write-tokens"
+              ];
+            "each watcher points at its own file" =
+              pathOf all "vmauth-secret-watch-read-tokens" == "/run/s/read"
+              && pathOf all "vmauth-secret-watch-https-key" == "/run/s/key";
+            "cert files of a disabled https door are not watched" =
+              names {
+                vmauth.https = {
+                  enable = false;
+                  certFile = "/run/s/cert";
+                  keyFile = "/run/s/key";
+                };
+              } == [ ];
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "secret watchers wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
   acme-cert-name-is-wired-into-the-unit = pkgs.runCommand "vmauth-acme-cert-name-wiring" { } (
     let
       eval =

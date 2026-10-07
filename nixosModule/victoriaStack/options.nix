@@ -516,8 +516,9 @@ in
             `writeTokensFile`) to the PEM certificate chain. Staged through
             systemd `LoadCredential=`, so it never enters the Nix store.
             Set together with `keyFile`, or use `acmeCertName` instead.
-            vmauth is a copy of the file: restart it after replacing the
-            file (ACME renewals do this for you, see `acmeCertName`).
+            vmauth is a copy of the file, so replacing it restarts vmauth
+            automatically (ACME renewals do this through `reloadServices`,
+            see `acmeCertName`).
           '';
         };
 
@@ -705,6 +706,12 @@ in
           credential able to open it (vmauth itself starts and reports
           healthy regardless, so this fails silently until writes are
           actually attempted).
+
+          Replacing this file (or `readTokensFile`, `adminPasswordFile`,
+          `https.certFile`, `https.keyFile`) restarts vmauth automatically,
+          since vmauth reads them only at start. A file that is invalid
+          after the replacement makes vmauth fail at start with the
+          validation message (it fails closed).
         '';
       };
 
