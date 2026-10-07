@@ -21,9 +21,14 @@ read/admin token file.
 
 ## Format
 
-Both are YAML (not newline-separated plain text): a list of bearer tokens,
-each optionally followed by an inline `#` comment naming the host/purpose it
-belongs to. Parsed with `yq-go` (comments stripped natively by any real YAML
+Both are YAML (not newline-separated plain text): a `tokens:` list of
+objects (`- token: <value>`), each optionally followed by an inline `#`
+comment naming the host/purpose it belongs to, and optionally carrying a
+`backends: [metrics, logs, traces]` list that scopes that one token to those
+backends' routes (Phase 52; an entry without it is unscoped, the full
+tier). Originally each entry was a bare string -- that format is rejected
+with a migration message, not auto-migrated (Nix can't rewrite a
+runtime-supplied file). Parsed with `yq-go` (comments stripped natively by any real YAML
 parser) rather than `jq -R -s -c 'split("\n")...'` (today's mechanism, which
 treats the file as raw lines and has no comment concept at all). Self
 documenting without needing a side channel to remember which token is whose.

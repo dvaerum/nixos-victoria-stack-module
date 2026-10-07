@@ -487,9 +487,24 @@ in
           LoadCredential=, see docs/decisions/0008/0020) or leaks the
           plaintext secret into the world-readable store if it does) to a
           YAML file (typically sops-nix rendered) containing a `tokens:`
-          list of bearer tokens authorized for the write/ingest paths
-          only. Each entry may carry an inline `#` comment (stripped
-          automatically) naming which host/purpose it's for. See
+          list of objects, each a bearer token authorized for the
+          write/ingest paths only. Each entry may carry an inline `#`
+          comment (stripped automatically) naming which host/purpose it's
+          for, and an optional `backends` list (any of `metrics`, `logs`,
+          `traces`) scoping that one token to only those backends' ingest
+          doors; without it the token reaches every enabled backend.
+
+          ```yaml
+          tokens:
+            - token: "collector-host-a-secret"   # unscoped
+            - token: "tracing-only-host-secret"
+              backends: ["traces"]               # scoped
+          ```
+
+          **Breaking change:** entries used to be bare strings
+          (`- some-token`). That format is now rejected at vmauth start
+          with a message saying so; migrate each line to `- token: some-token`.
+          See
           docs/decisions/0003-vmauth-two-credential-tiers.md. Required
           when `requireAuthForWrites = true` and at least one storage
           service is enabled -- left unset in that combination, every
@@ -506,8 +521,14 @@ in
         description = ''
           Path (as a plain string -- see `writeTokensFile`'s description
           for why not a Nix path literal) to a YAML file (typically
-          sops-nix rendered) containing a `tokens:` list of bearer tokens
-          authorized for read + MCP paths. Deliberately a SEPARATE file
+          sops-nix rendered) containing a `tokens:` list of objects, each a
+          bearer token authorized for read + MCP paths -- same shape as
+          `writeTokensFile` (inline `#` comments; optional `backends`
+          list scoping a token to those backends' raw API *and* that
+          signal's MCP route, e.g. `backends: ["traces"]` reaches
+          `/traces/*` and `/mcp/traces` only). Entries used to be bare
+          strings; that format is now rejected with a migration message --
+          see `writeTokensFile`. Deliberately a SEPARATE file
           from `writeTokensFile` -- see
           docs/decisions/0003-vmauth-two-credential-tiers.md for why.
         '';

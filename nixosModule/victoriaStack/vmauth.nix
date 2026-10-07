@@ -138,6 +138,37 @@ let
       url_prefix = "${topCfg.traces.effectiveUrl}/";
     };
 
+  # Which url_map entries a token scoped to `backends = [ "<name>" ]` keeps:
+  # those whose src_paths start with one of that backend's prefixes. The
+  # two tiers' routes don't share one naming convention (reads live under
+  # /<backend>/..., writes under each backend's own ingest path), hence
+  # one table per tier. Kept here, next to the routes they describe, and
+  # handed to the render script as data so the prefixes aren't duplicated
+  # inside the embedded jq.
+  readBackendPrefixesFile = pkgs.writeText "vmauth-read-backend-prefixes.json" (
+    builtins.toJSON {
+      metrics = [
+        "/metrics"
+        "/mcp/metrics"
+      ];
+      logs = [
+        "/logs"
+        "/mcp/logs"
+      ];
+      traces = [
+        "/traces"
+        "/mcp/traces"
+      ];
+    }
+  );
+  writeBackendPrefixesFile = pkgs.writeText "vmauth-write-backend-prefixes.json" (
+    builtins.toJSON {
+      metrics = [ "/opentelemetry" ];
+      logs = [ "/insert/journald" ];
+      traces = [ "/insert/opentelemetry/v1/traces" ];
+    }
+  );
+
   readUrlMapFile = pkgs.writeText "vmauth-read-url-map.json" (builtins.toJSON readUrlMap);
   openIngestPathsFile = pkgs.writeText "vmauth-open-ingest-paths.json" (
     builtins.toJSON (withExtraHeaders cfg.openIngestPaths)
@@ -192,10 +223,55 @@ let
       validate_tokens_shape() {
         local file="$1"
         local tokens_json="$2"
-        if ! jq -e 'type == "array" and all(.[]; type == "string")' <<<"$tokens_json" >/dev/null; then
-          echo "vmauth-render-config: $file must contain a top-level 'tokens:' key whose value is a YAML list of strings (optionally with inline '#' comments) -- got: $tokens_json" >&2
+        local prefixes_file="$3"
+        # Pre-scoping format: a bare list of strings. Detected on its own
+        # so the failure says how to migrate rather than just "malformed".
+        if jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' <<<"$tokens_json" >/dev/null; then
+          echo "vmauth-render-config: $file lists tokens as bare strings, the old format -- each entry must now be an object: '- token: <value>' (optionally with 'backends: [metrics, logs, traces]' to scope it to those backends)" >&2
           exit 1
         fi
+        if ! jq -e 'type == "array" and all(.[]; type == "object" and (.token | type == "string") and ((.backends // []) | type == "array" and all(.[]; type == "string")))' <<<"$tokens_json" >/dev/null; then
+          # Reports only the JSON type, never the contents: the file holds
+          # secrets and this lands in the journal.
+          echo "vmauth-render-config: $file must contain a top-level 'tokens:' key whose value is a YAML list of objects, each with a string \`token\` key and an optional \`backends\` list of strings (optionally with inline '#' comments) -- got a value of type: $(jq -r type <<<"$tokens_json")" >&2
+          exit 1
+        fi
+        local unknown
+        unknown=$(jq -r --slurpfile prefixes "$prefixes_file" \
+          '[.[] | (.backends // [])[]] | unique - ($prefixes[0] | keys) | join(", ")' <<<"$tokens_json")
+        if [ -n "$unknown" ]; then
+          echo "vmauth-render-config: $file scopes a token to unknown backend(s): $unknown -- valid names: $(jq -r 'keys | join(", ")' "$prefixes_file")" >&2
+          exit 1
+        fi
+      }
+
+      # Turns one tier's token list into vmauth users: an unscoped token
+      # (no/empty `backends`) gets the tier's full url_map, a scoped one
+      # only the entries under its backends' prefixes. Echoes the new
+      # users array (the old one plus these).
+      append_token_users() {
+        local users="$1" file="$2" tokens_json="$3" urlmap_file="$4" prefixes_file="$5"
+        validate_tokens_shape "$file" "$tokens_json" "$prefixes_file"
+        local result
+        result=$(jq --argjson tokens "$tokens_json" --slurpfile urlmap "$urlmap_file" \
+          --slurpfile prefixes "$prefixes_file" \
+          '. + ($tokens | map(
+             . as $t
+             | (if (($t.backends // []) | length) == 0 then $urlmap[0]
+                else ($t.backends | map($prefixes[0][.]) | add) as $pfx
+                  | $urlmap[0] | map(select(any(.src_paths[]; . as $p | any($pfx[]; . as $pre | $p | startswith($pre)))))
+                end) as $um
+             | {bearer_token: $t.token, url_map: $um, scoped: (($t.backends // []) | length > 0), backends: ($t.backends // [])}))' <<<"$users")
+        # A scoped token left with no routes (its backends aren't enabled)
+        # would be an empty url_map, which vmauth rejects -- fail closed
+        # here with a message that doesn't echo the token itself.
+        local empty
+        empty=$(jq -r '[.[] | select(.scoped and (.url_map | length) == 0) | (.backends | join("/"))] | join(", ")' <<<"$result")
+        if [ -n "$empty" ]; then
+          echo "vmauth-render-config: $file has a token scoped to [$empty] but none of its backends is enabled -- it would have no routes" >&2
+          exit 1
+        fi
+        jq 'map(del(.scoped, .backends))' <<<"$result"
       }
 
       if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/admin-password" ]; then
@@ -206,16 +282,14 @@ let
 
       if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/read-tokens" ]; then
         read_tokens_json=$(yq -o=json '.tokens' "$credentials_directory/read-tokens")
-        validate_tokens_shape "$credentials_directory/read-tokens" "$read_tokens_json"
-        users_json=$(jq --argjson tokens "$read_tokens_json" --slurpfile urlmap "$READ_URL_MAP_FILE" \
-          '. + ($tokens | map({bearer_token: ., url_map: $urlmap[0]}))' <<<"$users_json")
+        users_json=$(append_token_users "$users_json" "$credentials_directory/read-tokens" \
+          "$read_tokens_json" "$READ_URL_MAP_FILE" "$READ_BACKEND_PREFIXES_FILE")
       fi
 
       if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/write-tokens" ]; then
         write_tokens_json=$(yq -o=json '.tokens' "$credentials_directory/write-tokens")
-        validate_tokens_shape "$credentials_directory/write-tokens" "$write_tokens_json"
-        users_json=$(jq --argjson tokens "$write_tokens_json" --slurpfile urlmap "$WRITE_URL_MAP_FILE" \
-          '. + ($tokens | map({bearer_token: ., url_map: $urlmap[0]}))' <<<"$users_json")
+        users_json=$(append_token_users "$users_json" "$credentials_directory/write-tokens" \
+          "$write_tokens_json" "$WRITE_URL_MAP_FILE" "$WRITE_BACKEND_PREFIXES_FILE")
       fi
 
       jq -n \
@@ -346,6 +420,8 @@ in
           "READ_URL_MAP_FILE=${readUrlMapFile}"
           "OPEN_INGEST_PATHS_FILE=${openIngestPathsFile}"
           "WRITE_URL_MAP_FILE=${writeUrlMapFile}"
+          "READ_BACKEND_PREFIXES_FILE=${readBackendPrefixesFile}"
+          "WRITE_BACKEND_PREFIXES_FILE=${writeBackendPrefixesFile}"
           "REQUIRE_AUTH_FOR_WRITES=${lib.boolToString cfg.requireAuthForWrites}"
         ];
 

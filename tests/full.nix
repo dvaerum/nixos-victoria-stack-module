@@ -14,11 +14,11 @@ let
   adminPasswordFixture = pkgs.writeText "full-admin-password" "full-test-admin-password";
   readTokensFixture = pkgs.writeText "full-read-tokens.yaml" ''
     tokens:
-      - full-test-read-token
+      - token: full-test-read-token
   '';
   writeTokensFixture = pkgs.writeText "full-write-tokens.yaml" ''
     tokens:
-      - full-test-write-token
+      - token: full-test-write-token
   '';
   grafanaSecretKeyFixture = pkgs.writeText "full-grafana-secret-key" "full-test-grafana-secret-key";
   grafanaAdminPasswordFixture = pkgs.writeText "full-grafana-admin-password" "full-test-grafana-admin-password";

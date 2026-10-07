@@ -14,7 +14,7 @@ let
 
   writeTokensFixture = pkgs.writeText "collector-test-write-tokens.yaml" ''
     tokens:
-      - collector-test-write-token # test fixture, not real
+      - token: collector-test-write-token # test fixture, not real
   '';
 
   # Own messages only -- the raw list also carries unrelated base-NixOS
@@ -36,8 +36,8 @@ let
   # file inline the equivalent).
   twoWriteTokensFixture = pkgs.writeText "collector-test-two-write-tokens.yaml" ''
     tokens:
-      - collector-test-write-token-a # test fixture, not real
-      - collector-test-write-token-b # test fixture, not real
+      - token: collector-test-write-token-a # test fixture, not real
+      - token: collector-test-write-token-b # test fixture, not real
   '';
   writeTokenAFixture = pkgs.writeText "collector-test-write-token-a" "collector-test-write-token-a";
   writeTokenBFixture = pkgs.writeText "collector-test-write-token-b" "collector-test-write-token-b";

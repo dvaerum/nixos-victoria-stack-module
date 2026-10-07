@@ -20,16 +20,63 @@ let
   # is a consumer concern, not something to bring into the test harness).
   writeTokensFixture = pkgs.writeText "write-tokens.yaml" ''
     tokens:
-      - write-token-one # collector-host-a
-      - write-token-two # collector-host-b
+      - token: write-token-one # collector-host-a
+      - token: write-token-two # collector-host-b
   '';
 
   readTokensFixture = pkgs.writeText "read-tokens.yaml" ''
     tokens:
-      - read-token-one # ai-client-a
+      - token: read-token-one # ai-client-a
   '';
 
   adminPasswordFixture = pkgs.writeText "admin-password" "admin-password-value";
+
+  # Per-token scoping: a token may carry `backends`, restricting it to those
+  # backends' own routes (raw API + that signal's MCP route for the read
+  # tier; the signal's ingest door for the write tier).
+  scopedReadTokensFixture = pkgs.writeText "scoped-read-tokens.yaml" ''
+    tokens:
+      - token: scoped-read-traces-only
+        backends: ["traces"]
+      - token: unscoped-read-token
+  '';
+  scopedWriteTokensFixture = pkgs.writeText "scoped-write-tokens.yaml" ''
+    tokens:
+      - token: scoped-write-metrics-only
+        backends: ["metrics"]
+      - token: unscoped-write-token
+  '';
+
+  # One container-boot test per malformed token file: vmauth must fail
+  # closed with a message naming the file and what was wrong.
+  mkBadTokensFileTest =
+    {
+      name,
+      tier, # "read" | "write"
+      yaml,
+      expectInJournal,
+      backends ? {
+        metrics.enable = true;
+      },
+    }:
+    pkgs.testers.nixosTest {
+      name = "victoria-stack-vmauth-${name}";
+
+      containers.machine = {
+        imports = [ module ];
+        services.victoriaStack = backends // {
+          vmauth."${tier}TokensFile" = "${pkgs.writeText "bad-${tier}-tokens.yaml" yaml}";
+        };
+      };
+
+      testScript = ''
+        start_all()
+        machine.fail("systemctl is-active vmauth.service")
+        machine.succeed(
+            "journalctl -u vmauth.service --no-pager | grep -qF ${lib.escapeShellArg expectInJournal}"
+        )
+      '';
+    };
 
   # Throwaway server cert for vmauth's own TLS listener (same shape as
   # tests/nginx.nix's selfSignedCert): the SAN must cover the address
@@ -1566,5 +1613,173 @@ in
           code = status(auth)
           assert code in ("400", "401", "403"), f"{name} must not reach /write, got {code}"
     '';
+  };
+
+  # --- per-token scoping ---
+
+  scoped-read-token-reaches-only-its-backends = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-scoped-read-token";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics = {
+          enable = true;
+          mcp.enable = true;
+        };
+        logs = {
+          enable = true;
+          mcp.enable = true;
+        };
+        traces = {
+          enable = true;
+          mcp.enable = true;
+        };
+        vmauth.readTokensFile = "${scopedReadTokensFixture}";
+      };
+    };
+
+    testScript = ''
+      import json
+
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      for unit in ["mcp-victoriametrics", "mcp-victorialogs", "mcp-victoriatraces"]:
+          machine.wait_for_unit(f"{unit}.service")
+      machine.wait_for_open_port(4204)
+
+      scoped = "-H 'Authorization: Bearer scoped-read-traces-only'"  # gitleaks:allow
+      unscoped = "-H 'Authorization: Bearer unscoped-read-token'"  # gitleaks:allow
+      init = (
+          "-X POST -H 'Content-Type: application/json' "
+          "-H 'Accept: application/json, text/event-stream' "
+          "-d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":"
+          "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},"
+          "\"clientInfo\":{\"name\":\"scope-test\",\"version\":\"1\"}}}'"
+      )
+
+      def code(auth, path, extra=""):
+          return machine.succeed(
+              f"curl -s -o /dev/null -w '%{{http_code}}' {auth} {extra} 'http://127.0.0.1:4204{path}'"
+          )
+
+      # The scoped token reaches its own backend: raw API and MCP route.
+      assert code(scoped, "/traces/select/jaeger/api/services") == "200"
+      assert code(scoped, "/mcp/traces", init) == "200"
+
+      # ...and nothing else, on either surface.
+      for path in ["/metrics/api/v1/labels", "/logs/select/logsql/query?query=*"]:
+          c = code(scoped, path)
+          assert c in ("400", "401", "403"), f"scoped token reached {path}: {c}"
+      for path in ["/mcp/metrics", "/mcp/logs"]:
+          c = code(scoped, path, init)
+          assert c in ("400", "401", "403"), f"scoped token reached {path}: {c}"
+
+      # An unscoped token still reaches everything (backward compatible).
+      assert code(unscoped, "/metrics/api/v1/labels") == "200"
+      assert code(unscoped, "/traces/select/jaeger/api/services") == "200"
+      assert code(unscoped, "/mcp/logs", init) == "200"
+
+      # Backward-compat guarantee at the config level: an unscoped token's
+      # url_map is exactly the full read url_map; a scoped one is a strict
+      # subset.
+      users = json.loads(machine.succeed("cat /run/vmauth/config.json"))["users"]
+      by_token = {u["bearer_token"]: u["url_map"] for u in users}
+      full = by_token["unscoped-read-token"]
+      scoped_map = by_token["scoped-read-traces-only"]
+      assert len(scoped_map) < len(full), (scoped_map, full)
+      assert all(e in full for e in scoped_map)
+    '';
+  };
+
+  scoped-write-token-reaches-only-its-backends = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-scoped-write-token";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        logs.enable = true;
+        traces.enable = true;
+        vmauth.writeTokensFile = "${scopedWriteTokensFixture}";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(4201)
+
+      scoped = "-H 'Authorization: Bearer scoped-write-metrics-only'"  # gitleaks:allow
+      unscoped = "-H 'Authorization: Bearer unscoped-write-token'"  # gitleaks:allow
+
+      # A bare status can't tell "vmauth has no route" from "the backend
+      # rejected my dummy payload" (VictoriaLogs answers 400 to a bogus
+      # journald upload) -- vmauth's own unrouted response says
+      # "missing route", so that is what's asserted on.
+      def body(auth, path):
+          return machine.succeed(
+              f"curl -s {auth} -X POST --data-binary '{{}}' 'http://127.0.0.1:4204{path}'"
+          )
+
+      machine.succeed(
+          "${otlpMetric} victoria_stack_scoped_write_metric 1 > /tmp/otlp.bin"
+      )
+      machine.succeed(
+          f"curl -sf {scoped} -X POST -H 'Content-Type: application/x-protobuf' "
+          "--data-binary @/tmp/otlp.bin 'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
+      )
+      for path in ["/insert/journald/upload", "/insert/opentelemetry/v1/traces"]:
+          assert "missing route" in body(scoped, path), f"metrics-scoped write token reached {path}"
+          # The unscoped write token still has a route to every ingest door.
+          assert "missing route" not in body(unscoped, path), f"unscoped write token has no route to {path}"
+    '';
+  };
+
+  old-bare-string-token-format-gives-a-migration-error = mkBadTokensFileTest {
+    name = "old-bare-string-token-format";
+    tier = "read";
+    yaml = ''
+      tokens:
+        - an-old-style-bare-string-token
+    '';
+    expectInJournal = "bare strings";
+  };
+
+  token-entry-without-a-token-key-is-a-legible-error = mkBadTokensFileTest {
+    name = "token-entry-without-token-key";
+    tier = "write";
+    yaml = ''
+      tokens:
+        - backends: ["metrics"]
+    '';
+    expectInJournal = "a string `token` key";
+  };
+
+  unknown-backend-name-in-a-token-is-a-legible-error = mkBadTokensFileTest {
+    name = "unknown-backend-name";
+    tier = "read";
+    yaml = ''
+      tokens:
+        - token: some-token
+          backends: ["metricz"]
+    '';
+    expectInJournal = "unknown backend";
+  };
+
+  token-scoped-only-to-a-disabled-backend-is-a-legible-error = mkBadTokensFileTest {
+    name = "scoped-to-disabled-backend";
+    tier = "read";
+    yaml = ''
+      tokens:
+        - token: some-token
+          backends: ["traces"]
+    '';
+    expectInJournal = "none of its backends is enabled";
+    # traces deliberately NOT enabled.
+    backends = {
+      metrics.enable = true;
+    };
   };
 }
