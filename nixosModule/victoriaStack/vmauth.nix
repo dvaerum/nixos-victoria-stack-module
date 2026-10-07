@@ -330,7 +330,7 @@ let
          + (if ($ENV.REQUIRE_AUTH_FOR_WRITES == "false") and (($openmap[0] | length) > 0)
             then {unauthorized_user: {access_log: {}, url_map: $openmap[0]}}
             else {} end)
-         + {users: $users}' \
+         + {users: (if $ENV.ACCESS_LOG == "true" then ($users | map(. + {access_log: {}})) else $users end)}' \
         >/run/vmauth/config.json
     '';
   };
@@ -486,6 +486,7 @@ in
           "READ_BACKEND_PREFIXES_FILE=${readBackendPrefixesFile}"
           "WRITE_BACKEND_PREFIXES_FILE=${writeBackendPrefixesFile}"
           "REQUIRE_AUTH_FOR_WRITES=${lib.boolToString cfg.requireAuthForWrites}"
+          "ACCESS_LOG=${lib.boolToString cfg.accessLog}"
         ];
 
         ExecStartPre = "${lib.getExe renderConfig}";

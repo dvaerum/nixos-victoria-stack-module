@@ -384,6 +384,30 @@ in
         '';
       };
 
+      accessLog = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Whether vmauth writes a log line for every request from a
+          credentialed user (the admin user, read tokens and write tokens).
+
+          - `false` (the default): vmauth logs a sender's address only when
+            a request FAILS (a rejected credential, or a path with no
+            route). A request that succeeds -- including every normal write
+            from a collector -- leaves no log line at all, so the journal
+            cannot tell you where a successful write came from.
+          - `true`: every request gets a log line, successful ones
+            included, and it carries the sender's real network address
+            (the address the connection came from, which the sender cannot
+            fake the way it can fake labels in the data). Use it to notice a
+            valid token being used from a machine you don't recognise. The
+            cost is one extra journal line per request.
+
+          The unauthenticated ingest door (`requireAuthForWrites = false`)
+          always logs, independent of this option.
+        '';
+      };
+
       maxConcurrentRequests = mkOption {
         type = types.nullOr types.int;
         default = null;

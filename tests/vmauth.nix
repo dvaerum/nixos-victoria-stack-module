@@ -2019,4 +2019,86 @@ in
       machine.fail("curl -sf --max-time 5 -X POST --data-binary x 'http://127.0.0.1:8080/opentelemetry/v1/metrics'")  # no token
     '';
   };
+
+  # --- accessLog (per-request log lines for credentialed users) ---
+
+  access-log-is-off-by-default-and-renders-nothing = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-access-log-default-off";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          readTokensFile = "${readTokensFixture}";
+          writeTokensFile = "${writeTokensFixture}";
+        };
+      };
+    };
+
+    testScript = ''
+      import json
+
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      users = json.loads(machine.succeed("cat /run/vmauth/config.json"))["users"]
+      assert users and all("access_log" not in u for u in users), users
+    '';
+  };
+
+  # With accessLog on, a SUCCESSFUL write from another machine leaves a log
+  # line carrying that machine's real address (without it, only failures do).
+  access-log-records-the-source-of-successful-writes = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-access-log-on";
+
+    containers.stack = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          writeTokensFile = "${writeTokensFixture}";
+          accessLog = true;
+          http.enable = true; # 0.0.0.0:8080
+        };
+      };
+      networking.firewall.allowedTCPPorts = [ 8080 ];
+    };
+
+    containers.client = {
+      virtualisation.vlans = [ 1 ];
+      environment.systemPackages = [ pkgs.curl ];
+    };
+
+    testScript = ''
+      import json
+
+      start_all()
+      stack.wait_for_unit("vmauth.service")
+      stack.wait_for_open_port(8080)
+      stack.wait_for_open_port(4201)
+      for m in (stack, client):
+          m.systemctl("start network-online.target")
+          m.wait_for_unit("network-online.target")
+
+      users = json.loads(stack.succeed("cat /run/vmauth/config.json"))["users"]
+      assert users and all("access_log" in u for u in users), users
+
+      client_ip = client.succeed(
+          "ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1"
+      ).strip()
+
+      client.succeed("${otlpMetric} victoria_stack_access_log_metric 1 > /tmp/otlp.bin")
+      client.succeed(
+          "curl -sf -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
+          "-X POST -H 'Content-Type: application/x-protobuf' --data-binary @/tmp/otlp.bin "
+          "'http://stack:8080/opentelemetry/v1/metrics'"
+      )
+      journal = stack.succeed("journalctl -u vmauth.service --no-pager -o cat")
+      lines = [l for l in journal.splitlines() if client_ip in l and "opentelemetry/v1/metrics" in l]
+      assert lines, f"no access-log line for the successful write from {client_ip}:\n{journal}"
+    '';
+  };
 }
