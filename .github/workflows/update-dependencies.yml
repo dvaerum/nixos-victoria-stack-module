@@ -7,6 +7,17 @@ name: Update dependencies
 # run on one could let the other's push land on a stale ref.
 # docs/decisions/0018.
 #
+# `needs:` alone does NOT make update-mcp-packages see update-flake's
+# own push, though -- found by a fresh-agent review, confirmed against
+# actions/checkout's own documented default: with no `ref:` override,
+# checkout resolves to the SHA that triggered the whole workflow run
+# (fixed once, identical across every job in the run), not whatever the
+# branch currently points to. Both jobs' own `git pull --rebase` right
+# before their push (added below) is the actual fix -- robust against
+# ANY other concurrent writer too (this workflow racing itself via
+# workflow_dispatch, update-docs.yml's own auto-commits, a human push),
+# not just the specific update-flake-then-update-mcp-packages ordering.
+#
 # `concurrency:` below guards the OTHER overlap this same race shape
 # allows: workflow_dispatch firing while last week's scheduled run (or a
 # previous manual one) is still mid-flight, two runs of this SAME
@@ -54,6 +65,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add flake.lock
           git commit -m "bump flake inputs"
+          git pull --rebase
           git push
 
   update-mcp-packages:
@@ -61,6 +73,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # See the top-of-file comment -- without this, checkout
+          # resolves to the SHA that triggered the run, not the branch
+          # tip update-flake just pushed to.
+          ref: ${{ github.ref }}
 
       - uses: cachix/install-nix-action@v27
         with:
@@ -90,4 +107,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add packages/
           git commit -m "mcp: bump package versions"
+          git pull --rebase
           git push

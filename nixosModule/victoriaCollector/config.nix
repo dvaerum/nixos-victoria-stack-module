@@ -97,11 +97,25 @@ in
 
       environment.etc."alloy/config.alloy".text = configAlloyText;
 
-      # Without this, alloy.service just reads the stable /etc/alloy/
-      # config.alloy path at runtime -- changing the file's CONTENT
-      # doesn't change the unit file's own hash, so NixOS activation has
-      # no reason to restart it.
-      systemd.services.alloy.restartTriggers = [ configAlloyText ];
+      # NOT systemd.services.alloy.restartTriggers -- nixpkgs' own alloy
+      # module (nixos/modules/services/monitoring/alloy.nix) already sets
+      # reloadTriggers against every environment.etc."alloy/*.alloy"
+      # source (which "alloy/config.alloy" above matches exactly),
+      # wired to ExecReload = kill -SIGHUP, specifically so config
+      # changes reload in place rather than restarting (Alloy's own
+      # module docs: "will continue running in last valid state" across
+      # a reload). A previously-added explicit restartTriggers here, set
+      # to the SAME content, shadowed that: confirmed directly in a real
+      # VM test (switch-to-configuration between two generations
+      # differing only in hostType) -- with restartTriggers present,
+      # alloy.service's MainPID changed (a genuine stop+start); with it
+      # removed, the PID stays stable (a genuine in-place reload).
+      # A hard restart here was never a deliberate choice, just an
+      # artifact of writing this before nixpkgs' own reloadTriggers
+      # existed for this module -- this fix costs a dropped OTLP
+      # receiver connection + host-metrics gap on every unrelated config
+      # change (hostType, queue size, TLS/retry tuning, writeEndpoint)
+      # for no reason.
 
       # Same-host ordering fix: if victoriaStack is composed on this same
       # host (the all-in-one single-machine deployment shape), vmauth

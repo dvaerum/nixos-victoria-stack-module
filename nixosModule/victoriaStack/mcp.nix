@@ -22,6 +22,19 @@ let
       packagePath, # directory name under ../../packages
       binaryName,
       backendUnit, # "victoriametrics.service" | "victorialogs.service" | "victoriatraces.service"
+      # mcp-victoriametrics' own config.go hardcodes this EXACT string as
+      # its fallback when MCP_DISABLED_TOOLS is unset at all (confirmed
+      # directly from its source, pinned version 1.20.2) -- a disjoint
+      # upstream default from mcp-victorialogs/mcp-victoriatraces, which
+      # both have no such default (plain os.Getenv, empty when unset).
+      # Found by a fresh-agent review, confirmed live: setting
+      # disabledTools = ["documentation"] (this option's own documented
+      # `example`) silently RE-ENABLED all 6 of these, including
+      # test_rules -- a tool that WRITES synthetic series into the live
+      # instance, directly contradicting this very service's own
+      # description string ("read-only MCP server"). Empty for
+      # logs/traces -- there is no equivalent default to preserve there.
+      upstreamDefaultDisabledTools ? [ ],
     }:
     {
       config = lib.mkIf serviceCfg.mcp.enable {
@@ -59,31 +72,40 @@ let
           // lib.optionalAttrs (serviceCfg.mcp.logFormat != null) {
             MCP_LOG_FORMAT = serviceCfg.mcp.logFormat;
           }
-          // lib.optionalAttrs (serviceCfg.mcp.disabledTools != [ ]) {
-            MCP_DISABLED_TOOLS = lib.concatStringsSep "," serviceCfg.mcp.disabledTools;
+          // lib.optionalAttrs (upstreamDefaultDisabledTools != [ ] || serviceCfg.mcp.disabledTools != [ ]) {
+            # Union, not just the user's own list -- preserves
+            # upstreamDefaultDisabledTools even when the user's list is
+            # non-empty (e.g. disabledTools = ["documentation"] must
+            # NOT silently drop metrics' own upstream-default-disabled
+            # set, see the comment on upstreamDefaultDisabledTools above).
+            MCP_DISABLED_TOOLS = lib.concatStringsSep "," (
+              lib.unique (upstreamDefaultDisabledTools ++ serviceCfg.mcp.disabledTools)
+            );
           };
 
-          # wait4x TCP-only (not wait4x http, unlike the 3 storage
-          # services' own postStart probes): confirmed no documented HTTP
-          # health endpoint exists for any of the 3 mcp-victoria*
-          # binaries, only a mere TCP accept is checkable. Without this,
-          # vmauth's own `after`/`wants` on this unit (vmauth.nix) only
-          # guaranteed this unit was started, not that it was actually
-          # listening yet -- the same class of race already fixed for
-          # vmauth itself against the storage services.
+          # wait4x http, matching the 3 storage services' own postStart
+          # probes -- all 3 mcp-victoria* binaries actually DO register
+          # a real /health/readiness endpoint (confirmed live: 200 OK
+          # against all 3), contrary to an earlier version of this
+          # comment claiming none existed. Without this, vmauth's own
+          # `after`/`wants` on this unit (vmauth.nix) only guaranteed
+          # this unit was started, not that it was actually listening
+          # yet -- the same class of race already fixed for vmauth
+          # itself against the storage services.
           path = [ pkgs.wait4x ];
           postStart =
             let
               isWildcard =
                 lib.hasPrefix "0.0.0.0:" serviceCfg.mcp.listenAddress
-                || lib.hasPrefix "[::]:" serviceCfg.mcp.listenAddress;
+                || lib.hasPrefix "[::]:" serviceCfg.mcp.listenAddress
+                || lib.hasPrefix ":" serviceCfg.mcp.listenAddress;
               bindAddr =
                 if isWildcard then
                   "127.0.0.1:${lib.last (lib.splitString ":" serviceCfg.mcp.listenAddress)}"
                 else
                   serviceCfg.mcp.listenAddress;
             in
-            "wait4x tcp ${bindAddr} --timeout 90s";
+            "wait4x http http://${bindAddr}/health/readiness --timeout 90s";
 
           serviceConfig = {
             ExecStart = "${serviceCfg.mcp.package}/bin/${binaryName}";
@@ -93,8 +115,7 @@ let
 
             # Hardening -- same general-purpose systemd profile applied
             # across this module (docs/decisions/0015). Readiness is
-            # handled above via postStart's TCP-only wait4x probe, not
-            # here.
+            # handled above via postStart's wait4x probe, not here.
             DeviceAllow = [ "/dev/null rw" ];
             DevicePolicy = "strict";
             LockPersonality = true;
@@ -146,6 +167,16 @@ in
       packagePath = "mcp-victoriametrics";
       binaryName = "mcp-victoriametrics";
       backendUnit = "victoriametrics.service";
+      # mcp-victoriametrics' own config.go, pinned version 1.20.2 --
+      # confirmed directly from source, not assumed.
+      upstreamDefaultDisabledTools = [
+        "export"
+        "flags"
+        "metric_relabel_debug"
+        "downsampling_filters_debug"
+        "retention_filters_debug"
+        "test_rules"
+      ];
     })
     (mkMcpService {
       name = "logs";

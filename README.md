@@ -64,7 +64,7 @@ code in the module itself):
 ```nix
 {
   imports = [
-    (fetchTarball "https://github.com/dvaerum/nixos-victoria-stack-module/archive/master.tar.gz" + "/nixosModule")
+    (fetchTarball "https://github.com/dvaerum/nixos-victoria-stack-module/archive/main.tar.gz" + "/nixosModule")
   ];
 }
 ```

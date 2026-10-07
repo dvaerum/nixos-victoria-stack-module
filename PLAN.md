@@ -37,7 +37,7 @@ nixosModule/
   victoriaCollector/{options,config,config.alloy...}.nix
 packages/mcp-victoria{metrics,logs,traces}/package.nix
 examples/default.nix              — same config the `full` test exercises
-tests/{default,assertions,storage,vmauth,grafana,nginx,mcp,collector,full}.nix
+tests/{default,lib,assertions,storage,vmauth,grafana,nginx,mcp,collector,full}.nix
 ```
 
 ## Options surface (agreed)
@@ -274,6 +274,109 @@ indexed by 0020.
       default-datasource auto-promotion). Confirmed clean: `nix flake
       check -L` reports "all checks passed!" with zero remaining
       failures of any kind.
+
+## Round 3: 4 parallel fresh-agent reviews post-Phase-34 + a full /grill-me
+session resolving every finding, then a 9-phase implementation pass
+(Phase 35-43)
+
+4 fresh agents (storage/collector; vmauth/nginx; grafana/mcp;
+cross-cutting), each told to verify empirically against the real,
+now-executable container-boot suite, not just read code. Every real
+finding resolved in a `/grill-me` session before any code changed;
+design decisions are ADRs 0021/0022.
+
+- [x] 35. **Critical fix**: vmauth's read tier (readTokensFile/
+      adminPasswordFile) was a blanket passthrough to each backend's
+      ENTIRE native API, not a read-only route set -- a read-token could
+      reach `/api/v1/import` (write) and `/api/v1/admin/tsdb/delete_series`
+      (permanent delete), verified live before the fix. Rewritten as a
+      curated, closed-world allow-list per backend (ADR 0021), not
+      vmauth's native `deny_paths` (fails open on a future unknown
+      endpoint; an allow-list fails closed -- the opposite failure mode).
+- [x] 36. vmauth/nginx structural fixes: `nginx.enable -> vmauth.enable`
+      assertion also now requires a real backend enabled (vmauth.enable
+      alone was structurally inert with zero backends); new
+      `backendTls.certFile`/`keyFile` both-or-neither assertion;
+      malformed-YAML validation in vmauth-render-config with a legible
+      error (confirmed RED-before-fix); full-combination container-boot
+      test (3 tiers + extraReadUrlMap + headers); credentialed write-tier
+      cross-container roundtrip tests for logs/traces (mirroring the
+      existing metrics one); custom-domain + grafana-disabled nginx
+      live-request test (the 4th and last domain x grafana.enable
+      combination).
+- [x] 37. MCP fixes: `effectiveUrl` seam (docs/decisions/0019) extended to
+      mcp.nix's own backend connection, a 4th consumer missed when that
+      ADR was written; TCP-then-HTTP wait4x readiness probe on each
+      mcp-victoria*.service + vmauth's own `after`/`wants` on all 3;
+      `mcp-reachable-only-through-vmauth` was vacuous (every route always
+      got vmauth's own 401 with no credential, never reaching the
+      backend at all) -- rewritten using a real MCP `initialize` handshake
+      + per-backend `serverInfo.name` assertion.
+- [x] 38. Grafana: 4 of 7 non-empty backend combinations had no dedicated
+      datasource-provisioning test (logs-only, traces-only,
+      metrics+logs, metrics+traces); `lib.warnIf` for
+      `grafana.enable = true` with zero backends (the only reason to use
+      this module's own grafana.enable over plain services.grafana.enable
+      is the auto-wiring, which delivers nothing with zero backends).
+- [x] 39. Fixed factually-wrong retention-period docs: metrics/logs both
+      claimed "effectively unbounded" when the flag is omitted -- false,
+      confirmed via each binary's own --help (metrics defaults to 1
+      month, logs to 7 days; traces' equivalent claim was already fixed
+      in Phase 20/ADR 0020, metrics/logs never were). Added a
+      hostType-genuinely-absent-for-logs-only regression test (already
+      correct, intentional, just untested).
+- [x] 40. journal-upload/Alloy resilience: same-host ordering
+      (`after`/`wants` on vmauth.service, safe no-op when victoriaStack
+      isn't composed on the host) for both units; cross-host fix
+      (`systemd-journal-upload.service`'s `startLimitIntervalSec = 0`,
+      disabling the permanent-stop ceiling for an intermittent-network
+      host like a laptop -- the existing escalating backoff stays
+      untouched).
+- [x] 41. nginx TLS: no new TLS/ACME option added -- `"victoria-stack"`
+      declared a stable, documented, intentional public extension point
+      (new ADR 0022) an operator adds real nginx TLS options
+      (forceSSL/addSSL, enableACME, sslCertificate*) to directly, same
+      philosophy as ADR 0010's Grafana integration. One real combined
+      HTTP+HTTPS container-boot test (throwaway self-signed cert,
+      mirroring the collector's existing dummyClientCert pattern).
+- [x] 42. Cross-cutting: `concurrency:` groups on
+      update-dependencies.yml/ci.yml/ci-stable.yml; this file's own
+      stale phase-3-11 checkboxes (fixed, pointing at Phase 34);
+      generate-doc.nix's stale usage comment; tests/full.nix expanded to
+      genuinely exercise all 3 signal types end to end through vmauth
+      (previously metrics-only) plus a real MCP `tools/call`, not just
+      the `initialize` handshake.
+- [x] 43. Final fresh-agent re-review (4 parallel agents, same scope
+      split as Round 3's start) + fix pass. Found and fixed: Alloy's
+      explicit `restartTriggers` shadowed nixpkgs' own newer
+      `reloadTriggers` for the identical content, forcing a full
+      stop+start on every collector config change where nixpkgs' alloy
+      module is specifically designed to reload in place (confirmed via
+      a real switch-to-configuration test, MainPID changed vs. stayed
+      stable); the 3 storage services' wildcard-readiness substitution
+      was missing the bare `":<port>"` form the real upstream modules
+      already handle (reproduced a genuine 5/5-then-20/20 pass/fail
+      flake); nginx had no systemd ordering on vmauth.service or
+      grafana.service at all (confirmed via `systemctl show -p After` on
+      a live container); vmauth itself got the same TCP-readiness-probe
+      treatment MCP already had; mcp-victoriametrics' own
+      `disabledTools` silently re-enabled 6 upstream-default-disabled
+      tools (including one that WRITES synthetic series) whenever the
+      option was set at all -- fixed to union with the upstream default
+      set, confirmed live both before and after; Grafana's datasource
+      provisioning added `prune: true` per Grafana's own docs, but
+      confirmed via a real switch-to-configuration test that it's
+      currently a no-op due to a known, previously-filed, only
+      very-recently-fixed upstream Grafana bug -- added anyway (correct,
+      free once the pinned package catches up) and documented honestly
+      rather than asserting a live behavior that's verifiably false
+      today; update-dependencies.yml's two-job `needs:` ordering never
+      actually protected the second job's push (actions/checkout
+      defaults to the run-triggering SHA in every job regardless of
+      `needs:`) -- fixed with `git pull --rebase` before each job's own
+      push; README.md's fetchTarball snippet pointed at a now-nonexistent
+      `master` branch (a Phase 29 fix for a since-resolved local/remote
+      mismatch, never reverted).
 
 Each phase: gate with `nix flake check -L` (run detached, polled — never a
 single tool-call timeout for a full nspawn build) + nixfmt-rfc-style clean,

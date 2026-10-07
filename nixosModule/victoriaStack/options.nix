@@ -223,11 +223,22 @@ let
             `MCP_DISABLED_TOOLS` -- confirmed identical across all three
             mcp-victoria* binaries' own READMEs (a comma-separated list
             on the wire; this option takes a real Nix list and joins it).
-            `[ ]` (the default) omits the env var entirely. Each
-            binary's own README documents its available tool names --
-            e.g. `documentation` disables an embedded vector-database
-            tool that's otherwise the dominant source of that MCP
-            server's resource usage.
+            `[ ]` (the default) adds nothing beyond whatever the binary
+            you're configuring already disables on its own. Each binary's
+            own README documents its available tool names -- e.g.
+            `documentation` disables an embedded vector-database tool
+            that's otherwise the dominant source of that MCP server's
+            resource usage.
+
+            metrics' own binary (unlike logs/traces) hardcodes 6 tools
+            disabled by default when this is left entirely unset --
+            including `test_rules`, which WRITES synthetic series into
+            the live instance -- confirmed directly from its source.
+            Setting this option for metrics is always additive on top
+            of that upstream default set (mcp.nix unions the two), never
+            a replacement for it -- so the `example` above genuinely
+            disables only `documentation`, it does not silently
+            re-enable `test_rules`/`export`/`flags`/etc.
           '';
         };
       };

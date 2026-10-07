@@ -64,15 +64,23 @@ in
           path = [ pkgs.wait4x ];
           postStart =
             let
-              # Both the IPv4 (0.0.0.0) and IPv6 ([::]) wildcard forms are
-              # legitimate -httpListenAddr values -- probing the wildcard
-              # address itself as a *destination* is unreliable across
-              # kernels/configurations, so both substitute to loopback.
-              # lib.last (lib.splitString ":" ...) extracts the port
-              # correctly either way: splitString splits on every ":",
-              # and the port is always the final fragment regardless of
-              # how many colons appear in the host part before it.
-              isWildcard = lib.hasPrefix "0.0.0.0:" cfg.listenAddress || lib.hasPrefix "[::]:" cfg.listenAddress;
+              # The IPv4 (0.0.0.0), IPv6 ([::]), and bare (":<port>", no
+              # host part at all -- confirmed a real, upstream-recognized
+              # form: the pinned nixpkgs victoriametrics/victorialogs/
+              # victoriatraces modules' own postStart handles this exact
+              # same prefix) wildcard forms are all legitimate
+              # -httpListenAddr values -- probing the wildcard address
+              # itself as a *destination* is unreliable across
+              # kernels/configurations, so all three substitute to
+              # loopback. lib.last (lib.splitString ":" ...) extracts the
+              # port correctly in every case: splitString splits on every
+              # ":", and the port is always the final fragment regardless
+              # of how many colons appear in the host part before it (or
+              # whether there's a host part at all).
+              isWildcard =
+                lib.hasPrefix "0.0.0.0:" cfg.listenAddress
+                || lib.hasPrefix "[::]:" cfg.listenAddress
+                || lib.hasPrefix ":" cfg.listenAddress;
               bindAddr =
                 if isWildcard then
                   "127.0.0.1:${lib.last (lib.splitString ":" cfg.listenAddress)}"

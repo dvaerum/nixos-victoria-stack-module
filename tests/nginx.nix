@@ -500,4 +500,46 @@ in
       )
     '';
   };
+
+  # Phase 43 fresh-agent review finding: nginx had no systemd ordering
+  # on vmauth.service or grafana.service at all -- confirmed directly
+  # via `systemctl show nginx.service -p After` on a real running
+  # container, neither unit appeared anywhere in it, only generic boot
+  # targets. tests/nginx.nix's own existing comments already document
+  # hitting the resulting race live ("nginx's proxy_pass raced it and
+  # got 502 Bad Gateway"), previously worked around only in test
+  # scripts (wait_for_open_port), never fixed at the unit level.
+  nginx-after-includes-vmauth-and-grafana-when-enabled =
+    pkgs.runCommand "nginx-after-includes-vmauth-and-grafana" { }
+      (
+        let
+          withoutGrafana = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              nginx.enable = true;
+            };
+          };
+          withGrafana = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              nginx.enable = true;
+              grafana.enable = true;
+            };
+            services.grafana.enable = true;
+          };
+          afterWithout = withoutGrafana.config.systemd.services.nginx.after;
+          afterWith = withGrafana.config.systemd.services.nginx.after;
+          checks = {
+            "vmauth in after (grafana off)" = lib.elem "vmauth.service" afterWithout;
+            "grafana NOT forced into after when disabled" = !(lib.elem "grafana.service" afterWithout);
+            "vmauth in after (grafana on)" = lib.elem "vmauth.service" afterWith;
+            "grafana in after (grafana on)" = lib.elem "grafana.service" afterWith;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "nginx.service's after is missing expected ordering: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
 }

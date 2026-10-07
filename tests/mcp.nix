@@ -9,8 +9,8 @@ let
 
   # Same shape as storage.nix's mkHardeningCheck, minus LimitNOFILE --
   # no nixpkgs module to confirm a LimitNOFILE value against here. The
-  # wait4x TCP-only readiness probe itself (mcp.nix) has its own
-  # dedicated eval check below, not folded into this one.
+  # wait4x readiness probe itself (mcp.nix) has its own dedicated eval
+  # check below, not folded into this one.
   mkMcpHardeningCheck =
     {
       name,
@@ -133,8 +133,67 @@ in
     };
   };
 
+  # logLevel/logFormat are genuinely shared/inert-unless-configured
+  # across all 3 backends -- exercised via logs here (not metrics, see
+  # the dedicated disabledTools-union tests below for why metrics' own
+  # disabledTools behavior needs separate, more specific coverage now).
   mcp-log-and-disabled-tools-options-are-inert-unless-configured =
     pkgs.runCommand "mcp-log-and-disabled-tools-inert-unless-configured" { }
+      (
+        let
+          unset = evalWith {
+            services.victoriaStack.logs = {
+              enable = true;
+              mcp.enable = true;
+            };
+          };
+          set = evalWith {
+            services.victoriaStack.logs = {
+              enable = true;
+              mcp = {
+                enable = true;
+                logLevel = "debug";
+                logFormat = "json";
+                disabledTools = [
+                  "documentation"
+                  "some-other-tool"
+                ];
+              };
+            };
+          };
+          envUnset = unset.config.systemd.services.mcp-victorialogs.environment;
+          envSet = set.config.systemd.services.mcp-victorialogs.environment;
+          checks = {
+            "MCP_LOG_LEVEL absent when unset" = !(envUnset ? MCP_LOG_LEVEL);
+            "MCP_LOG_FORMAT absent when unset" = !(envUnset ? MCP_LOG_FORMAT);
+            # logs has no upstream-default-disabled set of its own
+            # (unlike metrics, see below) -- stays absent when unset.
+            "MCP_DISABLED_TOOLS absent when unset" = !(envUnset ? MCP_DISABLED_TOOLS);
+            "MCP_LOG_LEVEL present when set" = (envSet.MCP_LOG_LEVEL or null) == "debug";
+            "MCP_LOG_FORMAT present when set" = (envSet.MCP_LOG_FORMAT or null) == "json";
+            "MCP_DISABLED_TOOLS joined with commas when set" =
+              (envSet.MCP_DISABLED_TOOLS or null) == "documentation,some-other-tool";
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "mcp logLevel/logFormat/disabledTools options broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # Phase 43 fresh-agent review finding: mcp-victoriametrics' own
+  # binary (unlike logs/traces) hardcodes 6 tools disabled by default
+  # when MCP_DISABLED_TOOLS is unset entirely -- confirmed directly
+  # from its source (pinned version 1.20.2), including test_rules,
+  # which WRITES synthetic series into the live instance. Before this
+  # fix, setting disabledTools = ["documentation"] (this option's own
+  # documented `example`) silently passed the user's list VERBATIM,
+  # dropping the upstream default entirely and re-enabling all 6 --
+  # confirmed live in a real container boot (tools/list genuinely
+  # listed test_rules/export/flags after setting disabledTools).
+  mcp-metrics-disabled-tools-preserves-upstream-defaults-even-when-set =
+    pkgs.runCommand "mcp-metrics-disabled-tools-preserves-upstream-defaults" { }
       (
         let
           unset = evalWith {
@@ -148,32 +207,73 @@ in
               enable = true;
               mcp = {
                 enable = true;
-                logLevel = "debug";
-                logFormat = "json";
-                disabledTools = [
-                  "documentation"
-                  "some-other-tool"
-                ];
+                disabledTools = [ "documentation" ];
               };
             };
           };
           envUnset = unset.config.systemd.services.mcp-victoriametrics.environment;
           envSet = set.config.systemd.services.mcp-victoriametrics.environment;
+          upstreamDefaults = [
+            "export"
+            "flags"
+            "metric_relabel_debug"
+            "downsampling_filters_debug"
+            "retention_filters_debug"
+            "test_rules"
+          ];
+          toolsUnset = lib.splitString "," (envUnset.MCP_DISABLED_TOOLS or "");
+          toolsSet = lib.splitString "," (envSet.MCP_DISABLED_TOOLS or "");
           checks = {
-            "MCP_LOG_LEVEL absent when unset" = !(envUnset ? MCP_LOG_LEVEL);
-            "MCP_LOG_FORMAT absent when unset" = !(envUnset ? MCP_LOG_FORMAT);
-            "MCP_DISABLED_TOOLS absent when unset" = !(envUnset ? MCP_DISABLED_TOOLS);
-            "MCP_LOG_LEVEL present when set" = (envSet.MCP_LOG_LEVEL or null) == "debug";
-            "MCP_LOG_FORMAT present when set" = (envSet.MCP_LOG_FORMAT or null) == "json";
-            "MCP_DISABLED_TOOLS joined with commas when set" =
-              (envSet.MCP_DISABLED_TOOLS or null) == "documentation,some-other-tool";
+            "MCP_DISABLED_TOOLS present even when unset (upstream defaults preserved)" =
+              envUnset ? MCP_DISABLED_TOOLS;
+            "upstream defaults present when unset" = lib.all (t: lib.elem t toolsUnset) upstreamDefaults;
+            "upstream defaults STILL present after setting disabledTools" = lib.all (
+              t: lib.elem t toolsSet
+            ) upstreamDefaults;
+            "user's own disabledTools entry also present" = lib.elem "documentation" toolsSet;
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
         if failed == { } then
           "echo OK > $out"
         else
-          throw "mcp logLevel/logFormat/disabledTools options broken: ${builtins.toJSON (builtins.attrNames failed)}"
+          throw "mcp-victoriametrics disabledTools union broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # Control: logs/traces have no upstream-default-disabled set of their
+  # own (confirmed from their own sources, no such hardcoded fallback),
+  # so disabledTools stays a plain, unmodified passthrough there -- the
+  # metrics-specific union above must not leak into the other two.
+  mcp-logs-and-traces-disabled-tools-stay-a-plain-passthrough =
+    pkgs.runCommand "mcp-logs-and-traces-disabled-tools-plain-passthrough" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              logs.enable = true;
+              logs.mcp = {
+                enable = true;
+                disabledTools = [ "documentation" ];
+              };
+              traces.enable = true;
+              traces.mcp = {
+                enable = true;
+                disabledTools = [ "documentation" ];
+              };
+            };
+          };
+          logsVal = evaluated.config.systemd.services.mcp-victorialogs.environment.MCP_DISABLED_TOOLS;
+          tracesVal = evaluated.config.systemd.services.mcp-victoriatraces.environment.MCP_DISABLED_TOOLS;
+          checks = {
+            "logs disabledTools stays a plain passthrough" = logsVal == "documentation";
+            "traces disabledTools stays a plain passthrough" = tracesVal == "documentation";
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "logs/traces disabledTools unexpectedly unioned with something: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
   mcp-reachable-only-through-vmauth = pkgs.testers.nixosTest {

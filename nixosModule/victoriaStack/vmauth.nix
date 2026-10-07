@@ -282,6 +282,34 @@ in
       ++ lib.optional topCfg.traces.mcp.enable "mcp-victoriatraces.service";
       wantedBy = [ "multi-user.target" ];
 
+      # vmauth has no documented HTTP health endpoint of its own to poll
+      # (docs/decisions/0015's original reasoning) -- but Phase 37 set a
+      # real precedent for exactly this situation with the 3 MCP
+      # services: a TCP-only wait4x probe, not an HTTP one. Found
+      # missing here by a fresh-agent review: nginx.nix reverse-proxies
+      # to vmauth with no systemd ordering on it at all (fixed
+      # separately, nginx.nix), and that fix is only meaningful if
+      # vmauth's own `after` consumers (nginx, and vmauth's own callers)
+      # can tell "process forked" apart from "actually listening" --
+      # confirmed directly: tests/nginx.nix's own existing comments
+      # already document hitting a real 502 race against vmauth before
+      # this, worked around in the TEST SCRIPT with wait_for_open_port,
+      # never fixed at the systemd-unit level until now.
+      path = [ pkgs.wait4x ];
+      postStart =
+        let
+          isWildcard =
+            lib.hasPrefix "0.0.0.0:" cfg.listenAddress
+            || lib.hasPrefix "[::]:" cfg.listenAddress
+            || lib.hasPrefix ":" cfg.listenAddress;
+          bindAddr =
+            if isWildcard then
+              "127.0.0.1:${lib.last (lib.splitString ":" cfg.listenAddress)}"
+            else
+              cfg.listenAddress;
+        in
+        "wait4x tcp ${bindAddr} --timeout 90s";
+
       serviceConfig = {
         LoadCredential =
           lib.optional (cfg.adminPasswordFile != null) "admin-password:${cfg.adminPasswordFile}"

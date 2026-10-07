@@ -721,4 +721,54 @@ in
     else
       throw "expected systemd-journal-upload.service's startLimitIntervalSec to be 0 (disabled), got ${toString startLimit}"
   );
+
+  # Phase 43 fresh-agent review finding: an explicit restartTriggers on
+  # alloy.service, set to the SAME content nixpkgs' own alloy module
+  # already tracks via its own reloadTriggers (nixos/modules/services/
+  # monitoring/alloy.nix, wired to ExecReload = kill -SIGHUP), shadowed
+  # that lighter mechanism and forced a full stop+start on every
+  # collector config change instead -- confirmed directly via a real
+  # switch-to-configuration between two generations differing only in
+  # hostType: MainPID changed with restartTriggers present, stayed
+  # stable once removed. A hard restart drops the local OTLP receiver
+  # (4317/4318) and host-metrics scraping for the duration, for a change
+  # Alloy's own module is specifically designed to reload in place
+  # instead. Uses nodes.machine (a real VM, not a container) --
+  # specialisation + switch-to-configuration needs a full boot, the
+  # mechanism nspawn containers don't support the same way.
+  config-change-reloads-alloy-in-place-not-a-full-restart = pkgs.testers.nixosTest {
+    name = "victoria-collector-alloy-reload-not-restart";
+
+    nodes.machine =
+      { lib, ... }:
+      {
+        imports = [ collectorModule ];
+        services.victoriaCollector = {
+          metrics.enable = true;
+          writeEndpoint = "http://127.0.0.1:4204";
+          hostType = "server-a";
+        };
+        specialisation.b.configuration = {
+          services.victoriaCollector.hostType = lib.mkForce "server-b";
+        };
+      };
+
+    testScript = ''
+      machine.start()
+      machine.wait_for_unit("alloy.service")
+      pid_before = machine.succeed("systemctl show -p MainPID --value alloy.service").strip()
+
+      machine.succeed(
+          "/run/current-system/specialisation/b/bin/switch-to-configuration test 2>&1"
+      )
+      machine.sleep(2)
+      pid_after = machine.succeed("systemctl show -p MainPID --value alloy.service").strip()
+
+      assert pid_before == pid_after, (
+          f"expected alloy.service to reload in place (same MainPID) across "
+          f"a hostType-only config change, not restart -- before={pid_before!r}, "
+          f"after={pid_after!r}"
+      )
+    '';
+  };
 }

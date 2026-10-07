@@ -59,6 +59,19 @@ let
   # the IPv4 prefix, so [::]:PORT fell through to probing the wildcard
   # address itself as a destination, unlike the documented/tested
   # 0.0.0.0 case.
+  #
+  # A THIRD wildcard form -- a bare ":<port>" with no host part at all --
+  # was added in Phase 43, found by a fresh-agent review that confirmed
+  # it empirically: the real pinned-nixpkgs victoriametrics/victorialogs/
+  # victoriatraces modules' own postStart already handles this exact
+  # prefix the same way, but this project's own isWildcard check never
+  # did, and curl (which wait4x's underlying Go HTTP client does NOT
+  # share the same failure mode with) flatly rejects a host-less URL.
+  # Reproduced directly: wait4x against a real running instance behind a
+  # bare ":<port>" listenAddress succeeded 5/5 times in one run, then
+  # timed out 20/20 times in an immediately following run -- a genuine,
+  # non-deterministic flake tied to IPv6-vs-IPv4 getaddrinfo() ordering,
+  # not a one-off fluke.
   mkWildcardReadinessCheck =
     {
       name,
@@ -79,10 +92,17 @@ let
             listenAddress = "[::]:19998";
           };
         };
+        bare = evalWith {
+          services.victoriaStack.${serviceAttr} = {
+            enable = true;
+            listenAddress = ":19998";
+          };
+        };
         postStart = evaluated: evaluated.config.systemd.services.${serviceName}.postStart;
         checks = {
           "IPv4 wildcard substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (postStart ipv4);
           "IPv6 wildcard substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (postStart ipv6);
+          "bare :port substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (postStart bare);
         };
         failed = lib.filterAttrs (_: ok: !ok) checks;
       in

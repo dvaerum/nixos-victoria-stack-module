@@ -5,7 +5,7 @@ let
   module = nixosModule.nixosModules.victoriaStack;
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) mkWarningFiresCheck mkNoWarningsCheck;
+  inherit (testLib) mkWarningFiresCheck mkNoWarningsCheck evalWith;
 
   # services.grafana.* itself is entirely the consumer's own
   # responsibility (docs/decisions/0010) -- this module only adds
@@ -290,4 +290,41 @@ in
       services.grafana.enable = true;
     };
   };
+
+  # Phase 43 fresh-agent review finding: without Grafana's own `prune:
+  # true` top-level provisioning key, a datasource removed from the
+  # file entirely (a backend disabled after having been enabled) is
+  # never actually deleted -- deleteDatasources (built from the SAME
+  # datasourceSpecs as `datasources`) is also missing that entry on the
+  # next run, so nothing ever revisits it. This only tests the Nix-level
+  # setting itself (deterministic, under this module's own control) --
+  # NOT the live Grafana behavior it's supposed to trigger. Confirmed
+  # live, repeatedly, via a real switch-to-configuration test: on the
+  # currently pinned Grafana version (13.1.6), `prune: true` does NOT
+  # actually prune anything -- a real, previously filed upstream bug
+  # (github.com/grafana/grafana/issues/94645), only very recently fixed
+  # upstream (grafana/grafana#83034), likely not yet in this pin. See
+  # grafana.nix's own comment. Asserting the live behavior here would
+  # mean asserting something currently, verifiably false upstream --
+  # the correct scope for THIS project's test suite is "did we configure
+  # the documented, correct setting", not "does Grafana's own
+  # third-party bug happen to be fixed in whatever version nixpkgs
+  # currently pins".
+  prune-is-configured-for-datasource-provisioning =
+    pkgs.runCommand "grafana-prune-is-configured" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              grafana.enable = true;
+            };
+          };
+          prune = evaluated.config.services.grafana.provision.datasources.settings.prune or null;
+        in
+        if prune == true then
+          "echo OK > $out"
+        else
+          throw "expected services.grafana.provision.datasources.settings.prune = true, got ${builtins.toJSON prune}"
+      );
 }

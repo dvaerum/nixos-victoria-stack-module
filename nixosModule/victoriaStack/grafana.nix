@@ -64,6 +64,39 @@ in
 
     services.grafana.provision.datasources.settings = {
       apiVersion = 1;
+      # Grafana's own provisioning docs: without this, a datasource
+      # that disappears from the file entirely (a backend that was
+      # enabled, then later disabled) is simply left untouched forever
+      # -- NOT the same thing deleteDatasources below already handles
+      # (that list is built from the SAME datasourceSpecs as
+      # `datasources`, so a disabled backend's entry is absent from
+      # BOTH lists on the next provisioning run, and nothing ever
+      # revisits it again). Confirmed missing by a fresh-agent review
+      # and reproduced live via a real switch-to-configuration test
+      # (metrics.enable true -> false, same real generation switch an
+      # operator would do): the VictoriaMetrics datasource stayed behind
+      # permanently, still isDefault=true, still pointing at a port
+      # nothing listens on anymore, with its type/typeName degraded
+      # once declarativePlugins also stopped installing the matching
+      # plugin.
+      #
+      # `prune: true` is Grafana's own documented mechanism for exactly
+      # this case -- but confirmed live (same test, repeated after
+      # adding this) that it does NOT yet actually prune anything on the
+      # pinned Grafana version (13.1.6): a real, previously reported
+      # upstream bug (github.com/grafana/grafana/issues/94645, "Data
+      # source: pruning doesn't work"), fixed upstream only very
+      # recently (grafana/grafana#83034). Added anyway -- it's the
+      # textbook-correct, documented setting, costs nothing today, and
+      # starts working for free the moment the pinned nixpkgs grafana
+      # package picks up a version with that fix. Until then, an
+      # operator who disables a backend needs to delete the stale
+      # datasource manually (Grafana's own UI, or
+      # `curl -X DELETE .../api/datasources/uid/<uid>`) -- this module
+      # has no way to do it for them: a disabled backend's uid isn't
+      # knowable from the CURRENT generation's config alone, there's
+      # nothing left to build a deleteDatasources entry from.
+      prune = true;
       datasources = lib.forEach datasourceSpecs (spec: {
         inherit (spec)
           name
