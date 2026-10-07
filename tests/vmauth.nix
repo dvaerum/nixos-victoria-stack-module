@@ -324,7 +324,12 @@ in
             in
             builtins.fromJSON (builtins.readFile (lib.removePrefix "${prefix}=" v));
           withHeaders = lib.all (
-            e: (e.headers or [ ]) == [ "TenantID: foobar" ] && (e.response_headers or [ ]) == [ "Server:" ]
+            e:
+            (e.headers or [ ]) == [
+              "Authorization:"
+              "TenantID: foobar"
+            ]
+            && (e.response_headers or [ ]) == [ "Server:" ]
           );
           overridden = evalWith {
             services.victoriaStack = {
@@ -350,13 +355,18 @@ in
             "headers present in an overridden OPEN_INGEST_PATHS_FILE" =
               builtins.length (fileVar "OPEN_INGEST_PATHS_FILE" overridden) == 1
               && withHeaders (fileVar "OPEN_INGEST_PATHS_FILE" overridden);
-            "no headers key anywhere when unset" = lib.all (
-              e: !(e ? headers) && !(e ? response_headers)
+            "only the Authorization strip when nothing is configured" = lib.all (
+              e: (e.headers or [ ]) == [ "Authorization:" ] && !(e ? response_headers)
             ) unsetMap;
             "headers key present on every entry when set" =
               setMap != [ ]
               && lib.all (
-                e: (e.headers or [ ]) == [ "TenantID: foobar" ] && (e.response_headers or [ ]) == [ "Server:" ]
+                e:
+                (e.headers or [ ]) == [
+                  "Authorization:"
+                  "TenantID: foobar"
+                ]
+                && (e.response_headers or [ ]) == [ "Server:" ]
               ) setMap;
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
@@ -1510,7 +1520,13 @@ in
             "in the write-tier url_map" = has "WRITE_URL_MAP_FILE";
             "NOT in the read-tier url_map" = !(has "READ_URL_MAP_FILE");
             "NOT in the open (unauthenticated) ingest paths" = !(has "OPEN_INGEST_PATHS_FILE");
-            "module-wide headers apply" = written != null && written.headers == [ "X-Extra-Write: yes" ];
+            "module-wide headers apply" =
+              written != null
+              &&
+                written.headers == [
+                  "Authorization:"
+                  "X-Extra-Write: yes"
+                ];
             "auto-derived write routes still present" = lib.any (e: e.src_paths == [ "/opentelemetry.*" ]) (
               urlMapFile "WRITE_URL_MAP_FILE" evaluated
             );
@@ -2545,7 +2561,10 @@ in
 
       # Unscoped token: the full map, extra entries byte-for-byte intact.
       full = users["unscoped-extra-read"]
-      assert {"src_paths": ["/metrics/api/v1/status/tsdb", "/logs/select/extra"], "url_prefix": "http://127.0.0.1:4201/"} in full, full
+      def has(entries, src_paths):
+          return any(e["src_paths"] == src_paths and e["url_prefix"] == "http://127.0.0.1:4201/" for e in entries)
+
+      assert has(full, ["/metrics/api/v1/status/tsdb", "/logs/select/extra"]), full
       assert len(full) > len(users["scoped-extra-metrics-only"])
 
       # Same for the write tier.
@@ -2553,7 +2572,7 @@ in
       assert "/opentelemetry/extra" in wscoped, wscoped
       for leaked in ("/insert/journald/extra", "/opentelemetryX/foo"):
           assert leaked not in wscoped, (leaked, wscoped)
-      assert {"src_paths": ["/opentelemetry/extra", "/insert/journald/extra"], "url_prefix": "http://127.0.0.1:4201/"} in users["unscoped-extra-write"]
+      assert has(users["unscoped-extra-write"], ["/opentelemetry/extra", "/insert/journald/extra"])
     '';
   };
 
@@ -2587,4 +2606,183 @@ in
       assert len(users) == 1 and all("src_paths" in e for e in users[0]["url_map"]), users
     '';
   };
+
+  # --- the caller's credential is not forwarded to backends ---
+  #
+  # vmauth proxies the Authorization header onward by default (its docs say so, and
+  # how to strip it: an empty `Authorization:` in `headers`). The built-in backends
+  # sit on loopback and ignore it, but an extra route to another host would receive
+  # every token and admin password that passes through it.
+
+  authorization-is-stripped-on-every-module-built-route =
+    pkgs.runCommand "vmauth-authorization-stripped" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics = {
+                enable = true;
+                mcp.enable = true;
+              };
+              logs.enable = true;
+              traces.enable = true;
+              vmauth.extraRequestHeaders = [ "X-Test: 1" ];
+            };
+          };
+          files = [
+            "READ_URL_MAP_FILE"
+            "WRITE_URL_MAP_FILE"
+            "OPEN_INGEST_PATHS_FILE"
+          ];
+          strips =
+            file: lib.all (e: lib.head (e.headers or [ "" ]) == "Authorization:") (urlMapFile file evaluated);
+          checks = lib.genAttrs files (f: urlMapFile f evaluated != [ ] && strips f) // {
+            "the operator's own headers follow the strip" = lib.all (
+              e:
+              e.headers == [
+                "Authorization:"
+                "X-Test: 1"
+              ]
+            ) (urlMapFile "READ_URL_MAP_FILE" evaluated);
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "Authorization is not stripped everywhere: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # For real: a tiny backend that echoes the headers it receives sits behind two
+  # extra routes; the caller's Authorization must not arrive, and a header the
+  # operator sets on an entry still wins.
+  authorization-does-not-reach-an-extra-route-backend = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-authorization-not-forwarded";
+
+    containers.machine = {
+      imports = [ module ];
+
+      systemd.services.echo-headers = {
+        wantedBy = [ "multi-user.target" ];
+        serviceConfig.ExecStart = lib.getExe (
+          pkgs.writers.writePython3Bin "echo-headers" { flakeIgnore = [ "E501" ]; } ''
+            import json
+            from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+            class Handler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    body = json.dumps({k.lower(): v for k, v in self.headers.items()}).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+                def log_message(self, *args):
+                    pass
+
+
+            HTTPServer(("127.0.0.1", 4299), Handler).serve_forever()
+          ''
+        );
+      };
+
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          adminPasswordFile = "${adminPasswordFixture}";
+          extraReadUrlMap = [
+            {
+              src_paths = [ "/echo" ];
+              url_prefix = "http://127.0.0.1:4299/";
+            }
+            {
+              src_paths = [ "/echo-entry" ];
+              url_prefix = "http://127.0.0.1:4299/";
+              headers = [ "Authorization: Bearer from-the-entry" ];
+            }
+          ];
+        };
+      };
+    };
+
+    testScript = ''
+      import json
+
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_unit("echo-headers.service")
+      machine.wait_for_open_port(4299)
+      machine.wait_for_open_port(4204)
+
+      def echoed(path):
+          return json.loads(
+              machine.succeed(f"curl -sf -u admin:admin-password-value 'http://127.0.0.1:4204{path}'")  # gitleaks:allow
+          )
+
+      plain = echoed("/echo")
+      assert "authorization" not in plain, plain
+
+      overridden = echoed("/echo-entry")
+      assert overridden.get("authorization") == "Bearer from-the-entry", overridden
+    '';
+  };
+
+  # The "matches every path" warning for the extra url maps recognised only a
+  # literal `.*` first; these spellings route everything just as well.
+  extra-url-map-match-everything-variants-warn =
+    pkgs.runCommand "vmauth-match-everything-variants" { }
+      (
+        let
+          warnsFor =
+            option: path:
+            lib.any (lib.hasInfix "matches every path") (
+              (evalWith {
+                services.victoriaStack = {
+                  metrics.enable = true;
+                  vmauth.${option} = [
+                    {
+                      src_paths = [ path ];
+                      url_prefix = "http://127.0.0.1:4201/";
+                    }
+                  ];
+                };
+              }).config.warnings
+            );
+          broad = [
+            ".*"
+            "/.*"
+            ".+"
+            "/.+"
+            "/(.*)"
+            "/(?:.*)"
+            "^/.*"
+            "(.*)"
+          ];
+          narrow = [
+            "/metrics/.*"
+            "/foo(.*)"
+            "/x.+"
+            "/custom-route"
+          ];
+          checks = lib.listToAttrs (
+            lib.concatMap
+              (
+                option:
+                map (p: lib.nameValuePair "${option} warns for ${p}" (warnsFor option p)) broad
+                ++ map (p: lib.nameValuePair "${option} does NOT warn for ${p}" (!(warnsFor option p))) narrow
+              )
+              [
+                "extraReadUrlMap"
+                "extraWriteUrlMap"
+              ]
+          );
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "match-everything warning wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
 }

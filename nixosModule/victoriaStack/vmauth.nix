@@ -58,8 +58,14 @@ let
   withExtraHeaders = map (
     entry:
     entry
-    // lib.optionalAttrs (cfg.extraRequestHeaders != [ ]) {
-      headers = cfg.extraRequestHeaders ++ (entry.headers or [ ]);
+    // {
+      # vmauth forwards the caller's Authorization header to the backend by
+      # default (its docs say so, and that an empty `Authorization:` header
+      # strips it). The built-in backends are loopback and ignore it, but a
+      # route to another host would receive every token and admin password that
+      # passes through, so every module-built route drops it first. The
+      # operator's own headers follow it, so an entry can still set its own.
+      headers = [ "Authorization:" ] ++ cfg.extraRequestHeaders ++ (entry.headers or [ ]);
     }
     // lib.optionalAttrs (cfg.extraResponseHeaders != [ ]) {
       response_headers = cfg.extraResponseHeaders ++ (entry.response_headers or [ ]);
@@ -433,7 +439,11 @@ in
       let
         matchesEverything =
           entries:
-          lib.any (e: lib.any (p: lib.hasPrefix ".*" (lib.removePrefix "/" p)) (e.src_paths or [ ])) entries;
+          # `.*`, `/.+`, `/(.*)`, `/(?:.*)`, `^/.*`, `(.*)` ...: nothing narrows the
+          # path before the wildcard. `/foo(.*)` and `/x.+` do narrow it.
+          lib.any (
+            e: lib.any (p: lib.match "\\^?/?[(]*(\\?:)?\\.[*+].*" p != null) (e.src_paths or [ ])
+          ) entries;
       in
       # LoadCredential= copies the cert at start, so vmauth only sees a
       # renewed one if it is restarted: the ACME cert must list it.
@@ -453,12 +463,12 @@ in
         ''
       ++ lib.optional (matchesEverything cfg.extraWriteUrlMap) ''
         services.victoriaStack.vmauth.extraWriteUrlMap has a src_paths
-        pattern that matches every path (it starts with a wildcard) --
+        pattern that matches every path (nothing narrows it before a wildcard) --
         every write-tier request would be routed by that entry.
       ''
       ++ lib.optional (matchesEverything cfg.extraReadUrlMap) ''
         services.victoriaStack.vmauth.extraReadUrlMap has a src_paths
-        pattern that matches every path (it starts with a wildcard) --
+        pattern that matches every path (nothing narrows it before a wildcard) --
         every read-tier request would be routed by that entry.
       ''
       ++ lib.optional (!cfg.requireAuthForWrites && cfg.writeTokensFile != null) ''

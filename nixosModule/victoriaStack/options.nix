@@ -567,9 +567,13 @@ in
         description = ''
           Extra command-line flags passed straight through to vmauth,
           appended last, for anything not worth promoting to its own
-          typed option -- e.g. vmauth's own TLS listener
-          (`-tls`/`-tlsCertFile`/`-tlsKeyFile`). Same shape as the storage
-          services' `extraFlags`.
+          typed option. Same shape as the storage services' `extraFlags`.
+
+          For a public HTTPS listener use `https` rather than `-tls` flags
+          (mixing them conflicts with the module's positional listener
+          arrays). Do not add authentication flags (`-httpAuth.*`) here: the
+          module's own callers (self-monitoring push, snapshots) carry no
+          credentials and would be refused.
         '';
       };
 
@@ -751,7 +755,19 @@ in
       extraReadUrlMap = mkOption {
         type = types.listOf types.attrs;
         default = [ ];
-        description = "Extra vmauth url_map entries for the read/admin tier, appended after the auto-derived ones.";
+        description = ''
+          Extra vmauth url_map entries for the read/admin tier, appended after
+          the auto-derived ones. Not validated against the read allow-list of
+          ADR 0021 (a pattern that matches every path only draws a warning).
+
+          Like every route this module builds, an entry drops the caller's
+          `Authorization` header before forwarding (vmauth would otherwise pass
+          every token and admin password to the backend); set your own
+          `headers` on the entry if that route needs one.
+
+          A token scoped with `backends` never receives these entries: only
+          the module's own per-backend routes match a scope.
+        '';
       };
 
       extraWriteUrlMap = mkOption {
@@ -764,6 +780,10 @@ in
           }
         ];
         description = ''
+          Like every route this module builds, these drop the caller's
+          `Authorization` header before forwarding, and a token scoped with
+          `backends` never receives them.
+
           Escape hatch: extra vmauth url_map entries appended to the
           write-tier credential's url_map (the read tier is untouched --
           see `extraReadUrlMap` for that side). Never added to the
