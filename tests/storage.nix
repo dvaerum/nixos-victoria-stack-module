@@ -38,6 +38,11 @@ let
             ];
           "LimitNOFILE" = (sc.LimitNOFILE or null) == (if expectLimitNOFILE then 1048576 else null);
           "wait4x readiness (not a hand-rolled curl loop)" = lib.hasInfix "wait4x" postStart;
+          # Orders the unit after the dataDir's own mount (e.g. a ZFS
+          # dataset) -- a no-op for the default path under /.
+          "RequiresMountsFor dataDir" =
+            (evaluated.config.systemd.services.${serviceName}.unitConfig.RequiresMountsFor or null) == toString
+              evaluated.config.services.victoriaStack.${lib.removePrefix "victoria" serviceName}.dataDir;
         };
         failed = lib.filterAttrs (_: ok: !ok) hardeningChecks;
       in
@@ -876,4 +881,74 @@ in
         )
       '';
     };
+
+  # Disk-usage retention is logs/traces only -- victoria-metrics has no
+  # such flag (its own `-help`).
+  disk-usage-retention-reaches-execstart-for-logs-and-traces =
+    pkgs.runCommand "disk-usage-retention" { }
+      (
+        let
+          execStart =
+            svc: unit: extra:
+            (evalWith {
+              services.victoriaStack.${svc} = {
+                enable = true;
+              }
+              // extra;
+            }).config.systemd.services.${unit}.serviceConfig.ExecStart;
+          perService =
+            svc: unit:
+            let
+              unset = execStart svc unit { };
+              bytes = execStart svc unit { retentionMaxDiskSpaceUsageBytes = "500GB"; };
+              percent = execStart svc unit { retentionMaxDiskUsagePercent = 80; };
+            in
+            {
+              "${svc}: absent by default" = !(lib.hasInfix "retention.maxDisk" unset);
+              "${svc}: bytes flag" = lib.hasInfix "-retention.maxDiskSpaceUsageBytes=500GB" bytes;
+              "${svc}: percent flag" = lib.hasInfix "-retention.maxDiskUsagePercent=80" percent;
+            };
+          checks =
+            perService "logs" "victorialogs"
+            // perService "traces" "victoriatraces"
+            // {
+              "not offered on metrics" =
+                !((evalWith { }).options.services.victoriaStack.metrics ? retentionMaxDiskSpaceUsageBytes);
+            };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "disk-usage retention wiring broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  disk-usage-retention-bytes-and-percent-are-mutually-exclusive =
+    pkgs.runCommand "disk-usage-retention-mutually-exclusive" { }
+      (
+        let
+          fires =
+            svc:
+            lib.any
+              (
+                m: lib.hasInfix "retentionMaxDiskSpaceUsageBytes" m && lib.hasInfix "retentionMaxDiskUsagePercent" m
+              )
+              (
+                map (a: a.message) (
+                  builtins.filter (a: !a.assertion)
+                    (evalWith {
+                      services.victoriaStack.${svc} = {
+                        enable = true;
+                        retentionMaxDiskSpaceUsageBytes = "500GB";
+                        retentionMaxDiskUsagePercent = 80;
+                      };
+                    }).config.assertions
+                )
+              );
+        in
+        if fires "logs" && fires "traces" then
+          "echo OK > $out"
+        else
+          throw "expected a mutual-exclusion assertion for both logs and traces (logs=${builtins.toJSON (fires "logs")} traces=${builtins.toJSON (fires "traces")})"
+      );
 }

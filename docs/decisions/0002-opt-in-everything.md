@@ -1,5 +1,15 @@
 # 0002: Opt-in everything, with two assertions
 
+## Status
+
+Amended in Phase 36: the first assertion below is now
+`nginx.enable -> (vmauth.enable && anyBackendEnabled)`, not just
+`nginx.enable -> vmauth.enable`. `vmauth.enable = true` with no backend
+enabled produces no vmauth service at all (vmauth.nix only activates when
+a backend is on), so the original form let nginx point at nothing. The
+bullet below keeps its original wording as the record of the first
+version.
+
 ## Decision
 
 Every feature layer (`vmauth`, `grafana`, `nginx`, each service's `mcp`) is

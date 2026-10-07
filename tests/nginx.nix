@@ -105,6 +105,61 @@ in
           throw "nginx's /victoria/ location is missing: ${builtins.toJSON (builtins.attrNames failed)}\nextraConfig was: ${extraConfig}"
       );
 
+  # The check above reads the default (1m) back out of the same eval, so a
+  # hardcoded "1m" in nginx.nix would pass it. A non-default value proves
+  # the timeouts genuinely track vmauth.idleConnTimeout (ADR 0016).
+  nginx-victoria-location-tracks-a-non-default-idle-conn-timeout =
+    pkgs.runCommand "nginx-victoria-location-tracks-non-default-timeout" { }
+      (
+        let
+          custom = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              nginx.enable = true;
+              vmauth.idleConnTimeout = "45s";
+            };
+          };
+          extraConfig =
+            custom.config.services.nginx.virtualHosts."victoria-stack".locations."/victoria/".extraConfig;
+          checks = lib.genAttrs [ "connect" "send" "read" ] (
+            kind: lib.hasInfix "proxy_${kind}_timeout 45s;" extraConfig
+          );
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "nginx timeouts did not follow vmauth.idleConnTimeout = 45s for: ${builtins.toJSON (builtins.attrNames failed)}\n${extraConfig}"
+      );
+
+  # Without these, vmauth (and anything logging behind nginx) only ever
+  # sees nginx's own loopback address as the client.
+  nginx-forwards-the-real-client-ip-on-every-proxied-location =
+    pkgs.runCommand "nginx-forwards-real-client-ip" { }
+      (
+        let
+          locs = [
+            "/victoria/"
+            "/grafana/"
+            "/grafana/api/live/"
+          ];
+          has = loc: header: lib.hasInfix header (vhost.locations.${loc}.extraConfig or "");
+          checks = lib.listToAttrs (
+            lib.concatMap (loc: [
+              (lib.nameValuePair "${loc} X-Real-IP" (has loc "proxy_set_header X-Real-IP $remote_addr;"))
+              (lib.nameValuePair "${loc} X-Forwarded-For" (
+                has loc "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
+              ))
+            ]) locs
+          );
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "missing client-IP forwarding headers: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
   nginx-grafana-live-websocket-location-exists =
     pkgs.runCommand "nginx-grafana-live-websocket-location-exists" { }
       (

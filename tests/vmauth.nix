@@ -223,7 +223,44 @@ in
             builtins.fromJSON (builtins.readFile (lib.removePrefix "READ_URL_MAP_FILE=" readUrlMapVar));
           unsetMap = envVar unset;
           setMap = envVar set;
+          # Every url_map file the module builds must carry the headers --
+          # including a user-overridden openIngestPaths, which used to
+          # bypass withExtraHeaders (it was only applied to the default).
+          fileVar =
+            prefix: evaluated:
+            let
+              v =
+                lib.findFirst (lib.hasPrefix "${prefix}=") null
+                  evaluated.config.systemd.services.vmauth.serviceConfig.Environment;
+            in
+            builtins.fromJSON (builtins.readFile (lib.removePrefix "${prefix}=" v));
+          withHeaders = lib.all (
+            e: (e.headers or [ ]) == [ "TenantID: foobar" ] && (e.response_headers or [ ]) == [ "Server:" ]
+          );
+          overridden = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              logs.enable = true;
+              vmauth = {
+                extraRequestHeaders = [ "TenantID: foobar" ];
+                extraResponseHeaders = [ "Server:" ];
+                openIngestPaths = [
+                  {
+                    src_paths = [ "/opentelemetry.*" ];
+                    url_prefix = "http://127.0.0.1:8428/";
+                  }
+                ];
+              };
+            };
+          };
           checks = {
+            "headers present in WRITE_URL_MAP_FILE when set" =
+              fileVar "WRITE_URL_MAP_FILE" set != [ ] && withHeaders (fileVar "WRITE_URL_MAP_FILE" set);
+            "headers present in default OPEN_INGEST_PATHS_FILE (not duplicated by double-wrapping)" =
+              fileVar "OPEN_INGEST_PATHS_FILE" set != [ ] && withHeaders (fileVar "OPEN_INGEST_PATHS_FILE" set);
+            "headers present in an overridden OPEN_INGEST_PATHS_FILE" =
+              builtins.length (fileVar "OPEN_INGEST_PATHS_FILE" overridden) == 1
+              && withHeaders (fileVar "OPEN_INGEST_PATHS_FILE" overridden);
             "no headers key anywhere when unset" = lib.all (
               e: !(e ? headers) && !(e ? response_headers)
             ) unsetMap;

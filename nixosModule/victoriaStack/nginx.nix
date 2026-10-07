@@ -34,8 +34,18 @@ let
   # followed verbatim per docs/decisions/0016 -- never improvised. Shared
   # between the main location and the dedicated websocket one below,
   # since both need the same Host header + prefix-stripping rewrite.
+  # Without these, vmauth/Grafana only ever see nginx's own loopback
+  # address as the client. proxy_add_x_forwarded_for appends rather than
+  # overwrites, so a client-supplied X-Forwarded-For stays in the chain
+  # but nginx's own view of the peer is always the last entry.
+  clientIpHeaders = ''
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  '';
+
   grafanaLocationExtraConfig = ''
     proxy_set_header Host $host;
+    ${clientIpHeaders}
     rewrite ^/grafana/(.*) /$1 break;
   '';
 in
@@ -125,6 +135,7 @@ in
               # uploads, not limiting max size). nginx shouldn't
               # introduce a ceiling vmauth doesn't have.
               client_max_body_size 0;
+              ${clientIpHeaders}
             '';
           };
         }

@@ -79,6 +79,53 @@ in
     };
   };
 
+  listen-address-collision-between-two-backends-fires = mkAssertionFiresCheck {
+    name = "listen-address-collision-between-two-backends-fires";
+    expectMessageSubstring = "same listenAddress";
+    module = {
+      services.victoriaStack = {
+        metrics = {
+          enable = true;
+          listenAddress = "127.0.0.1:9000";
+        };
+        logs = {
+          enable = true;
+          listenAddress = "127.0.0.1:9000";
+        };
+      };
+    };
+  };
+
+  listen-address-collision-between-mcp-and-backend-fires = mkAssertionFiresCheck {
+    name = "listen-address-collision-between-mcp-and-backend-fires";
+    expectMessageSubstring = "same listenAddress";
+    module = {
+      services.victoriaStack.metrics = {
+        enable = true;
+        listenAddress = "127.0.0.1:9000";
+        mcp = {
+          enable = true;
+          listenAddress = "127.0.0.1:9000";
+        };
+      };
+    };
+  };
+
+  # Control: a DISABLED service never binds, so sharing its address with an
+  # enabled one is not a collision.
+  listen-address-shared-with-a-disabled-service-is-fine = mkNoAssertionsFireCheck {
+    name = "listen-address-shared-with-a-disabled-service-is-fine";
+    module = {
+      services.victoriaStack = {
+        metrics = {
+          enable = true;
+          listenAddress = "127.0.0.1:9000";
+        };
+        logs.listenAddress = "127.0.0.1:9000";
+      };
+    };
+  };
+
   # Control: nginx + vmauth both on, mcp + its own backend both on -- no
   # assertion should fire.
   valid-configuration-no-assertions = mkNoAssertionsFireCheck {

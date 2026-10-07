@@ -120,7 +120,11 @@ let
   # ingestion docs (not assumed to share one shape): VictoriaMetrics' OTLP
   # receiver, VictoriaLogs' native journald-upload handler, VictoriaTraces'
   # OTLP receiver.
-  autoOpenIngestPaths = withExtraHeaders (
+  #
+  # Left unwrapped: withExtraHeaders is NOT idempotent (it concatenates
+  # headers), and a user-overridden openIngestPaths must get the headers
+  # too, so the wrap happens once, at serialization, below.
+  autoOpenIngestPaths =
     lib.optional topCfg.metrics.enable {
       src_paths = [ "/opentelemetry.*" ];
       url_prefix = "${topCfg.metrics.effectiveUrl}/";
@@ -132,18 +136,19 @@ let
     ++ lib.optional topCfg.traces.enable {
       src_paths = [ "/insert/opentelemetry/v1/traces.*" ];
       url_prefix = "${topCfg.traces.effectiveUrl}/";
-    }
-  );
+    };
 
   readUrlMapFile = pkgs.writeText "vmauth-read-url-map.json" (builtins.toJSON readUrlMap);
   openIngestPathsFile = pkgs.writeText "vmauth-open-ingest-paths.json" (
-    builtins.toJSON cfg.openIngestPaths
+    builtins.toJSON (withExtraHeaders cfg.openIngestPaths)
   );
   # Deliberately NEVER cfg.openIngestPaths -- write-tier bearer tokens are
   # a credentialed tier (docs/decisions/0003) and must stay reachable
   # regardless of how the unauthenticated/open door is sized. Always
   # derived straight from autoOpenIngestPaths; see docs/decisions/0014.
-  writeUrlMapFile = pkgs.writeText "vmauth-write-url-map.json" (builtins.toJSON autoOpenIngestPaths);
+  writeUrlMapFile = pkgs.writeText "vmauth-write-url-map.json" (
+    builtins.toJSON (withExtraHeaders autoOpenIngestPaths)
+  );
 
   # Renders /run/vmauth/config.json at service start from: the two
   # Nix-known (non-secret) url_map JSON files above, plus whichever of

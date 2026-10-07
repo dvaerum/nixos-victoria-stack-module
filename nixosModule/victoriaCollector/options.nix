@@ -70,7 +70,11 @@ in
       # otherwise break the generated syntax in a way Nix eval never
       # catches (opaque string), only Alloy's own runtime parse would --
       # a real, reproduced injection-style bug (docs/decisions/0020).
-      type = types.strMatching "[A-Za-z0-9_.-]+";
+      #
+      # nullOr so a logs-only host can omit it; assertions.nix requires it
+      # whenever metrics or traces is enabled.
+      type = types.nullOr (types.strMatching "[A-Za-z0-9_.-]+");
+      default = null;
       example = "server";
       description = ''
         A free-form label promoted onto every metric AND trace this host
@@ -83,7 +87,9 @@ in
         docs/decisions -- this module takes no position on alerting, only
         on getting the label onto the data). NOT applied to logs: that
         path goes through systemd-journal-upload directly, with no Alloy
-        pipeline to attach the label in.
+        pipeline to attach the label in, so it may be omitted when only
+        `logs.enable` is set; it is required whenever `metrics.enable` or
+        `traces.enable` is.
       '';
     };
 

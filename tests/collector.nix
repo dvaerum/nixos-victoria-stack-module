@@ -17,6 +17,14 @@ let
       - collector-test-write-token # test fixture, not real
   '';
 
+  # Own messages only -- the raw list also carries unrelated base-NixOS
+  # assertions (root fs, bootloader) the bare eval harness never satisfies.
+  ownFailed =
+    evaluated:
+    lib.filter (lib.hasInfix "services.victoriaCollector") (
+      map (a: a.message) (builtins.filter (a: !a.assertion) evaluated.config.assertions)
+    );
+
   writeTokenFixture = pkgs.writeText "collector-test-write-token" "collector-test-write-token";
 
   # Pure eval, no container boot needed: confirms the https:// branch of
@@ -307,6 +315,53 @@ in
           "echo OK > $out"
         else
           throw "journal-upload https:// branch did not render the expected settings: ${builtins.toJSON upload}"
+      );
+
+  # hostType is only needed where an Alloy pipeline exists to attach the
+  # label (metrics/traces) -- logs-only must evaluate with it omitted.
+  hostType-may-be-omitted-for-logs-only =
+    pkgs.runCommand "hostType-may-be-omitted-for-logs-only" { }
+      (
+        let
+          evaluated = evalWithCollector {
+            services.victoriaCollector = {
+              logs.enable = true;
+              writeEndpoint = "http://127.0.0.1:4204";
+              writeTokenFile = "${writeTokenFixture}";
+            };
+          };
+          failed = ownFailed evaluated;
+          # Forcing the unit set proves the module's config evaluates with
+          # hostType unset (the toplevel itself can't be forced: the bare
+          # harness never satisfies base-NixOS root-fs/bootloader asserts).
+          units = builtins.attrNames evaluated.config.systemd.services;
+        in
+        if failed == [ ] && units != [ ] then
+          "echo OK > $out"
+        else
+          throw "logs-only collector without hostType should evaluate cleanly, got: ${builtins.toJSON failed}"
+      );
+
+  hostType-required-assertion-fires-for-metrics-and-traces =
+    pkgs.runCommand "hostType-required-assertion-fires" { }
+      (
+        let
+          failedFor =
+            signal:
+            ownFailed (evalWithCollector {
+              services.victoriaCollector = {
+                ${signal}.enable = true;
+                writeEndpoint = "http://127.0.0.1:4204";
+                writeTokenFile = "${writeTokenFixture}";
+              };
+            });
+          fires =
+            signal: lib.any (lib.hasInfix "services.victoriaCollector.hostType is required") (failedFor signal);
+        in
+        if fires "metrics" && fires "traces" then
+          "echo OK > $out"
+        else
+          throw "expected the hostType-required assertion for metrics and traces; metrics=${builtins.toJSON (failedFor "metrics")} traces=${builtins.toJSON (failedFor "traces")}"
       );
 
   hostType-rejects-a-value-that-would-break-generated-alloy-syntax =

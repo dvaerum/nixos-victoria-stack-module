@@ -42,6 +42,11 @@ let
       # -- not assumed shared just because it's the same value). None of
       # the three default to unbounded.
       retentionPeriodNullBehavior,
+      # -retention.maxDisk* exists on victoria-logs/victoria-traces only
+      # (confirmed via each binary's own `-help`); an option for a flag
+      # the binary rejects would render a crash-looping unit, so it is
+      # not declared on metrics.
+      supportsDiskRetention ? false, # victoria-logs / victoria-traces only
     }:
     {
       enable = mkEnableOption name;
@@ -156,6 +161,34 @@ let
         '';
       };
 
+    }
+    // lib.optionalAttrs supportsDiskRetention {
+      retentionMaxDiskSpaceUsageBytes = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "500GB";
+        description = ''
+          `-retention.maxDiskSpaceUsageBytes` -- the maximum disk space
+          ${binaryName} may use at `dataDir` before older per-day
+          partitions are dropped, in addition to `retentionPeriod`.
+          Mutually exclusive with `retentionMaxDiskUsagePercent`. `null`
+          (the default) omits the flag.
+        '';
+      };
+
+      retentionMaxDiskUsagePercent = mkOption {
+        type = types.nullOr types.int;
+        default = null;
+        example = 80;
+        description = ''
+          `-retention.maxDiskUsagePercent` -- like
+          `retentionMaxDiskSpaceUsageBytes`, but as a percentage of the
+          filesystem holding `dataDir`. Mutually exclusive with it.
+          `null` (the default) omits the flag.
+        '';
+      };
+    }
+    // {
       mcp = {
         enable = mkEnableOption "an MCP (Model Context Protocol) server fronting this ${name} instance";
 
@@ -262,6 +295,7 @@ in
       defaultListenAddress = "127.0.0.1:4202";
       defaultMcpPort = 4206;
       retentionPeriodNullBehavior = "a 7 day default for this binary, NOT unbounded";
+      supportsDiskRetention = true;
     };
 
     traces = mkStorageServiceOptions {
@@ -273,11 +307,12 @@ in
       # -retentionPeriod defaults to 7 days, same as logs (confirmed
       # independently, not assumed shared just because it's the same
       # value) -- metrics defaults to 1 month. None of the 3 default to
-      # unbounded. See traces.nix's own ExecStart comment and
+      # unbounded. See traces.nix's header comment and
       # docs/decisions/0020 (which fixed this specifically for traces;
       # Phase 39 fixed the same factually-wrong "unbounded" claim for
       # metrics/logs).
       retentionPeriodNullBehavior = "a 7 day default for this binary, NOT unbounded";
+      supportsDiskRetention = true;
     };
 
     vmauth = {

@@ -3,6 +3,17 @@
 let
   cfg = config.services.victoriaStack;
   anyBackendEnabled = cfg.metrics.enable || cfg.logs.enable || cfg.traces.enable;
+
+  # Every listener this module would bind -- vmauth only counts when it
+  # actually activates (vmauth.nix needs a backend too).
+  enabledListenAddrs =
+    lib.optional cfg.metrics.enable cfg.metrics.listenAddress
+    ++ lib.optional cfg.logs.enable cfg.logs.listenAddress
+    ++ lib.optional cfg.traces.enable cfg.traces.listenAddress
+    ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled) cfg.vmauth.listenAddress
+    ++ lib.optional (cfg.metrics.enable && cfg.metrics.mcp.enable) cfg.metrics.mcp.listenAddress
+    ++ lib.optional (cfg.logs.enable && cfg.logs.mcp.enable) cfg.logs.mcp.listenAddress
+    ++ lib.optional (cfg.traces.enable && cfg.traces.mcp.enable) cfg.traces.mcp.listenAddress;
 in
 {
   config = {
@@ -18,6 +29,14 @@ in
 
     assertions = [
       {
+        assertion = lib.length enabledListenAddrs == lib.length (lib.unique enabledListenAddrs);
+        message = ''
+          services.victoriaStack: two enabled services are configured with
+          the same listenAddress -- the second one to start would fail to
+          bind and crash-loop. Enabled listenAddresses: ${lib.concatStringsSep ", " enabledListenAddrs}
+        '';
+      }
+      {
         assertion = cfg.nginx.enable -> (cfg.vmauth.enable && anyBackendEnabled);
         message = ''
           services.victoriaStack.nginx.enable requires
@@ -30,6 +49,29 @@ in
           on the vmauth.enable default), so `vmauth.enable = true` with
           zero backends produces no actual vmauth service for nginx to
           reverse-proxy to.
+        '';
+      }
+      {
+        assertion =
+          !(
+            cfg.logs.retentionMaxDiskSpaceUsageBytes != null && cfg.logs.retentionMaxDiskUsagePercent != null
+          );
+        message = ''
+          services.victoriaStack.logs.retentionMaxDiskSpaceUsageBytes and
+          services.victoriaStack.logs.retentionMaxDiskUsagePercent are
+          mutually exclusive -- set only one of them.
+        '';
+      }
+      {
+        assertion =
+          !(
+            cfg.traces.retentionMaxDiskSpaceUsageBytes != null
+            && cfg.traces.retentionMaxDiskUsagePercent != null
+          );
+        message = ''
+          services.victoriaStack.traces.retentionMaxDiskSpaceUsageBytes and
+          services.victoriaStack.traces.retentionMaxDiskUsagePercent are
+          mutually exclusive -- set only one of them.
         '';
       }
       {
