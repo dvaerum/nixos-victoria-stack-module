@@ -514,7 +514,9 @@ in
             vmauth's `-backend.tlsCAFile` -- CA bundle for verifying
             backend TLS certificates. A real Nix path is fine here (unlike
             the credential options above): a CA bundle is public by
-            nature, not a runtime-staged secret.
+            nature, not a runtime-staged secret. It is still staged through
+            systemd `LoadCredential=` like every other TLS file, so the file's
+            owner and mode don't matter to vmauth's dynamic user.
           '';
         };
 

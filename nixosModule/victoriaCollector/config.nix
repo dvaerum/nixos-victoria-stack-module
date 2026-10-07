@@ -140,6 +140,13 @@ in
       # case queue.directory's own docs invite -- needs an explicit
       # ReadWritePaths entry or it fails silently at Alloy's own runtime,
       # uncaught by Nix eval or systemd itself. See docs/decisions/0020.
+      # The CA bundle reaches Alloy's dynamic user as a systemd credential
+      # (config.alloy.nix points ca_file at it), so the file's owner and mode
+      # don't matter -- same rule as every other TLS/secret file here.
+      systemd.services.alloy.serviceConfig.LoadCredential = lib.optional (
+        cfg.alloy.tlsCaFile != null
+      ) "tls-ca:${toString cfg.alloy.tlsCaFile}";
+
       systemd.services.alloy.serviceConfig.ReadWritePaths = lib.optional (
         !(lib.hasPrefix "/var/lib/alloy/" (toString cfg.queue.directory))
       ) (toString cfg.queue.directory);
@@ -186,9 +193,14 @@ in
         // lib.optionalAttrs (lib.hasPrefix "https" journaldWriteEndpoint) {
           ServerKeyFile = "${dummyClientCert}/key.pem";
           ServerCertificateFile = "${dummyClientCert}/cert.pem";
-          TrustedCertificateFile = toString cfg.trustedCertificateFile;
+          # Staged as a credential (below), so the bundle's owner/mode don't
+          # matter to systemd-journal-upload's dynamic user.
+          TrustedCertificateFile = "/run/credentials/systemd-journal-upload.service/trusted-ca";
         };
       };
+
+      systemd.services.systemd-journal-upload.serviceConfig.LoadCredential =
+        lib.optional (lib.hasPrefix "https" journaldWriteEndpoint) "trusted-ca:${toString cfg.trustedCertificateFile}";
 
       # The write-token header drop-in: a dedicated, narrowly-scoped root
       # oneshot, NOT systemd-journal-upload.service's own preStart -- see

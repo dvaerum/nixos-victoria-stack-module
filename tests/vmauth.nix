@@ -254,7 +254,9 @@ in
           checks = {
             "flags absent when unset" = !(lib.hasInfix "backend.tls" execStartUnset);
             "insecureSkipVerify flag present" = lib.hasInfix "-backend.tlsInsecureSkipVerify=true" execStartSet;
-            "caFile flag present" = lib.hasInfix "-backend.tlsCAFile=" execStartSet;
+            "caFile references %d (LoadCredential), not a literal path" =
+              lib.hasInfix "-backend.tlsCAFile=%d/backend-tls-ca" execStartSet;
+            "caFile staged via LoadCredential" = lib.any (lib.hasPrefix "backend-tls-ca:") loadCredentialSet;
             "certFile/keyFile reference %d (LoadCredential), not a literal path" =
               lib.hasInfix "-backend.tlsCertFile=%d/backend-tls-cert" execStartSet
               && lib.hasInfix "-backend.tlsKeyFile=%d/backend-tls-key" execStartSet;

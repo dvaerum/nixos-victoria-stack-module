@@ -351,7 +351,10 @@ in
           checks = [
             (upload ? ServerKeyFile)
             (upload ? ServerCertificateFile)
-            (upload.TrustedCertificateFile == "/etc/ssl/certs/ca-certificates.crt")
+            # The CA bundle reaches the DynamicUser unit as a credential,
+            # not as a path whose ownership/permissions matter.
+            (upload.TrustedCertificateFile == "/run/credentials/systemd-journal-upload.service/trusted-ca")
+            (lib.elem "trusted-ca:/etc/ssl/certs/ca-certificates.crt" httpsEvaluated.config.systemd.services.systemd-journal-upload.serviceConfig.LoadCredential)
             (upload.URL == "https://victoria-stack.example.invalid:4204/insert/journald")
           ];
         in
@@ -533,6 +536,15 @@ in
             "insecure_skip_verify set on both exporters" =
               countOccurrences "insecure_skip_verify = true" textSet == 2;
             "ca_file set on both exporters" = countOccurrences "ca_file" textSet == 2;
+            "ca_file points at alloy's credential, not the original path" =
+              lib.hasInfix "/run/credentials/alloy.service/tls-ca" textSet && !(lib.hasInfix "lib.nix" textSet);
+            "tlsCaFile staged via LoadCredential on alloy.service" = lib.any (lib.hasPrefix "tls-ca:") (
+              set.config.systemd.services.alloy.serviceConfig.LoadCredential or [ ]
+            );
+            "no alloy credential when tlsCaFile is unset" =
+              !(lib.any (lib.hasPrefix "tls-ca:") (
+                unset.config.systemd.services.alloy.serviceConfig.LoadCredential or [ ]
+              ));
             "initial_interval set on both exporters" =
               countOccurrences ''initial_interval = "1s"'' textSet == 2;
             "max_interval set on both exporters" = countOccurrences ''max_interval = "10s"'' textSet == 2;

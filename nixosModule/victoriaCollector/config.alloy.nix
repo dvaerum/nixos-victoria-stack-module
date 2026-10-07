@@ -43,7 +43,7 @@ let
     tls {
     ${lib.optionalString (
       cfg.alloy.tlsCaFile != null
-    ) "  ca_file = \"${toString cfg.alloy.tlsCaFile}\""}
+    ) "  ca_file = \"/run/credentials/alloy.service/tls-ca\""}
     ${lib.optionalString cfg.alloy.tlsInsecureSkipVerify "  insecure_skip_verify = true"}
     }
   '';

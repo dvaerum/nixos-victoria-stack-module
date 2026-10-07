@@ -468,6 +468,10 @@ in
           lib.optional (cfg.adminPasswordFile != null) "admin-password:${cfg.adminPasswordFile}"
           ++ lib.optional (cfg.readTokensFile != null) "read-tokens:${cfg.readTokensFile}"
           ++ lib.optional (cfg.writeTokensFile != null) "write-tokens:${cfg.writeTokensFile}"
+          # Every TLS file goes through LoadCredential, public CA bundle
+          # included: vmauth's DynamicUser then never depends on who owns
+          # the file or what its mode is.
+          ++ lib.optional (cfg.backendTls.caFile != null) "backend-tls-ca:${toString cfg.backendTls.caFile}"
           ++ lib.optional (cfg.backendTls.certFile != null) "backend-tls-cert:${cfg.backendTls.certFile}"
           ++ lib.optional (cfg.backendTls.keyFile != null) "backend-tls-key:${cfg.backendTls.keyFile}"
           ++ lib.optionals cfg.https.enable [
@@ -512,7 +516,7 @@ in
             cfg.maxConcurrentPerUserRequests != null
           ) "-maxConcurrentPerUserRequests=${toString cfg.maxConcurrentPerUserRequests}"
           ++ lib.optional cfg.backendTls.insecureSkipVerify "-backend.tlsInsecureSkipVerify=true"
-          ++ lib.optional (cfg.backendTls.caFile != null) "-backend.tlsCAFile=${cfg.backendTls.caFile}"
+          ++ lib.optional (cfg.backendTls.caFile != null) "-backend.tlsCAFile=%d/backend-tls-ca"
           # %d expands to $CREDENTIALS_DIRECTORY at the service manager
           # level (same pattern nixpkgs' own victoriametrics.nix module
           # uses for -httpAuth.password=file://%d/basic_auth_password) --
