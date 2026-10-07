@@ -111,7 +111,9 @@ in
               lib.hasInfix "proxy_send_timeout ${idleConnTimeout}" extraConfig;
             "proxy_read_timeout mirrors vmauth.idleConnTimeout" =
               lib.hasInfix "proxy_read_timeout ${idleConnTimeout}" extraConfig;
-            "client_max_body_size is unbounded" = lib.hasInfix "client_max_body_size 0;" extraConfig;
+            "client_max_body_size is the 8m default" = lib.hasInfix "client_max_body_size 8m;" extraConfig;
+            "request buffering is off (vmauth checks the token first)" =
+              lib.hasInfix "proxy_request_buffering off;" extraConfig;
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
@@ -259,6 +261,24 @@ in
       # succeed: Grafana's HTTP port opens before its own startup
       # migrations finish, so a one-shot request can still race it.
       machine.wait_until_succeeds("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
+
+      # Grafana must know it lives under /grafana/: nginx strips the prefix, so
+      # without root_url its redirects (Location: /login) and its <base href="/">
+      # point outside /grafana/, which nginx does not proxy -- the page loads but
+      # the browser then asks for /login and /public/... and gets nothing.
+      headers = machine.succeed("curl -sI 'http://127.0.0.1:80/grafana/'")
+      assert "/grafana/login" in headers, headers
+      login = machine.succeed("curl -s 'http://127.0.0.1:80/grafana/login'")
+      assert '<base href="/grafana/"' in login, login[:500]
+      import re
+      # A script asset, however the page spells the path (relative to the
+      # <base href>, or already absolute under /grafana/).
+      asset = re.search(r'(?:src|href)="((?:/grafana/)?public/[^"]+\.js)"', login)
+      scripts = re.findall(r"<script[^>]*>", login)
+      assert asset, f"no public/*.js asset in the login page; script tags: {scripts[:5]}"
+      path = asset.group(1)
+      path = path if path.startswith("/") else "/grafana/" + path
+      machine.succeed(f"curl -sf -o /dev/null 'http://127.0.0.1:80{path}'")
 
       # /victoria/ reaches vmauth through nginx, which in turn reaches the
       # metrics backend -- a credentialed read, since /victoria/ is
@@ -815,6 +835,173 @@ in
       assert status("/victoria/custom-route/api/v1/labels") == "200"
       # Not in extraReadPaths, so nginx refuses it before vmauth is asked.
       assert status("/victoria/other-route/api/v1/labels") == "404"
+    '';
+  };
+
+  # --- Grafana root_url default ---
+
+  grafana-root-url-default-behind-nginx = pkgs.runCommand "grafana-root-url-default" { } (
+    let
+      rootUrl =
+        m:
+        (evalWith (
+          {
+            services.grafana = {
+              enable = true;
+              settings.security.secret_key = "$__file{${secretKeyFixture}}";
+            };
+          }
+          // m
+        )).config.services.grafana.settings.server.root_url or null;
+      stackOn = {
+        metrics.enable = true;
+        grafana.enable = true;
+        nginx.enable = true;
+      };
+      checks = {
+        "set under /grafana/ when grafana and nginx are both on" = lib.hasSuffix "/grafana/" (rootUrl {
+          services.victoriaStack = stackOn;
+        });
+        "not forced under /grafana/ when nginx is off" =
+          !(lib.hasSuffix "/grafana/" (rootUrl {
+            services.victoriaStack = stackOn // {
+              nginx.enable = false;
+            };
+          }));
+        "an operator value wins" =
+          rootUrl {
+            services = {
+              victoriaStack = stackOn;
+              grafana.settings.server.root_url = "https://example.invalid/grafana/";
+            };
+          } == "https://example.invalid/grafana/";
+      };
+      serveFromSubPath =
+        (evalWith {
+          services.grafana = {
+            enable = true;
+            settings.security.secret_key = "$__file{${secretKeyFixture}}";
+          };
+          services.victoriaStack = stackOn;
+        }).config.services.grafana.settings.server.serve_from_sub_path or false;
+      failed = lib.filterAttrs (_: ok: !ok) (
+        checks
+        // {
+          "serve_from_sub_path stays off (the proxy strips the prefix)" = serveFromSubPath != true;
+        }
+      );
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "grafana root_url default broken: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # --- request bodies on /victoria/ ---
+
+  nginx-body-limit-option-renders-and-validates = pkgs.runCommand "nginx-body-limit-option" { } (
+    let
+      configFor =
+        m:
+        (evalWith {
+          services.victoriaStack = {
+            metrics.enable = true;
+            nginx = {
+              enable = true;
+            }
+            // m;
+          };
+        }).config.services.nginx.virtualHosts."victoria-stack";
+      readLoc =
+        v:
+        v.locations.${
+          lib.findFirst (lib.hasPrefix "~ ^/victoria/") "MISSING" (builtins.attrNames v.locations)
+        };
+      extra = m: (readLoc (configFor m)).extraConfig;
+      optType = (evalWith { }).options.services.victoriaStack.nginx.maxRequestBodySize.type;
+      checks = {
+        "default is 8m" = lib.hasInfix "client_max_body_size 8m;" (extra { });
+        "custom value renders" = lib.hasInfix "client_max_body_size 2m;" (extra {
+          maxRequestBodySize = "2m";
+        });
+        "0 renders as unlimited" = lib.hasInfix "client_max_body_size 0;" (extra {
+          maxRequestBodySize = "0";
+        });
+        "request buffering is off for every setting" =
+          lib.hasInfix "proxy_request_buffering off;" (extra { })
+          && lib.hasInfix "proxy_request_buffering off;" (extra {
+            maxRequestBodySize = "0";
+          });
+        "accepts nginx size forms" = lib.all optType.check [
+          "512k"
+          "8m"
+          "1g"
+          "100"
+          "0"
+        ];
+        "rejects things nginx would not parse" =
+          !(lib.any optType.check [
+            "abc"
+            "8mb"
+            "-1"
+            "1.5m"
+            ""
+          ]);
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "nginx body limit broken: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # For real: an oversized body is refused by nginx at once (413, judged from
+  # Content-Length before any body is read), and a body under the cap with a valid
+  # token still reaches vmauth.
+  nginx-oversized-bodies-are-refused-and-normal-reads-pass = pkgs.testers.nixosTest {
+    name = "victoria-stack-nginx-body-limit";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        nginx = {
+          enable = true;
+          maxRequestBodySize = "1m";
+        };
+        vmauth.adminPasswordFile = "${adminPasswordFixture}";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("nginx.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(80)
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
+
+      machine.succeed("head -c 3000000 /dev/zero > /tmp/big.bin")
+      machine.succeed("head -c 100000 /dev/zero | tr '\\0' 'a' > /tmp/ok.bin")
+      url = "http://127.0.0.1:80/victoria/metrics/api/v1/labels"
+      auth = "-u admin:nginx-admin-password"  # gitleaks:allow
+
+      def post(path_to_body, extra=""):
+          return machine.succeed(
+              f"curl -s -o /dev/null -w '%{{http_code}}' {extra} -X POST "
+              f"-H 'Content-Type: application/octet-stream' --data-binary @{path_to_body} '{url}'"
+          ).strip()
+
+      # Oversized: refused by nginx whoever sends it, with or without a token.
+      assert post("/tmp/big.bin") == "413"
+      assert post("/tmp/big.bin", auth) == "413"
+      # Under the cap with a valid token: it reaches vmauth (and gets through to
+      # the backend, whose own answer is not a 401/413).
+      code = post("/tmp/ok.bin", auth)
+      assert code not in ("401", "413"), code
+      # Under the cap without a token: vmauth's own 401, not nginx's.
+      assert post("/tmp/ok.bin") == "401"
     '';
   };
 }

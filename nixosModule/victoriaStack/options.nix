@@ -808,6 +808,24 @@ in
         '';
       };
 
+      maxRequestBodySize = mkOption {
+        type = types.strMatching "[0-9]+[kKmMgG]?";
+        default = "8m";
+        example = "1m";
+        description = ''
+          Largest request body nginx accepts on `/victoria/` (nginx's
+          `client_max_body_size`). A larger request is refused at once with a 413,
+          judged from its Content-Length before any body is read. Reads need tiny
+          bodies (the backends themselves refuse queries over 16 KiB), so the
+          default has ample headroom. nginx also streams bodies straight through
+          (`proxy_request_buffering off`), so vmauth checks the credential first
+          and no temporary file is written.
+
+          `"0"` means unlimited and removes that protection: any client could
+          make nginx carry an arbitrarily large body before vmauth rejects it.
+        '';
+      };
+
       extraReadPaths = mkOption {
         type = types.listOf (types.strMatching "[A-Za-z0-9_.-]+");
         default = [ ];

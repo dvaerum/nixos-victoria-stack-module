@@ -2261,6 +2261,7 @@ in
       for port in (4204, 8443, 8080, 4208):
           machine.wait_for_open_port(port)
       machine.wait_for_unit("nginx.service")
+      machine.wait_for_open_port(80)
 
       pages = ["/health", "/metrics", "/flags", "/debug/pprof/", "/-/reload"]
 

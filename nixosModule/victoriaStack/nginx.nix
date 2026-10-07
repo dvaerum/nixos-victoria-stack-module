@@ -37,7 +37,8 @@ let
     "traces"
     "mcp"
   ]
-  ++ cfg.extraReadPaths;
+  # Escaped: a "." in an operator's segment must not act as a regex wildcard.
+  ++ map lib.escapeRegex cfg.extraReadPaths;
 
   # Grafana's own official sub-path config
   # (grafana.com/tutorials/run-grafana-behind-a-proxy/), fetched live and
@@ -88,6 +89,16 @@ in
       "vmauth.service"
     ]
     ++ lib.optional topCfg.grafana.enable "grafana.service";
+
+    # nginx strips /grafana/ before proxying, so Grafana has to be told it is
+    # served from that sub-path: its redirects and <base href> then stay under
+    # /grafana/ (only the PATH of root_url matters; the host part is only used for
+    # absolute links such as alert emails). serve_from_sub_path stays false because
+    # the proxy already strips the prefix -- true would 301 the stripped request.
+    # An operator's own value wins.
+    services.grafana.settings.server.root_url = lib.mkIf topCfg.grafana.enable (
+      lib.mkDefault "%(protocol)s://%(domain)s/grafana/"
+    );
 
     services.nginx = {
       enable = true;
@@ -141,14 +152,14 @@ in
               proxy_connect_timeout ${topCfg.vmauth.idleConnTimeout};
               proxy_send_timeout ${topCfg.vmauth.idleConnTimeout};
               proxy_read_timeout ${topCfg.vmauth.idleConnTimeout};
-              # vmauth itself has no body-size ceiling of its own --
-              # confirmed from its real upstream docs: it only has
-              # request body BUFFERING
-              # (-requestBufferSize/-maxQueueDuration, a different
-              # concept -- freeing backend connections sooner on slow
-              # uploads, not limiting max size). nginx shouldn't
-              # introduce a ceiling vmauth doesn't have.
-              client_max_body_size 0;
+              # vmauth has no body-size ceiling of its own (its request buffering
+              # is a different thing), and /victoria/ only carries reads (writes go
+              # to vmauth's own doors, ADR 0025): so nginx is where an anonymous
+              # client's oversized body gets stopped. Unbuffered, so vmauth checks
+              # the credential before the body is accepted and no temp file is
+              # written; capped, so nobody streams unlimited data through nginx.
+              proxy_request_buffering off;
+              client_max_body_size ${cfg.maxRequestBodySize};
               ${clientIpHeaders}
             '';
           };
