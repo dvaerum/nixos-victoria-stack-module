@@ -1060,8 +1060,11 @@ in
           "${attr}: enabled -> default maxAge 30d" = lib.hasInfix "-snapshotsMaxAge=30d" (execStart on);
           "${attr}: default schedule is daily" =
             on.config.systemd.timers."${unit}-snapshot".timerConfig.OnCalendar == "daily";
-          "${attr}: maxAge = null -> pruning flag absent but creation timer remains" =
-            !(lib.hasInfix "snapshotsMaxAge" (execStart noPrune)) && hasUnits noPrune;
+          # null must DISABLE pruning: omitting the flag would leave the binaries'
+          # own 3d default in force (confirmed from each binary's -help), so a
+          # snapshot an operator meant to keep would be deleted.
+          "${attr}: maxAge = null -> -snapshotsMaxAge=0 and the creation timer remains" =
+            lib.hasInfix "-snapshotsMaxAge=0" (execStart noPrune) && hasUnits noPrune;
           "${attr}: custom maxAge and schedule render" =
             lib.hasInfix "-snapshotsMaxAge=7d" (execStart custom)
             && custom.config.systemd.timers."${unit}-snapshot".timerConfig.OnCalendar == "hourly";
@@ -1409,4 +1412,93 @@ in
         else
           throw "selfMonitoring conflict warning broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
+
+  # --- option validation ---
+
+  data-dir-given-as-a-string-equal-to-the-default-does-not-warn =
+    let
+      warns =
+        attr: dir:
+        lib.any (lib.hasInfix "changed away from the default") (
+          (evalWith {
+            services.victoriaStack.${attr} = {
+              enable = true;
+              dataDir = dir;
+            };
+          }).config.warnings
+        );
+    in
+    pkgs.runCommand "data-dir-string-default" { } (
+      let
+        checks = {
+          "metrics, the default as a string" = !(warns "metrics" "/var/lib/victoriametrics");
+          "logs, the default as a string" = !(warns "logs" "/var/lib/victorialogs");
+          "traces, the default as a string" = !(warns "traces" "/var/lib/victoriatraces");
+          "a real custom dir still warns" = warns "metrics" "/srv/vm";
+        };
+        failed = lib.filterAttrs (_: ok: !ok) checks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "dataDir warning wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
+
+  retention-max-disk-usage-percent-is-bounded =
+    let
+      opt = attr: (evalWith { }).options.services.victoriaStack.${attr}.retentionMaxDiskUsagePercent.type;
+      accepts = attr: v: (opt attr).check v;
+    in
+    pkgs.runCommand "retention-percent-bounds" { } (
+      let
+        checks = lib.listToAttrs (
+          lib.concatMap
+            (attr: [
+              (lib.nameValuePair "${attr}: 1 accepted" (accepts attr 1))
+              (lib.nameValuePair "${attr}: 100 accepted" (accepts attr 100))
+              (lib.nameValuePair "${attr}: 0 rejected" (!(accepts attr 0)))
+              (lib.nameValuePair "${attr}: 101 rejected (VictoriaLogs dies at start with it)" (
+                !(accepts attr 101)
+              ))
+              (lib.nameValuePair "${attr}: null still means off" (accepts attr null))
+            ])
+            [
+              "logs"
+              "traces"
+            ]
+        );
+        failed = lib.filterAttrs (_: ok: !ok) checks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "retention percent bounds wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
+
+  # A slow open of a large data directory must not be killed: the readiness probe
+  # used to wait exactly as long as systemd's default start timeout (90s), so the
+  # two expired together and Restart=on-failure looped.
+  storage-start-timeouts-leave-room-for-a-slow-open = pkgs.runCommand "storage-start-timeouts" { } (
+    let
+      perUnit =
+        attr: unit:
+        let
+          sc = (evalWith { services.victoriaStack.${attr}.enable = true; }).config.systemd.services.${unit};
+        in
+        {
+          "${unit}: readiness waits up to 5 minutes" = lib.hasInfix "--timeout 5m" sc.postStart;
+          "${unit}: TimeoutStartSec is 6 minutes, above the probe" =
+            sc.serviceConfig.TimeoutStartSec == "6min";
+        };
+      checks =
+        perUnit "metrics" "victoriametrics"
+        // perUnit "logs" "victorialogs"
+        // perUnit "traces" "victoriatraces";
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "storage start timeouts wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
 }

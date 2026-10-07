@@ -60,7 +60,12 @@ in
 
       {
         warnings =
-          lib.optional (cfg.dataDir != defaultDataDir && cfg.dynamicUser && !cfg.suppressDynamicUserWarning)
+          lib.optional
+            (
+              toString cfg.dataDir != toString defaultDataDir
+              && cfg.dynamicUser
+              && !cfg.suppressDynamicUserWarning
+            )
             ''
               services.victoriaStack.${name}.dataDir (${toString cfg.dataDir}) has been
               changed away from the default (${toString defaultDataDir}) while
@@ -102,7 +107,11 @@ in
           # activation apply: these binaries implement neither sd_notify()
           # nor sd_listen_fds(). See docs/decisions/0015.
           path = [ pkgs.wait4x ];
-          postStart = "wait4x http http://${bindAddr}/ping --timeout 90s";
+          # The probe waits up to 5 minutes (a large data directory can take that
+          # long to open) and TimeoutStartSec sits just above it: with both at
+          # 90s (systemd's own default) they expired together and
+          # Restart=on-failure looped a slow start.
+          postStart = "wait4x http http://${bindAddr}/ping --timeout 5m";
 
           serviceConfig = lib.mkMerge [
             {
@@ -120,9 +129,12 @@ in
                   metricsUrl = topCfg.metrics.effectiveUrl;
                   job = unitName;
                 }
-                ++ lib.optional (
-                  cfg.snapshots.enable && cfg.snapshots.maxAge != null
-                ) "-snapshotsMaxAge=${cfg.snapshots.maxAge}"
+                # null passes 0, which DISABLES pruning: omitting the flag would
+                # leave the binaries' own 3d default in force (each binary's
+                # -help), deleting snapshots the operator meant to keep.
+                ++ lib.optional cfg.snapshots.enable "-snapshotsMaxAge=${
+                  if cfg.snapshots.maxAge == null then "0" else cfg.snapshots.maxAge
+                }"
                 ++ lib.optional (
                   (cfg.retentionMaxDiskSpaceUsageBytes or null) != null
                 ) "-retention.maxDiskSpaceUsageBytes=${cfg.retentionMaxDiskSpaceUsageBytes}"
@@ -133,6 +145,7 @@ in
               );
               Restart = "on-failure";
               RestartSec = 5;
+              TimeoutStartSec = "6min";
 
               # Hardening -- copied from nixpkgs' own services.victoria*
               # modules (same pinned nixpkgs rev), an unacknowledged

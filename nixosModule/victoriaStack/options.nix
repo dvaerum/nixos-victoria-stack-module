@@ -210,7 +210,7 @@ let
       };
 
       retentionMaxDiskUsagePercent = mkOption {
-        type = types.nullOr types.int;
+        type = types.nullOr (types.ints.between 1 100);
         default = null;
         example = 80;
         description = ''
@@ -242,8 +242,9 @@ let
           description = ''
             `-snapshotsMaxAge` -- the binary prunes its own old snapshots
             on this schedule (a binary-native mechanism, not something this
-            module's timer does). `null` disables automatic pruning:
-            snapshots then accumulate under `dataDir` until deleted
+            module's timer does). `null` disables automatic pruning (it passes
+            `-snapshotsMaxAge=0`; leaving the flag out would keep each
+            binary's own 3d default): snapshots then accumulate under `dataDir` until deleted
             through the service's own snapshot-delete API (never with
             `rm`/`cp`/`rsync` -- snapshots are hard links into live data,
             and touching them directly can corrupt them).
@@ -425,7 +426,9 @@ in
       };
 
       idleConnTimeout = mkOption {
-        type = types.str;
+        # Mirrored into nginx's proxy_*_timeout (ADR 0016): only forms both
+        # accept (a Go-style fraction like 1.5m is invalid nginx syntax).
+        type = types.strMatching "[0-9]+(ms|s|m|h)";
         default = "5m";
         description = ''
           vmauth's `-http.idleConnTimeout`. The default of `1m` sits right

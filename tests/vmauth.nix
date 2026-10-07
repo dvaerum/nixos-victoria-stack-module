@@ -1433,6 +1433,8 @@ in
       (
         let
           execStart = m: (evalWith m).config.systemd.services.vmauth.serviceConfig.ExecStart;
+          # ExecStart is shell-escaped: strip the quotes to compare flags as text.
+          unq = lib.replaceStrings [ "'" ] [ "" ];
           unset = execStart { services.victoriaStack.metrics.enable = true; };
           set = execStart {
             services.victoriaStack = {
@@ -1445,8 +1447,8 @@ in
           };
           checks = {
             "absent by default" = !(lib.hasInfix "-tlsCertFile" unset);
-            "flags present verbatim" = lib.hasInfix "-tlsCertFile=/foo -tlsKeyFile=/bar" set;
-            "flags are last" = lib.hasSuffix "-tlsCertFile=/foo -tlsKeyFile=/bar" set;
+            "flags present verbatim" = lib.hasInfix "-tlsCertFile=/foo -tlsKeyFile=/bar" (unq set);
+            "flags are last" = lib.hasSuffix "-tlsCertFile=/foo -tlsKeyFile=/bar" (unq set);
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
@@ -1845,7 +1847,9 @@ in
               };
             };
           execStart = e: e.config.systemd.services.vmauth.serviceConfig.ExecStart;
-          has = needle: e: lib.hasInfix needle (execStart e);
+          # ExecStart is shell-escaped (every flag containing `=` is single-quoted);
+          # strip the quotes so adjacent flags compare as one string.
+          has = needle: e: lib.hasInfix needle (lib.replaceStrings [ "'" ] [ "" ] (execStart e));
           certs = {
             certFile = "/run/secrets/door.pem";
             keyFile = "/run/secrets/door.key";
@@ -2384,13 +2388,15 @@ in
             # the array must stay explicit with a plain first entry.
             "TLS array keeps the internal slot plain when the https door is on" =
               lib.hasInfix "-tls=false -tls=true"
-                (execStart {
-                  vmauth.https = {
-                    enable = true;
-                    certFile = "/run/secrets/c.pem";
-                    keyFile = "/run/secrets/k.pem";
-                  };
-                });
+                (
+                  lib.replaceStrings [ "'" ] [ "" ] (execStart {
+                    vmauth.https = {
+                      enable = true;
+                      certFile = "/run/secrets/c.pem";
+                      keyFile = "/run/secrets/k.pem";
+                    };
+                  })
+                );
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
@@ -2800,4 +2806,61 @@ in
         else
           throw "match-everything warning wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
       );
+
+  # vmauth.extraFlags is escaped like the storage services' extraFlags: one list
+  # element is exactly one argument (it used to be a plain space-join, so
+  # "-x=a b" became two arguments).
+  vmauth-extra-flags-stay-one-argument-each = pkgs.runCommand "vmauth-extra-flags-escaping" { } (
+    let
+      execStart =
+        m:
+        (evalWith {
+          services.victoriaStack = {
+            metrics.enable = true;
+          }
+          // m;
+        }).config.systemd.services.vmauth.serviceConfig.ExecStart;
+      withSpaces = execStart { vmauth.extraFlags = [ "-x=a b" ]; };
+      checks = {
+        "a value with a space stays one quoted argument" = lib.hasInfix "'-x=a b'" withSpaces;
+        # The credential specifier must still reach systemd intact.
+        "the https door's %d credential flags survive" = lib.hasInfix "%d/https-cert" (execStart {
+          vmauth.https = {
+            enable = true;
+            certFile = "/run/secrets/c.pem";
+            keyFile = "/run/secrets/k.pem";
+          };
+        });
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "vmauth extraFlags escaping wrong: ${builtins.toJSON (builtins.attrNames failed)}\n${withSpaces}"
+  );
+
+  # vmauth.idleConnTimeout is mirrored into nginx's proxy_*_timeout (ADR 0016), so
+  # it must be a form BOTH accept: nginx rejects Go-style fractions like 1.5m.
+  idle-conn-timeout-accepts-only-forms-nginx-also-understands =
+    let
+      t = (evalWith { }).options.services.victoriaStack.vmauth.idleConnTimeout.type;
+    in
+    pkgs.runCommand "idle-conn-timeout-format" { } (
+      let
+        checks = {
+          "30s" = t.check "30s";
+          "5m" = t.check "5m";
+          "1h" = t.check "1h";
+          "1.5m rejected" = !(t.check "1.5m");
+          "a bare number rejected (unit ambiguity)" = !(t.check "300");
+          "garbage rejected" = !(t.check "five minutes");
+        };
+        failed = lib.filterAttrs (_: ok: !ok) checks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "idleConnTimeout format wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
 }

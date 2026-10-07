@@ -553,7 +553,9 @@ in
         # force-closes connections collectors are about to reuse --
         # confirmed in production, see cfg.idleConnTimeout's own option
         # description.
-        ExecStart = lib.concatStringsSep " " (
+        # escapeShellArgs, like the storage services: one list element is exactly
+        # one argument (a plain space-join split "-x=a b" in two).
+        ExecStart = lib.escapeShellArgs (
           [
             "${cfg.package}/bin/vmauth"
             "-auth.config=/run/vmauth/config.json"
@@ -587,16 +589,12 @@ in
           # LoadCredential= at runtime.
           ++ lib.optional (cfg.backendTls.certFile != null) "-backend.tlsCertFile=%d/backend-tls-cert"
           ++ lib.optional (cfg.backendTls.keyFile != null) "-backend.tlsKeyFile=%d/backend-tls-key"
-          # This ExecStart is a plain space-joined string (no escaping), so
-          # the label's quotes need escaping here.
-          ++ map lib.escapeShellArg (
-            selfMonitoring.mkFlags {
-              selfMonitoring = cfg.selfMonitoring;
-              metricsEnabled = topCfg.metrics.enable;
-              metricsUrl = topCfg.metrics.effectiveUrl;
-              job = "vmauth";
-            }
-          )
+          ++ selfMonitoring.mkFlags {
+            selfMonitoring = cfg.selfMonitoring;
+            metricsEnabled = topCfg.metrics.enable;
+            metricsUrl = topCfg.metrics.effectiveUrl;
+            job = "vmauth";
+          }
           ++ cfg.extraFlags
         );
         RuntimeDirectory = "vmauth";
