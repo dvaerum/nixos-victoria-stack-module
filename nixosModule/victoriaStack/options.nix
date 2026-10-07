@@ -773,6 +773,11 @@ in
         a single nginx vhost reverse-proxying to vmauth, covering every
         currently-enabled service plus Grafana (if enabled). Requires
         `vmauth.enable = true` -- see docs/decisions/0002-opt-in-everything.md
+
+        Note: behind nginx, vmauth sees nginx's address instead of the real
+        client's (its real-IP setting is Enterprise-only); nginx's own log has
+        the real client. See docs/architecture.md, "Client addresses behind a
+        reverse proxy".
       '';
 
       domain = mkOption {

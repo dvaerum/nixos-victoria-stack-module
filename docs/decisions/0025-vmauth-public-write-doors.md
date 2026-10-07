@@ -40,4 +40,6 @@ writes       collectors --------------------------> vmauth :8443 (HTTPS)  [vmaut
   the files and restart vmauth. For ACME, add `vmauth.service` to the cert's
   `reloadServices` (a warning says so when missing).
 - On the write doors vmauth sees each collector's real address directly, so
-  nothing like `X-Forwarded-For` handling is needed there.
+  nothing like `X-Forwarded-For` handling is needed there. Behind a reverse
+  proxy it would not (the setting that fixes that is Enterprise-only): see
+  docs/architecture.md, "Client addresses behind a reverse proxy".

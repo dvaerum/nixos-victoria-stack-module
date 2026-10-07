@@ -112,6 +112,28 @@ about vmauth being "the gateway" makes this happen automatically.
 └───────────────────────────────────────────────────────────────────┘
 ```
 
+## Client addresses behind a reverse proxy
+
+**Warning:** with a reverse proxy in front of vmauth (the bundled nginx, or
+any other), vmauth sees the proxy's address as the client, not the real one.
+vmauth's setting for trusting a forwarded-address header
+(`-httpRealIPHeader`) exists only in VictoriaMetrics' Enterprise edition, so
+it is not available in the open-source build this module uses.
+
+```
+client 203.0.113.5 ──> nginx ──> vmauth      vmauth sees nginx's address
+client 203.0.113.5 ──────────> vmauth :8443  vmauth sees 203.0.113.5   (not affected)
+```
+
+What you still have behind a proxy:
+- the proxy's own log records the real client (nginx does by default);
+- vmauth appends the `X-Forwarded-For` text to the log lines it writes for
+  failed requests -- only the LAST entry, the one your proxy added, can be
+  trusted, because a client can put anything before it.
+
+Collectors that write straight to vmauth's own doors
+(`vmauth.https` / `vmauth.http`, docs/decisions/0025) are not affected.
+
 ## Key properties this diagram makes explicit
 
 - **Grafana is never reached through vmauth**, in either direction —
