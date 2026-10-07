@@ -378,6 +378,145 @@ design decisions are ADRs 0021/0022.
       `master` branch (a Phase 29 fix for a since-resolved local/remote
       mismatch, never reverted).
 
+## Round 4: design-focused critical review (test gaps / missing options / bad
+design, explicitly NOT a bug hunt) + grill session for the judgment calls
+
+4 fresh agents (storage/collector; vmauth/nginx; grafana/mcp; cross-cutting),
+each told explicitly NOT to re-hunt Phase 43's bug class, but to assess the
+test MATRIX for holes, cross-reference real upstream docs for configurability
+this module doesn't expose, and flag architectural smells. One correction
+surfaced during triage: the collector's host-metrics collection was initially
+misread as "only systemd unit-state" -- confirmed live (real stack+collector
+boot, queried `/api/v1/label/__name__/values`) that `enable_collectors`
+*adds to* node_exporter's own default-enabled set, not replaces it -- the
+collector already ships a comprehensive real set (`node_cpu_*`,
+`node_memory_*`, `node_disk_*`, `node_filesystem_*`, `node_network_*`,
+`node_load*`, `node_zfs_*`, etc.) alongside systemd state. The real gap is
+narrower: no option to customize that set further (Phase 44 item below).
+
+Findings sorted into 3 buckets per the project owner's own direction: test
+gaps (fix directly, no ambiguity), hardening/obvious improvements (clear
+right answer, no real tradeoff -- write into the plan same as test gaps),
+and judgment calls (real design tradeoffs or scope questions -- grill
+session before any code changes, same discipline as Round 2/Round 3).
+
+- [ ] 44. **Test gap fixes** (tracked here, phases TBD once grill session's
+      results are folded in -- some test gaps depend on a judgment call
+      below, e.g. the vmauth full-combination test can't include MCP until
+      the grill session resolves whether MCP gets a dedicated credential
+      scope):
+      - Alloy TLS/retry options: real container-boot test (self-signed
+        cert + CA verification), not eval-only string-matching.
+      - `queue.directory` outside StateDirectory: real container-boot test
+        confirming write actually succeeds, not just that `ReadWritePaths`
+        contains the entry.
+      - `hostType` conditional requirement: both the valid omission
+        (logs-only) and the (currently ugly) failure mode (metrics/traces
+        enabled, `hostType` unset) need their own test -- the latter
+        depends on Phase 45's new `victoriaCollector/assertions.nix`
+        existing first, so the test asserts the NEW legible message.
+      - `manageTmpfiles = false` + default (not custom) `dataDir`.
+      - `tests/collector.nix`: a native 3-signals-at-once test, not just
+        indirect coverage via `tests/full.nix`'s shared example config.
+      - `nginx`'s ADR-0016 "mirrors what it fronts" check: override
+        `idleConnTimeout` to a non-default value in the test fixture so
+        the assertion can actually fail.
+      - `extraRequestHeaders`/`extraResponseHeaders`: extend the existing
+        inert-unless-configured check to also parse `WRITE_URL_MAP_FILE`
+        and `OPEN_INGEST_PATHS_FILE` (ties to Phase 45's `openIngestPaths`
+        contract fix -- write the test to confirm the FIXED behavicor).
+      - `writeTokensFile` malformed-YAML path: mirror the existing
+        `readTokensFile` regression test.
+      - `vmauth.listenAddress` override + `nginx.enable` together.
+      - `openIngestPaths` with a genuine partial/custom override (not just
+        the two extremes already tested).
+      - `nginx.domain` combined with a credentialed vmauth tier (an auth
+        header through a name-based, not catch-all, virtualHost).
+      - Eval-only check: MCP `url_map` entries genuinely absent when
+        `mcp.enable = false` (mirrors the existing inert-unless-configured
+        pattern already used elsewhere).
+      - `effectiveUrl` seam: pinning tests for `grafana.nix`'s
+        `datasourceSpecs` and `vmauth.nix`'s `readUrlMap`/
+        `autoOpenIngestPaths` (only `mcp.nix` has one today).
+      - MCP folded into `vmauth.nix`'s own full-combination test (3 tiers +
+        extraReadUrlMap + headers + `mcp.enable`), rather than a new,
+        separate test.
+      - nginx -> vmauth -> `/mcp/*`: one real request through nginx, not
+        only direct-to-vmauth.
+      - `vmauth.enable = false` + MCP left at its loopback default
+        (distinct from the already-tested "explicitly widened" case).
+      - Grafana x nginx: confirm the datasource URL stays loopback even
+        with nginx/domain also enabled.
+      - MCP's own wildcard-listenAddress detection (`[::]:`, bare `:port`):
+        eval-only pinning test, mirroring the fix already applied
+        project-wide in Phase 43 for the storage services' copy of the
+        same logic.
+      - Multi-host fleet: 2+ independent collector containers writing to
+        the same gateway concurrently (not just 1-collector-1-gateway).
+      - The documented `mkForce`-reconstruct Grafana datasource-tuning
+        workaround (ADR 0020's own escape-hatch advice): a real test
+        proving it works as documented, not just a plausible-sounding
+        claim.
+      - Cross-service port/listenAddress collision: ties to Phase 45's new
+        assertion -- test that it actually fires.
+      - Read-tier bearer token reaching an MCP route end-to-end (only the
+        admin credential is tested against MCP today).
+      - One real, maximal cross-product test (custom domain + TLS + all 3
+        credential tiers + all 3 backends + all 3 MCP servers + Grafana +
+        a real collector shipping real data, all at once) -- the dimension
+        this whole bucket's findings kept surfacing as never-combined.
+- [ ] 45. **Hardening / obvious improvements** (clear right answer, no
+      real tradeoff -- implement directly, no grill needed):
+      - Fix `openIngestPaths`: a custom override currently bypasses
+        `withExtraHeaders` entirely, breaking the option's own documented
+        contract ("headers apply uniformly across every url_map entry...
+        read, write, and MCP routes alike") the moment an operator uses
+        the escape hatch for its stated purpose.
+      - New `victoriaCollector/assertions.nix` (none exists today, unlike
+        `victoriaStack`'s) -- at minimum, a legible `hostType` required
+        -when-(metrics.enable || traces.enable) message instead of today's
+        raw Nix module-system error.
+      - Refactor `metrics.nix`/`logs.nix`/`traces.nix` (~95% copy-paste)
+        into a shared `mkStorageService` helper, mirroring the
+        `mkStorageServiceOptions` (options.nix) / `mkMcpService` (mcp.nix)
+        pattern this project already established twice for the identical
+        problem shape. No behavior change.
+      - `RequiresMountsFor`/`after = ["local-fs.target"]` wired to each
+        storage service's own `dataDir`, closing the "custom dataDir on a
+        slow-to-mount dataset starts before the mount is ready" gap --
+        harmless no-op when `dataDir` sits on the root filesystem already.
+      - nginx: `proxy_set_header X-Real-IP $remote_addr;` +
+        `X-Forwarded-For $proxy_add_x_forwarded_for;` on both `/victoria/`
+        and `/grafana/` locations -- standard reverse-proxy hygiene
+        (confirmed against nginx's own docs), zero downside, doesn't
+        require vmauth to consume the header to be a net improvement.
+      - Cross-service port/listenAddress collision assertion (metrics/
+        logs/traces/vmauth/3xMCP all resolve to distinct addresses).
+      - `services.victoriaStack.{metrics,logs,traces}.selfScrapeInterval`
+        (and vmauth's own equivalent) -- `-selfScrapeInterval`, inert
+        unless configured, same shape as `logLevel`/`retentionPeriod`.
+      - Disk-usage-based retention options for logs/traces
+        (`-retention.maxDiskSpaceUsageBytes`/`-retention.maxDiskUsagePercent`),
+        inert unless configured, same shape as `retentionPeriod`.
+      - ADR 0002 amendment note: its documented invariant
+        (`nginx.enable -> vmauth.enable`) is stale against the actual,
+        correctly-fixed assertion (`-> vmauth.enable && anyBackendEnabled`,
+        Phase 36) -- give it the same `## Status` treatment ADR 0012 used
+        for its own supersession.
+      - New short ADR explicitly extending ADR 0010's same-host-trust
+        reasoning to MCP's own backend connection (today only argued
+        inline in a `mcp.nix` comment, no ADR number).
+      - New short ADR documenting this project's current option-stability
+        stance (pre-1.0, no versioning promise yet) and committing to
+        `lib.mkRenamedOptionModule` for any future option RENAME once it
+        does -- non-retroactive, a forward-looking policy only.
+
+## Round 4 continued: grill session results (judgment calls)
+
+Pending -- see chat for the live session. Each resolved topic gets its own
+numbered phase appended here once decided, same discipline as Round 2/3's
+own grill sessions (docs/decisions/0014-0020, 0021-0022).
+
 Each phase: gate with `nix flake check -L` (run detached, polled — never a
 single tool-call timeout for a full nspawn build) + nixfmt-rfc-style clean,
 commit separately, push. Any genuinely open question discovered mid-phase
