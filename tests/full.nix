@@ -315,6 +315,10 @@ in
       for m in (stack, collector):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")
+      # network-online.target can be reached even if the collector's address
+      # unit failed in the container; fail early and clearly instead of
+      # timing out later waiting for data.
+      collector.wait_until_succeeds("ping -c 1 stack")
 
       tls = "--cacert ${stackSelfSignedCert}/cert.pem --resolve stack:443:127.0.0.1"
       base = "https://stack/victoria"

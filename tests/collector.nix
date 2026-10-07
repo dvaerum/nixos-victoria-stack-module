@@ -937,6 +937,11 @@ in
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
       collector.wait_for_unit("network-online.target")
+      # network-online.target can be reached even if the collector's own
+      # address unit failed to start in the container (seen once in a
+      # 240-check run: the collector never got an IP and the test timed
+      # out 120s later) -- fail early and clearly instead.
+      collector.wait_until_succeeds("ping -c 1 stack")
 
       stack.wait_until_succeeds(
           "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
@@ -977,6 +982,11 @@ in
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
       collector.wait_for_unit("network-online.target")
+      # network-online.target can be reached even if the collector's own
+      # address unit failed to start in the container (seen once in a
+      # 240-check run: the collector never got an IP and the test timed
+      # out 120s later) -- fail early and clearly instead.
+      collector.wait_until_succeeds("ping -c 1 stack")
 
       stack.wait_until_succeeds(
           "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
@@ -1024,6 +1034,11 @@ in
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
       collector.wait_for_unit("network-online.target")
+      # network-online.target can be reached even if the collector's own
+      # address unit failed to start in the container (seen once in a
+      # 240-check run: the collector never got an IP and the test timed
+      # out 120s later) -- fail early and clearly instead.
+      collector.wait_until_succeeds("ping -c 1 stack")
 
       collector.succeed("logger --tag victoria-collector-test 'victoria_stack_three_signals_log_marker'")
       collector.succeed(
@@ -1102,6 +1117,10 @@ in
       for m in (stack, collector_a, collector_b):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")
+      # See the note in the single-collector tests: fail early if a collector
+      # never got its address.
+      for c in (collector_a, collector_b):
+          c.wait_until_succeeds("ping -c 1 stack")
 
       # The hostType label lands on VictoriaMetrics as `host_type`, the plain
       # selector below matching what options.nix documents. (It used to
@@ -1292,6 +1311,11 @@ in
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
       collector.wait_for_unit("network-online.target")
+      # network-online.target can be reached even if the collector's own
+      # address unit failed to start in the container (seen once in a
+      # 240-check run: the collector never got an IP and the test timed
+      # out 120s later) -- fail early and clearly instead.
+      collector.wait_until_succeeds("ping -c 1 stack")
 
       def has(metric):
           return stack.succeed(
