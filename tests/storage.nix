@@ -1015,4 +1015,167 @@ in
         else
           throw "extraOptions rename broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
+
+  # --- snapshots (periodic creation + binary-native pruning) ---
+  #
+  # The snapshot API genuinely differs per binary (confirmed by probing
+  # each one): VictoriaMetrics serves /snapshot/{create,list};
+  # VictoriaLogs and VictoriaTraces reject those and serve
+  # /internal/partition/snapshot/{create,list} instead. -snapshotsMaxAge
+  # exists on all three. The partition-snapshot endpoints are POST-only
+  # (VictoriaLogs answers a GET with "Only POST method is allowed").
+
+  snapshots-eval-behaviour-for-all-three-services = pkgs.runCommand "snapshots-eval-behaviour" { } (
+    let
+      perService =
+        attr: unit:
+        let
+          eval =
+            snap:
+            evalWith {
+              services.victoriaStack.${attr} = {
+                enable = true;
+                snapshots = snap;
+              };
+            };
+          execStart = e: e.config.systemd.services.${unit}.serviceConfig.ExecStart;
+          hasUnits =
+            e: e.config.systemd.timers ? "${unit}-snapshot" && e.config.systemd.services ? "${unit}-snapshot";
+          off = eval { };
+          on = eval { enable = true; };
+          noPrune = eval {
+            enable = true;
+            maxAge = null;
+          };
+          custom = eval {
+            enable = true;
+            schedule = "hourly";
+            maxAge = "7d";
+          };
+        in
+        {
+          "${attr}: disabled by default -> no timer/service" = !(hasUnits off);
+          "${attr}: disabled -> no -snapshotsMaxAge" = !(lib.hasInfix "snapshotsMaxAge" (execStart off));
+          "${attr}: enabled -> timer and service exist" = hasUnits on;
+          "${attr}: enabled -> default maxAge 30d" = lib.hasInfix "-snapshotsMaxAge=30d" (execStart on);
+          "${attr}: default schedule is daily" =
+            on.config.systemd.timers."${unit}-snapshot".timerConfig.OnCalendar == "daily";
+          "${attr}: maxAge = null -> pruning flag absent but creation timer remains" =
+            !(lib.hasInfix "snapshotsMaxAge" (execStart noPrune)) && hasUnits noPrune;
+          "${attr}: custom maxAge and schedule render" =
+            lib.hasInfix "-snapshotsMaxAge=7d" (execStart custom)
+            && custom.config.systemd.timers."${unit}-snapshot".timerConfig.OnCalendar == "hourly";
+        };
+      checks =
+        perService "metrics" "victoriametrics"
+        // perService "logs" "victorialogs"
+        // perService "traces" "victoriatraces";
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "snapshots eval behaviour broken: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # Real boot per binary: trigger the oneshot, then ask the service's OWN
+  # list API (not just an exit code) and require a non-empty result.
+  metrics-snapshot-is-really-created = pkgs.testers.nixosTest {
+    name = "victoria-stack-metrics-snapshot";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack.metrics = {
+        enable = true;
+        snapshots.enable = true;
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_open_port(4201)
+      import json
+
+      machine.succeed("systemctl start victoriametrics-snapshot.service")
+      listed = json.loads(machine.succeed("curl -sf http://127.0.0.1:4201/snapshot/list"))
+      assert listed["snapshots"], f"expected a snapshot, got {listed!r}"
+    '';
+  };
+
+  logs-snapshot-is-really-created = pkgs.testers.nixosTest {
+    name = "victoria-stack-logs-snapshot";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack.logs = {
+        enable = true;
+        snapshots.enable = true;
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("victorialogs.service")
+      machine.wait_for_open_port(4202)
+      # A partition only exists once there is data in it.
+      machine.succeed(
+          "echo '{\"log\":{\"message\":\"snapshot_test_line\"},\"date\":\"0\"}' | "
+          "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
+          "'http://127.0.0.1:4202/insert/jsonline?_time_field=date&_msg_field=log.message'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4202/select/logsql/query' -d 'query=snapshot_test_line' | grep -q snapshot_test_line"
+      )
+      import json
+
+      machine.succeed("systemctl start victorialogs-snapshot.service")
+      status, listed = machine.execute("curl -sS -X POST http://127.0.0.1:4202/internal/partition/snapshot/list")
+      assert status == 0, f"snapshot list failed: {listed!r}"
+      assert listed.lstrip().startswith("["), f"snapshot list was not a JSON list: {listed!r}"
+      assert json.loads(listed), f"expected at least one snapshot, got {listed!r}"
+    '';
+  };
+
+  traces-snapshot-is-really-created = pkgs.testers.nixosTest {
+    name = "victoria-stack-traces-snapshot";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack.traces = {
+        enable = true;
+        snapshots.enable = true;
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("victoriatraces.service")
+      machine.wait_for_open_port(4203)
+      machine.succeed(
+          "now=$(date +%s%N); "
+          "payload=$(cat <<JSON\n"
+          "{\"resourceSpans\":[{\"resource\":{\"attributes\":["
+          "{\"key\":\"service.name\",\"value\":{\"stringValue\":\"snapshot_test_service\"}}"
+          "]},\"scopeSpans\":[{\"spans\":[{"
+          "\"traceId\":\"00000000000000000000000000000008\","
+          "\"spanId\":\"0000000000000008\","
+          "\"name\":\"snapshot_test_span\",\"kind\":1,"
+          "\"startTimeUnixNano\":\"$now\",\"endTimeUnixNano\":\"$now\""
+          "}]}]}]}\nJSON\n); "
+          "curl -sf -X POST -H 'Content-Type: application/json' --data-binary \"$payload\" "
+          "'http://127.0.0.1:4203/insert/opentelemetry/v1/traces'"
+      )
+      machine.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4203/select/jaeger/api/services' | grep -q snapshot_test_service"
+      )
+      import json
+
+      machine.succeed("systemctl start victoriatraces-snapshot.service")
+      status, listed = machine.execute("curl -sS -X POST http://127.0.0.1:4203/internal/partition/snapshot/list")
+      assert status == 0, f"snapshot list failed: {listed!r}"
+      assert listed.lstrip().startswith("["), f"snapshot list was not a JSON list: {listed!r}"
+      assert json.loads(listed), f"expected at least one snapshot, got {listed!r}"
+    '';
+  };
 }

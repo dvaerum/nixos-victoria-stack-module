@@ -189,6 +189,40 @@ let
       };
     }
     // {
+      snapshots = {
+        enable = mkEnableOption "periodic on-disk snapshot creation (a systemd timer calling ${binaryName}'s own snapshot API)";
+
+        schedule = mkOption {
+          type = types.str;
+          default = "daily";
+          description = ''
+            systemd `OnCalendar` expression for how often to create a
+            snapshot. `daily` is systemd's own shorthand for midnight.
+          '';
+        };
+
+        maxAge = mkOption {
+          type = types.nullOr types.str;
+          default = "30d";
+          description = ''
+            `-snapshotsMaxAge` -- the binary prunes its own old snapshots
+            on this schedule (a binary-native mechanism, not something this
+            module's timer does). `null` disables automatic pruning:
+            snapshots then accumulate under `dataDir` until deleted
+            through the service's own snapshot-delete API (never with
+            `rm`/`cp`/`rsync` -- snapshots are hard links into live data,
+            and touching them directly can corrupt them).
+
+            Only takes effect while `snapshots.enable` is true.
+
+            NOTE: a snapshot never leaves this host's disk. It protects
+            against logical data loss (a bad query, an operator mistake),
+            NOT disk failure -- shipping one off-host needs VictoriaMetrics'
+            separate `vmbackup` tool, which this option does not wire up.
+          '';
+        };
+      };
+
       mcp = {
         enable = mkEnableOption "an MCP (Model Context Protocol) server fronting this ${name} instance";
 

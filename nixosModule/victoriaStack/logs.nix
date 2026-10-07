@@ -8,6 +8,7 @@ import ./storage-common.nix {
   unitName = "victorialogs";
   binaryName = "victoria-logs";
   packageAttr = "victorialogs";
+  snapshotCreatePath = "/internal/partition/snapshot/create";
   defaultDataDir = /var/lib/victorialogs;
   description = "VictoriaLogs log storage";
 }

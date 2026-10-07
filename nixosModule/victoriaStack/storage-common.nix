@@ -8,6 +8,10 @@
   packageAttr, # attribute name in pkgs used as <name>.package's default, e.g. "victoriametrics"
   defaultDataDir,
   description,
+  # The snapshot API differs per binary (confirmed by probing each):
+  # VictoriaMetrics serves /snapshot/create, VictoriaLogs and
+  # VictoriaTraces serve /internal/partition/snapshot/create instead.
+  snapshotCreatePath ? "/snapshot/create",
   # Only set where nixpkgs' own module for the same service sets it
   # (docs/decisions/0015) -- logs deliberately has none, matched rather
   # than added speculatively.
@@ -22,6 +26,27 @@
 
 let
   cfg = config.services.victoriaStack.${name};
+
+  # The IPv4 (0.0.0.0), IPv6 ([::]), and bare (":<port>", no
+  # host part at all -- a real, upstream-recognized form: the
+  # pinned nixpkgs victoria* modules' own postStart handles
+  # this exact same prefix) wildcard forms are all legitimate
+  # -httpListenAddr values -- probing the wildcard address
+  # itself as a *destination* is unreliable across
+  # kernels/configurations, so all three substitute to
+  # loopback. lib.last (lib.splitString ":" ...) extracts the
+  # port correctly in every case: the port is always the
+  # final fragment regardless of how many colons appear in
+  # the host part (or whether there's a host part at all).
+  isWildcard =
+    lib.hasPrefix "0.0.0.0:" cfg.listenAddress
+    || lib.hasPrefix "[::]:" cfg.listenAddress
+    || lib.hasPrefix ":" cfg.listenAddress;
+  bindAddr =
+    if isWildcard then
+      "127.0.0.1:${lib.last (lib.splitString ":" cfg.listenAddress)}"
+    else
+      cfg.listenAddress;
 in
 {
   # Renamed from extraOptions to match vmauth.extraFlags and the
@@ -91,30 +116,7 @@ in
           # activation apply: these binaries implement neither sd_notify()
           # nor sd_listen_fds(). See docs/decisions/0015.
           path = [ pkgs.wait4x ];
-          postStart =
-            let
-              # The IPv4 (0.0.0.0), IPv6 ([::]), and bare (":<port>", no
-              # host part at all -- a real, upstream-recognized form: the
-              # pinned nixpkgs victoria* modules' own postStart handles
-              # this exact same prefix) wildcard forms are all legitimate
-              # -httpListenAddr values -- probing the wildcard address
-              # itself as a *destination* is unreliable across
-              # kernels/configurations, so all three substitute to
-              # loopback. lib.last (lib.splitString ":" ...) extracts the
-              # port correctly in every case: the port is always the
-              # final fragment regardless of how many colons appear in
-              # the host part (or whether there's a host part at all).
-              isWildcard =
-                lib.hasPrefix "0.0.0.0:" cfg.listenAddress
-                || lib.hasPrefix "[::]:" cfg.listenAddress
-                || lib.hasPrefix ":" cfg.listenAddress;
-              bindAddr =
-                if isWildcard then
-                  "127.0.0.1:${lib.last (lib.splitString ":" cfg.listenAddress)}"
-                else
-                  cfg.listenAddress;
-            in
-            "wait4x http http://${bindAddr}/ping --timeout 90s";
+          postStart = "wait4x http http://${bindAddr}/ping --timeout 90s";
 
           serviceConfig = lib.mkMerge [
             {
@@ -126,6 +128,9 @@ in
                 ]
                 ++ lib.optionals (cfg.retentionPeriod != null) [ "-retentionPeriod=${cfg.retentionPeriod}" ]
                 # Exist only on logs/traces (options.nix), hence `or null`.
+                ++ lib.optional (
+                  cfg.snapshots.enable && cfg.snapshots.maxAge != null
+                ) "-snapshotsMaxAge=${cfg.snapshots.maxAge}"
                 ++ lib.optional (
                   (cfg.retentionMaxDiskSpaceUsageBytes or null) != null
                 ) "-retention.maxDiskSpaceUsageBytes=${cfg.retentionMaxDiskSpaceUsageBytes}"
@@ -199,6 +204,50 @@ in
           ];
         };
       }
+
+      # Periodic snapshot creation: a oneshot that POSTs to the binary's
+      # own snapshot API over loopback (the same trust boundary as every
+      # other internal call in this module -- no credential), fired by a
+      # timer. Pruning is the binary's own -snapshotsMaxAge above, not
+      # this unit's job.
+      (lib.mkIf cfg.snapshots.enable {
+        systemd.services."${unitName}-snapshot" = {
+          description = "Create a ${name} snapshot";
+          after = [ "${unitName}.service" ];
+          requires = [ "${unitName}.service" ];
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = lib.escapeShellArgs [
+              (lib.getExe pkgs.curl)
+              "--silent"
+              "--show-error"
+              "--fail"
+              "--request"
+              "POST"
+              "http://${bindAddr}${snapshotCreatePath}"
+            ];
+            DynamicUser = true;
+            NoNewPrivileges = true;
+            PrivateDevices = true;
+            PrivateTmp = true;
+            ProtectHome = true;
+            ProtectSystem = "strict";
+            RestrictAddressFamilies = [
+              "AF_INET"
+              "AF_INET6"
+            ];
+          };
+        };
+
+        systemd.timers."${unitName}-snapshot" = {
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnCalendar = cfg.snapshots.schedule;
+            # Catch up a missed run after downtime rather than skipping it.
+            Persistent = true;
+          };
+        };
+      })
     ]
   );
 }
