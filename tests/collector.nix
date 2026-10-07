@@ -855,6 +855,11 @@ in
     testScript = ''
       machine.start()
       machine.wait_for_unit("alloy.service")
+      # "active" only means systemd forked the process: a SIGHUP (the
+      # reload) before Alloy has installed its handler kills it outright,
+      # which is what made this test flake under load. Wait until Alloy
+      # itself reports ready.
+      machine.wait_until_succeeds("curl -sf http://127.0.0.1:12345/-/ready")
       pid_before = machine.succeed("systemctl show -p MainPID --value alloy.service").strip()
 
       machine.succeed(
@@ -1153,4 +1158,146 @@ in
     else
       throw "examples/fleet.nix broken: ${builtins.toJSON (builtins.attrNames failed)}"
   );
+
+  # --- metrics customization (extraCollectors / disabledCollectors / scrapeInterval) ---
+
+  metrics-customization-options-are-inert-by-default =
+    pkgs.runCommand "metrics-customization-inert-by-default" { }
+      (
+        let
+          evaluated = evalWithCollector {
+            services.victoriaCollector = {
+              metrics.enable = true;
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+            };
+          };
+          text = evaluated.config.environment.etc."alloy/config.alloy".text;
+          checks = {
+            "enable_collectors is exactly today's hardcoded list" =
+              lib.hasInfix ''enable_collectors = ["systemd"]'' text;
+            "no disable_collectors line" = !(lib.hasInfix "disable_collectors" text);
+            "no scrape_interval line" = !(lib.hasInfix "scrape_interval" text);
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "defaults changed the rendered config: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  metrics-customization-options-render-when-set =
+    pkgs.runCommand "metrics-customization-renders-when-set" { }
+      (
+        let
+          evaluated = evalWithCollector {
+            services.victoriaCollector = {
+              metrics = {
+                enable = true;
+                extraCollectors = [
+                  "processes"
+                  "textfile"
+                ];
+                disabledCollectors = [
+                  "loadavg"
+                  "hwmon"
+                ];
+                scrapeInterval = "30s";
+              };
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+            };
+          };
+          text = evaluated.config.environment.etc."alloy/config.alloy".text;
+          checks = {
+            "enable_collectors keeps systemd and adds the extras" =
+              lib.hasInfix ''enable_collectors = ["systemd", "processes", "textfile"]'' text;
+            "disable_collectors" = lib.hasInfix ''disable_collectors = ["loadavg", "hwmon"]'' text;
+            "scrape_interval" = lib.hasInfix ''scrape_interval = "30s"'' text;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "metrics customization did not render: ${builtins.toJSON (builtins.attrNames failed)}\n${text}"
+      );
+
+  metrics-customization-rejects-values-that-would-break-alloy-syntax =
+    pkgs.runCommand "metrics-customization-rejects-unsafe-values" { }
+      (
+        let
+          opts = httpsEvaluated.options.services.victoriaCollector.metrics;
+          checks = {
+            "collector name with a quote" = !(opts.extraCollectors.type.nestedTypes.elemType.check ''a"b'');
+            "disabled collector with a quote" =
+              !(opts.disabledCollectors.type.nestedTypes.elemType.check ''a"b'');
+            "scrapeInterval with a quote" = !(opts.scrapeInterval.type.check ''30s"'');
+            "ordinary names and durations are accepted" =
+              opts.extraCollectors.type.nestedTypes.elemType.check "processes"
+              && opts.scrapeInterval.type.check "30s"
+              && opts.scrapeInterval.type.check "1m30s";
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "unsafe values accepted (or safe ones rejected): ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # Real behavior, not rendered text: an extra collector's metric lands at
+  # the gateway, and a disabled default collector's does NOT while the
+  # others still do.
+  metrics-customization-changes-what-actually-ships = pkgs.testers.nixosTest {
+    name = "victoria-collector-metrics-customization";
+
+    containers.stack = mkStackContainer { services.metrics.enable = true; };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics = {
+          enable = true;
+          extraCollectors = [ "processes" ];
+          disabledCollectors = [ "loadavg" ];
+        };
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      stack.wait_for_unit("vmauth.service")
+      stack.wait_for_unit("victoriametrics.service")
+      collector.wait_for_unit("alloy.service")
+      stack.systemctl("start network-online.target")
+      collector.systemctl("start network-online.target")
+      stack.wait_for_unit("network-online.target")
+      collector.wait_for_unit("network-online.target")
+
+      def has(metric):
+          return stack.succeed(
+              f"curl -sf 'http://127.0.0.1:4201/api/v1/query?query=count({metric})'"
+          )
+
+      # Enabled by default, so a pipeline that works at all ships these...
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=node_cpu_seconds_total' | grep -q '\"value\"'",
+          timeout=180,
+      )
+      # ...the extra collector's metric arrives...
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=node_processes_pids' | grep -q '\"value\"'",
+          timeout=180,
+      )
+      # ...and the disabled collector's does not (node_load1 is shipped by
+      # default, so its absence is the behavior change).
+      assert '"result":[]' in has("node_load1"), has("node_load1")
+    '';
+  };
 }

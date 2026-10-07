@@ -10,6 +10,51 @@ in
 {
   options.services.victoriaCollector = {
     metrics.enable = mkEnableOption "shipping this host's metrics (via Alloy/OTLP) to a victoriaStack gateway";
+
+    # Collector names and the interval are interpolated unescaped into the
+    # generated Alloy config (config.alloy.nix), so they are restricted to
+    # a safe charset, same reasoning as hostType (docs/decisions/0020).
+    metrics.extraCollectors = mkOption {
+      type = types.listOf (types.strMatching "[a-z0-9_]+");
+      default = [ ];
+      example = [
+        "processes"
+        "textfile"
+      ];
+      description = ''
+        Extra node_exporter collectors to enable, on top of
+        node_exporter's own default-enabled set (see the "Collectors
+        list" table in Alloy's `prometheus.exporter.unix` docs for what
+        that is) plus this module's own always-on `systemd` collector.
+        `[ ]` (the default) changes nothing.
+      '';
+    };
+
+    metrics.disabledCollectors = mkOption {
+      type = types.listOf (types.strMatching "[a-z0-9_]+");
+      default = [ ];
+      example = [
+        "hwmon"
+        "zfs"
+      ];
+      description = ''
+        node_exporter collectors to disable -- e.g. an expensive one on a
+        resource-constrained host. Takes precedence over `extraCollectors`
+        if a name appears in both (Alloy's own `disable_collectors`
+        semantics). `[ ]` (the default) changes nothing.
+      '';
+    };
+
+    metrics.scrapeInterval = mkOption {
+      type = types.nullOr (types.strMatching "([0-9]+(ns|us|ms|s|m|h))+");
+      default = null;
+      example = "30s";
+      description = ''
+        Overrides Alloy's own `prometheus.scrape` default (60s) for the
+        host-metrics scrape job. `null` (the default) omits the argument
+        entirely, matching Alloy's upstream default.
+      '';
+    };
     logs.enable = mkEnableOption "shipping this host's journal (via systemd-journal-upload) to a victoriaStack gateway";
     traces.enable = mkEnableOption ''
       shipping traces (via Alloy/OTLP) to a victoriaStack gateway. Also

@@ -61,16 +61,24 @@ let
         }
       '';
 
+  alloyStringList = names: "[" + lib.concatMapStringsSep ", " (n: ''"${n}"'') names + "]";
+
   metricsSection = lib.optionalString cfg.metrics.enable ''
     // Metrics: host metrics -> OTLP
     prometheus.exporter.unix "host" {
-      enable_collectors = ["systemd"]
+      enable_collectors = ${alloyStringList ([ "systemd" ] ++ cfg.metrics.extraCollectors)}
+      ${lib.optionalString (
+        cfg.metrics.disabledCollectors != [ ]
+      ) "disable_collectors = ${alloyStringList cfg.metrics.disabledCollectors}"}
       systemd {}
     }
 
     prometheus.scrape "host" {
       targets    = prometheus.exporter.unix.host.targets
       forward_to = [otelcol.receiver.prometheus.host.receiver]
+      ${lib.optionalString (
+        cfg.metrics.scrapeInterval != null
+      ) ''scrape_interval = "${cfg.metrics.scrapeInterval}"''}
     }
 
     otelcol.receiver.prometheus "host" {
