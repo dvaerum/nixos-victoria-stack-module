@@ -13,6 +13,20 @@ let
 
   journaldWriteEndpoint = common.journaldEndpoint cfg;
 
+  # What systemd-journal-upload is given: it only recognises a lower-case
+  # scheme (HTTPS://host became "https://HTTPS://host"), and a trailing slash
+  # would make the URL `//insert/journald`. URL schemes are case-insensitive,
+  # so lower-casing is not a change of meaning.
+  journaldBaseUrl =
+    let
+      m = lib.match "([A-Za-z][A-Za-z0-9+.-]*)://(.*[^/])/*" journaldWriteEndpoint;
+    in
+    if m == null then
+      journaldWriteEndpoint
+    else
+      "${lib.toLower (builtins.elemAt m 0)}://${builtins.elemAt m 1}";
+  journaldIsHttps = lib.hasPrefix "https://" journaldBaseUrl;
+
   # `..` is rejected by assertions.nix, so a plain prefix test is sound here.
   queueOutsideStateDir = !(lib.hasPrefix "/var/lib/alloy/" (toString cfg.queue.directory));
 
@@ -220,9 +234,9 @@ in
       services.journald.upload = {
         enable = true;
         settings.Upload = {
-          URL = "${journaldWriteEndpoint}/insert/journald";
+          URL = "${journaldBaseUrl}/insert/journald";
         }
-        // lib.optionalAttrs (lib.hasPrefix "https" journaldWriteEndpoint) {
+        // lib.optionalAttrs journaldIsHttps {
           # "-" disables client-certificate loading; without it the uploader
           # refuses https:// URLs it has no client cert for. The gateway never
           # asks for one.
@@ -235,7 +249,7 @@ in
       };
 
       systemd.services.systemd-journal-upload.serviceConfig.LoadCredential =
-        lib.optional (lib.hasPrefix "https" journaldWriteEndpoint) "trusted-ca:${toString cfg.trustedCertificateFile}";
+        lib.optional journaldIsHttps "trusted-ca:${toString cfg.trustedCertificateFile}";
 
       # The write-token header drop-in: a dedicated, narrowly-scoped root
       # oneshot, NOT systemd-journal-upload.service's own preStart -- see

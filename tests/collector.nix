@@ -2251,4 +2251,137 @@ in
       grep -qx 'Header=Authorization: Bearer fixture-write-token' "$conf" || fail "drop-in content wrong"
       echo OK > $out
     '';
+
+  # URL schemes are case-insensitive, and a trailing slash on the endpoint
+  # must not turn the uploader's URL into `//insert/journald`. Both used to
+  # slip through: `lib.hasPrefix "https"` skipped the TLS settings and the CA
+  # credential for HTTPS://, and the slash was appended to verbatim.
+  journal-upload-scheme-case-and-trailing-slash =
+    pkgs.runCommand "journal-upload-scheme-case-and-trailing-slash" { }
+      (
+        let
+          evalFor =
+            endpoint:
+            evalWithCollector {
+              services.victoriaCollector = {
+                logs.enable = true;
+                writeEndpoint = endpoint;
+                hostType = "server";
+              };
+            };
+          upload = endpoint: (evalFor endpoint).config.services.journald.upload.settings.Upload;
+          credential =
+            endpoint:
+            (evalFor endpoint).config.systemd.services.systemd-journal-upload.serviceConfig.LoadCredential;
+          hasTls =
+            endpoint:
+            (upload endpoint).ServerKeyFile or null == "-"
+            && (upload endpoint).ServerCertificateFile or null == "-"
+            &&
+              (upload endpoint).TrustedCertificateFile or null
+              == "/run/credentials/systemd-journal-upload.service/trusted-ca"
+            && lib.any (lib.hasPrefix "trusted-ca:") (credential endpoint);
+          warnsPort =
+            endpoint:
+            lib.any (lib.hasInfix "explicit port") (
+              lib.filter (lib.hasInfix "services.victoriaCollector") (evalFor endpoint).config.warnings
+            );
+          checks = {
+            "HTTPS:// gets the TLS settings and the CA credential" =
+              hasTls "HTTPS://stack.example.invalid:8443";
+            "mixed-case scheme gets them too" = hasTls "HtTpS://stack.example.invalid:8443";
+            "https:// still does" = hasTls "https://stack.example.invalid:8443";
+            "http:// does not (positive control)" =
+              (upload "http://stack.example.invalid:8443").ServerKeyFile or null != "-"
+              && !(lib.any (lib.hasPrefix "trusted-ca:") (credential "http://stack.example.invalid:8443"));
+            "HTTP:// does not either" =
+              (upload "HTTP://stack.example.invalid:8443").ServerKeyFile or null != "-";
+            # systemd-journal-upload only recognises a lower-case scheme: given
+            # HTTPS://stack it dials "https://HTTPS://stack" (boot test below).
+            "an upper-case scheme reaches the uploader lower-cased" =
+              (upload "HTTPS://stack.example.invalid:8443").URL
+              == "https://stack.example.invalid:8443/insert/journald";
+            "the host keeps its case" =
+              (upload "HTTPS://Stack.Example.invalid:8443/Pfx").URL
+              == "https://Stack.Example.invalid:8443/Pfx/insert/journald";
+            "a trailing slash gives a single slash" =
+              (upload "https://stack.example.invalid:8443/").URL
+              == "https://stack.example.invalid:8443/insert/journald";
+            "several trailing slashes too" =
+              (upload "https://stack.example.invalid:8443///").URL
+              == "https://stack.example.invalid:8443/insert/journald";
+            "a path prefix with a trailing slash" =
+              (upload "https://stack.example.invalid:8443/pfx/").URL
+              == "https://stack.example.invalid:8443/pfx/insert/journald";
+            "no trailing slash is unchanged" =
+              (upload "https://stack.example.invalid:8443").URL
+              == "https://stack.example.invalid:8443/insert/journald";
+            "port warning: upper-case scheme without a port" = warnsPort "HTTPS://stack";
+            "port warning: upper-case scheme with a port" = !(warnsPort "HTTPS://stack:443");
+            "port warning: trailing slash does not hide a missing port" = warnsPort "https://stack/";
+            "port warning: trailing slash after a port" = !(warnsPort "https://stack:443/");
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "journald endpoint scheme/slash handling wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # For real: the same TLS delivery as journal-upload-https-verifies-the-gateway,
+  # but through an upper-case scheme and a trailing slash. Delivery proves the
+  # CA was staged (verification passed) and the URL is one curl accepts.
+  journal-upload-uppercase-scheme-and-trailing-slash-delivers = pkgs.testers.nixosTest {
+    name = "victoria-collector-journal-upload-uppercase-scheme-trailing-slash";
+
+    containers.stack = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ stackModule ];
+      services.victoriaStack = {
+        logs.enable = true;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
+      };
+      services.nginx = {
+        enable = true;
+        virtualHosts."stack" = {
+          onlySSL = true;
+          sslCertificate = "${stackSelfSignedCert}/cert.pem";
+          sslCertificateKey = "${stackSelfSignedCert}/key.pem";
+          locations."/".proxyPass = "http://127.0.0.1:4204";
+        };
+      };
+      networking.firewall.allowedTCPPorts = [ 443 ];
+    };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        logs.enable = true;
+        writeEndpoint = "HTTPS://stack:443/";
+        writeTokenFile = "${writeTokenFixture}";
+        trustedCertificateFile = "${stackSelfSignedCert}/cert.pem";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      stack.wait_for_unit("nginx.service")
+      stack.wait_for_unit("vmauth.service")
+      stack.wait_for_unit("victorialogs.service")
+      collector.wait_for_unit("systemd-journal-upload.service")
+      for m in (stack, collector):
+          m.systemctl("start network-online.target")
+          m.wait_for_unit("network-online.target")
+      collector.wait_until_succeeds("ping -c 1 stack")
+
+      collector.succeed("logger --tag case-test 'victoria_case_marker'")
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4202/select/logsql/query' "
+          "-d 'query=victoria_case_marker' | grep -q victoria_case_marker",
+          timeout=120,
+      )
+    '';
+  };
 }
