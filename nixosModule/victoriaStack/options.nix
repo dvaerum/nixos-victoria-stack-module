@@ -167,7 +167,9 @@ let
         description = ''
           Internal: the base URL consumers (vmauth, Grafana, the MCP servers,
           the self-monitoring push) actually connect to for this backend.
-          Always `http://''${listenAddress}` today (set via mkDefault in
+          `http://` plus `listenAddress` today, with a wildcard address
+          (`:port`, `0.0.0.0:port`, `[::]:port`) mapped to loopback because it
+          is not something to connect to (set via mkDefault in
           storage-common.nix), funneled through one
           option specifically so that external/remote-backend support
           (docs/decisions/0019 -- explicitly out of scope for now) only
@@ -819,7 +821,8 @@ in
     grafana = {
       enable = mkEnableOption ''
         Grafana datasource provisioning for whichever of metrics/logs/traces
-        is enabled. Configures services.grafana only for the datasources and,
+        is enabled. Configures services.grafana only for the datasources (and
+        the `declarativePlugins` the metrics and logs datasources need) and,
         when `nginx.enable` is on, a default `root_url` for the `/grafana/`
         sub-path; users and passwords are left to the consumer. The
         datasources go through vmauth's read tier, never straight to a

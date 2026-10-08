@@ -212,7 +212,9 @@ in
         description = ''
           With `dynamicUser = false`, whether this module creates
           `queue.directory` (mode 0750, owned by `alloy`) on every boot via
-          `systemd.tmpfiles.rules`. Set to `false` to manage the directory
+          `systemd.tmpfiles.rules`. The directory is only created when it is
+          outside `/var/lib/alloy`: inside it, the unit's own `StateDirectory`
+          already covers it. Set to `false` to manage a directory outside it
           yourself.
         '';
       };
