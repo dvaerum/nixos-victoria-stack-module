@@ -191,7 +191,9 @@ in
             "location exists at all" = liveLocation != null;
             "proxy_http_version 1.1" = lib.hasInfix "proxy_http_version 1.1" extraConfig;
             "Upgrade header" = lib.hasInfix "proxy_set_header Upgrade" extraConfig;
-            "Connection header" = lib.hasInfix "proxy_set_header Connection" extraConfig;
+            # The variable from the http-level map, not a fixed "upgrade": a fixed
+            # value would put every request on this location into upgrade mode.
+            "Connection header" = lib.hasInfix "proxy_set_header Connection $connection_upgrade;" extraConfig;
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
@@ -211,8 +213,18 @@ in
       (
         let
           httpConfig = evaluated.config.services.nginx.appendHttpConfig or "";
+          # Whole block: "default upgrade" with an empty-Upgrade request mapped
+          # to "close" is what keeps ordinary requests off a websocket connection.
+          body = map lib.trim (lib.filter (l: lib.trim l != "") (lib.splitString "\n" httpConfig));
         in
-        if lib.hasInfix "map $http_upgrade $connection_upgrade" httpConfig then
+        if
+          body == [
+            "map $http_upgrade $connection_upgrade {"
+            "default upgrade;"
+            "'' close;"
+            "}"
+          ]
+        then
           "echo OK > $out"
         else
           throw ''
@@ -221,6 +233,51 @@ in
             Grafana Live websocket location to resolve $connection_upgrade
             at all -- missing from services.nginx.appendHttpConfig.
           ''
+      );
+
+  # nginx must be ordered after, and pull in, the upstreams it proxies to
+  # (otherwise it can start first and answer 502). Grafana only when enabled.
+  nginx-wants-and-follows-its-upstreams =
+    pkgs.runCommand "nginx-wants-and-follows-its-upstreams" { }
+      (
+        let
+          unitsOf =
+            grafana:
+            (evalWith {
+              services.victoriaStack = {
+                metrics.enable = true;
+                nginx.enable = true;
+                grafana.enable = grafana;
+              };
+              services.grafana = lib.mkIf grafana {
+                enable = true;
+                settings.security.secret_key = "$__file{${secretKeyFixture}}";
+              };
+            }).config.systemd.services.nginx;
+          withGrafana = unitsOf true;
+          without = unitsOf false;
+          checks = {
+            # elem, not equality: nixpkgs' own nginx module adds its network targets.
+            "grafana: wants vmauth and grafana" = lib.all (u: lib.elem u withGrafana.wants) [
+              "vmauth.service"
+              "grafana.service"
+            ];
+            "grafana: after vmauth and grafana" = lib.all (u: lib.elem u withGrafana.after) [
+              "vmauth.service"
+              "grafana.service"
+            ];
+            "no grafana: vmauth only, no grafana unit pulled in" =
+              lib.elem "vmauth.service" without.wants
+              && lib.elem "vmauth.service" without.after
+              && !(lib.elem "grafana.service" without.wants)
+              && !(lib.elem "grafana.service" without.after);
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "nginx unit ordering wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
   nginx-proxies-victoria-and-grafana-subpaths = pkgs.testers.nixosTest {
@@ -292,6 +349,20 @@ in
           "curl -sf -u admin:nginx-admin-password "  # gitleaks:allow
           "'http://127.0.0.1:80/victoria/metrics/api/v1/labels'"
       )
+
+      # Grafana Live: a real WebSocket handshake through /grafana/api/live/.
+      # 101 needs the Upgrade header forwarded AND `Connection: upgrade`, which
+      # the http-level map only yields when its default is "upgrade".
+      # (curl waits for frames after the 101, so --max-time ends it and the
+      # headers it already received are read from the dump file.)
+      machine.execute(
+          "curl -s -o /dev/null -D /tmp/ws.headers --max-time 3 -u admin:admin "  # gitleaks:allow
+          "-H 'Connection: Upgrade' -H 'Upgrade: websocket' "
+          "-H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' "  # RFC 6455's sample key, gitleaks:allow
+          "'http://127.0.0.1:80/grafana/api/live/ws'"
+      )
+      handshake = machine.succeed("cat /tmp/ws.headers")
+      assert handshake.startswith("HTTP/1.1 101"), f"expected a 101 websocket upgrade through nginx, got {handshake!r}"
     '';
   };
 
@@ -801,13 +872,13 @@ in
         metrics.enable = true;
         nginx = {
           enable = true;
-          extraReadPaths = [ "custom-route" ];
+          extraReadPaths = [ "custom.route" ];
         };
         vmauth = {
           adminPasswordFile = "${adminPasswordFixture}";
           extraReadUrlMap = [
             {
-              src_paths = [ "/custom-route/api/v1/labels" ];
+              src_paths = [ "/custom\\.route/api/v1/labels" ];
               drop_src_path_prefix_parts = 1;
               url_prefix = "http://127.0.0.1:4201/";
             }
@@ -831,9 +902,12 @@ in
               f"curl -s -o /dev/null -w '%{{http_code}}' {auth} 'http://127.0.0.1:80{path}'"
           )
 
-      assert status("/victoria/custom-route/api/v1/labels") == "200"
+      assert status("/victoria/custom.route/api/v1/labels") == "200"
       # Not in extraReadPaths, so nginx refuses it before vmauth is asked.
       assert status("/victoria/other-route/api/v1/labels") == "404"
+      # The "." in the entry is a literal dot: with it left as a regex wildcard
+      # this near miss would pass nginx and get vmauth's own 400 instead.
+      assert status("/victoria/customXroute/api/v1/labels") == "404"
     '';
   };
 

@@ -13,6 +13,7 @@ let
     evalWith
     otlpMetricGenerator
     otlpTestPython
+    httpTestPython
     ;
   otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
 
@@ -30,7 +31,9 @@ let
       - token: read-token-one # ai-client-a
   '';
 
-  adminPasswordFixture = pkgs.writeText "admin-password" "admin-password-value";
+  # The newline an editor or `echo` leaves: every `-u admin:admin-password-value`
+  # in this file only works if the render script strips it.
+  adminPasswordFixture = pkgs.writeText "admin-password" "admin-password-value\n";
 
   # Per-token scoping: a token may carry `backends`, restricting it to those
   # backends' own routes (raw API + that signal's MCP route for the read
@@ -125,23 +128,11 @@ in
     let
       evaluated = evalWith { services.victoriaStack.metrics.enable = true; };
       sc = evaluated.config.systemd.services.vmauth.serviceConfig;
-      # Same shape as storage's mkHardeningCheck, minus LimitNOFILE/wait4x
-      # readiness -- no nixpkgs vmauth module exists to confirm a
-      # LimitNOFILE value against (checked: nixpkgs has no vmauth module
-      # at all), and vmauth has no documented HTTP health endpoint to
-      # poll (docs/decisions/0015).
+      # The storage services' profile, whole (LimitNOFILE and the readiness
+      # probe are separate concerns, see docs/decisions/0015).
       hardeningChecks = {
-        "NoNewPrivileges" = (sc.NoNewPrivileges or null) == true;
-        "ProtectSystem" = (sc.ProtectSystem or null) == "strict";
-        "CapabilityBoundingSet" = (sc.CapabilityBoundingSet or null) == "";
-        "PrivateDevices" = (sc.PrivateDevices or null) == true;
-        "MemoryDenyWriteExecute" = (sc.MemoryDenyWriteExecute or null) == true;
-        "RestrictAddressFamilies" =
-          (sc.RestrictAddressFamilies or null) == [
-            "AF_INET"
-            "AF_INET6"
-            "AF_UNIX"
-          ];
+        "full hardening profile (differs in: ${builtins.toJSON (testLib.hardeningDiff sc)})" =
+          testLib.hardeningDiff sc == [ ];
       };
       failed = lib.filterAttrs (_: ok: !ok) hardeningChecks;
     in
@@ -150,6 +141,37 @@ in
     else
       throw "vmauth's serviceConfig is missing expected hardening: ${builtins.toJSON (builtins.attrNames failed)}"
   );
+
+  # Same wildcard handling as the storage services and the MCP servers: a
+  # wildcard listenAddress is not a destination, so the TCP readiness probe
+  # must dial loopback (a bare ":port" probed as-is is the flaky case).
+  vmauth-wildcard-listen-address-readiness-substitutes-loopback =
+    pkgs.runCommand "vmauth-wildcard-readiness-substitutes-loopback" { }
+      (
+        let
+          postStart =
+            listenAddress:
+            (evalWith {
+              services.victoriaStack = {
+                metrics.enable = true;
+                vmauth = { inherit listenAddress; };
+              };
+            }).config.systemd.services.vmauth.postStart;
+          checks = {
+            "IPv4 wildcard" = lib.hasInfix "wait4x tcp 127.0.0.1:4204 " (postStart "0.0.0.0:4204");
+            "IPv6 wildcard" = lib.hasInfix "wait4x tcp 127.0.0.1:4204 " (postStart "[::]:4204");
+            "bare :port" = lib.hasInfix "wait4x tcp 127.0.0.1:4204 " (postStart ":4204");
+            "specific address is probed as-is" = lib.hasInfix "wait4x tcp 10.1.2.3:4204 " (
+              postStart "10.1.2.3:4204"
+            );
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "vmauth wildcard readiness substitution broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
 
   write-tier-tokens-use-auto-derived-ingest-map-regardless-of-override =
     pkgs.runCommand "vmauth-write-tier-ignores-openingestpaths-override" { }
@@ -394,11 +416,13 @@ in
               metrics.enable = true;
               vmauth = {
                 extraRequestHeaders = [ "TenantID: global-default" ];
+                extraResponseHeaders = [ "X-Frame-Options: module-default" ];
                 extraReadUrlMap = [
                   {
                     src_paths = [ "/custom-route/.*" ];
                     url_prefix = "http://127.0.0.1:9999/";
                     headers = [ "X-Custom-Route: yes" ];
+                    response_headers = [ "X-Frame-Options: route-own" ];
                   }
                 ];
               };
@@ -417,6 +441,19 @@ in
             "module-wide default header is also present (combined, not replaced)" =
               lib.elem "TenantID: global-default"
                 (customEntry.headers or [ ]);
+            # Order is semantics: for a header both name, vmauth takes the last
+            # value, so the route's own must come after the module-wide default.
+            "request headers: strip, module default, route's own" =
+              customEntry.headers == [
+                "Authorization:"
+                "TenantID: global-default"
+                "X-Custom-Route: yes"
+              ];
+            "response headers: module default, then route's own" =
+              customEntry.response_headers == [
+                "X-Frame-Options: module-default"
+                "X-Frame-Options: route-own"
+              ];
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
@@ -542,6 +579,12 @@ in
           "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_vmauth_test_metric' "
           "| grep -q victoria_stack_vmauth_test_metric"
       )
+
+      # accessLog is off here, yet the anonymous door always logs: a write
+      # nobody authenticated for must leave a trace of where it came from.
+      machine.wait_until_succeeds(
+          "journalctl -u vmauth.service --no-pager -o cat | grep -F opentelemetry/v1/metrics"
+      )
     '';
   };
 
@@ -630,16 +673,20 @@ in
     };
 
     testScript = ''
+      ${httpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
 
       # A write-tier token must NOT grant read access -- the whole point
-      # of splitting the two tiers (docs/decisions/0003).
-      machine.fail(
-          "curl -sf -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
-          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+      # of splitting the two tiers (docs/decisions/0003). It is a known user
+      # with no read route, so vmauth answers 400 "missing route", not 401.
+      code, body = http(
+          machine,
+          "http://127.0.0.1:4204/metrics/api/v1/query?query=up",
+          "-H 'Authorization: Bearer write-token-one'",  # gitleaks:allow
       )
+      assert code == "400" and "missing route" in body, (code, body)
 
       # A read-tier token must succeed on the same read path.
       machine.succeed(
@@ -661,14 +708,22 @@ in
     };
 
     testScript = ''
+      ${httpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
 
-      # No credential at all: must be rejected.
-      machine.fail(
-          "curl -sf 'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"  # gitleaks:allow
+      # No credential at all: vmauth's own 401, before any backend is asked.
+      code, body = http(machine, "http://127.0.0.1:4204/metrics/api/v1/query?query=up")
+      assert code == "401" and "missing 'Authorization'" in body, (code, body)
+
+      # A wrong password is a different 401.
+      code, body = http(
+          machine,
+          "http://127.0.0.1:4204/metrics/api/v1/query?query=up",
+          "-u admin:not-the-password",  # gitleaks:allow
       )
+      assert code == "401" and body.strip() == "Unauthorized", (code, body)
 
       # Basic Auth with the admin password: must succeed.
       machine.succeed(
@@ -712,29 +767,74 @@ in
               "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
           ).strip()
 
-      def serves(token):
-          # vmauth restarts asynchronously after the file changes.
+      def invocation():
+          return machine.succeed("systemctl show -p InvocationID --value vmauth.service").strip()
+
+      def settled():
+          # The path unit only re-arms once the restart helper it triggered has
+          # finished; a file replaced before that is never noticed. Under load
+          # the helper can still be winding down when vmauth already answers,
+          # so wait for the quiet state before touching the file.
+          machine.wait_until_succeeds(
+              "systemctl show -p SubState --value vmauth-secret-watch-read-tokens.path | grep -qx waiting",
+              timeout=120,
+          )
+          machine.wait_until_succeeds(
+              "systemctl show -p ActiveState --value vmauth-secret-restart.service | grep -qx inactive",
+              timeout=120,
+          )
+
+      def rotated(token, was):
+          # vmauth restarts asynchronously after the file changes: first a new
+          # unit invocation, then answering with the new token.
+          machine.wait_until_succeeds(
+              f"test \"$(systemctl show -p InvocationID --value vmauth.service)\" != {was}", timeout=180
+          )
+          machine.wait_for_unit("vmauth.service")
           machine.wait_until_succeeds(
               "curl -s -o /dev/null -w '%{http_code}' "
               f"-H 'Authorization: Bearer {token}' "
               "'http://127.0.0.1:4204/metrics/api/v1/query?query=up' | grep -qx 200",
-              timeout=60,
+              timeout=180,
           )
 
       assert status("token-generation-one") == "200"
 
       # In-place rewrite.
+      settled()
+      was = invocation()
       machine.succeed("printf 'tokens:\\n  - token: token-generation-two\\n' > /var/lib/rotation/read.yaml")
-      serves("token-generation-two")
+      rotated("token-generation-two", was)
       assert status("token-generation-one") == "401"
 
       # Atomic rename into place.
+      settled()
+      was = invocation()
       machine.succeed(
           "printf 'tokens:\\n  - token: token-generation-three\\n' > /var/lib/rotation/read.yaml.new"
           " && mv /var/lib/rotation/read.yaml.new /var/lib/rotation/read.yaml"
       )
-      serves("token-generation-three")
+      rotated("token-generation-three", was)
       assert status("token-generation-two") == "401"
+
+      # A rotation while vmauth is stopped must not start it (try-restart, not
+      # restart): an operator who stopped it on purpose keeps it stopped, and
+      # the next start picks the new file up.
+      settled()
+      machine.succeed("systemctl stop vmauth.service")
+      ran = machine.succeed("systemctl show -p ExecMainExitTimestampMonotonic --value vmauth-secret-restart.service").strip()
+      machine.succeed("printf 'tokens:\\n  - token: token-generation-four\\n' > /var/lib/rotation/read.yaml")
+      machine.wait_until_succeeds(
+          f"test \"$(systemctl show -p ExecMainExitTimestampMonotonic --value vmauth-secret-restart.service)\" != {ran}",
+          timeout=120,
+      )
+      settled()
+      _, state = machine.execute("systemctl is-active vmauth.service")
+      state = state.strip()
+      assert state == "inactive", f"the restart helper started a stopped vmauth: {state!r}"
+      machine.succeed("systemctl start vmauth.service")
+      machine.wait_for_open_port(4204)
+      assert status("token-generation-four") == "200"
     '';
   };
 
@@ -1329,6 +1429,16 @@ in
           machine.succeed(
               f"curl -sf {cred} 'http://127.0.0.1:4204/metrics/api/v1/labels'"
           )
+          machine.succeed(
+              f"curl -sf {cred} 'http://127.0.0.1:4204/metrics/api/v1/label/__name__/values' "
+              "| grep -q victoria_stack_readonly_probe_metric"
+          )
+          # Prometheus federation is a read and stays reachable.
+          machine.wait_until_succeeds(
+              f"curl -sf {cred} -G -d 'match[]=victoria_stack_readonly_probe_metric' "
+              "'http://127.0.0.1:4204/metrics/federate' "
+              "| grep -q victoria_stack_readonly_probe_metric"
+          )
           # --- metrics: real write/destructive endpoints are rejected ---
           machine.fail(
               f"curl -sf {cred} -X POST --data-binary "
@@ -1370,41 +1480,75 @@ in
     '';
   };
 
-  # Closed-world assertion: pins the literal src_paths list for each
-  # backend's read-tier route, so a future accidental widening back
-  # toward a wildcard (e.g. "/metrics/.*") is caught immediately, not
-  # just "still passes because the specific endpoints above still work".
+  # Closed-world assertion: the read tier's whole route table, spelled out. A
+  # widened pattern (an export that also matches /import, a label-values regex
+  # that swallows /api/v1/...) or a dropped endpoint (federate) changes this list.
   read-tier-url-map-is-a-closed-allow-list-not-a-wildcard =
     pkgs.runCommand "vmauth-read-tier-closed-allow-list" { }
       (
         let
           evaluated = evalWith {
             services.victoriaStack = {
-              metrics.enable = true;
-              logs.enable = true;
-              traces.enable = true;
+              metrics = {
+                enable = true;
+                mcp.enable = true;
+              };
+              logs = {
+                enable = true;
+                mcp.enable = true;
+              };
+              traces = {
+                enable = true;
+                mcp.enable = true;
+              };
             };
           };
-          readUrlMapVar =
-            lib.findFirst (lib.hasPrefix "READ_URL_MAP_FILE=") null
-              evaluated.config.systemd.services.vmauth.serviceConfig.Environment;
-          readUrlMap = builtins.fromJSON (
-            builtins.readFile (lib.removePrefix "READ_URL_MAP_FILE=" readUrlMapVar)
-          );
-          wildcardEntries = lib.filter (
-            e:
-            lib.any (
-              p: lib.hasSuffix ".*" p && !(lib.hasInfix "/select/" p) && !(lib.hasInfix "/export" p)
-            ) e.src_paths
-          ) readUrlMap;
+          readUrlMap = urlMapFile "READ_URL_MAP_FILE" evaluated;
+          got = map (e: {
+            inherit (e) src_paths drop_src_path_prefix_parts;
+          }) readUrlMap;
+          expected = [
+            {
+              src_paths = [
+                "/metrics/api/v1/query"
+                "/metrics/api/v1/query_range"
+                "/metrics/api/v1/series"
+                "/metrics/api/v1/labels"
+                "/metrics/api/v1/label/.+/values"
+                "/metrics/api/v1/export.*"
+                "/metrics/federate"
+              ];
+              drop_src_path_prefix_parts = 1;
+            }
+            {
+              src_paths = [ "/logs/select/.*" ];
+              drop_src_path_prefix_parts = 1;
+            }
+            {
+              src_paths = [ "/traces/select/.*" ];
+              drop_src_path_prefix_parts = 1;
+            }
+            {
+              src_paths = [ "/mcp/metrics(/.*)?" ];
+              drop_src_path_prefix_parts = 2;
+            }
+            {
+              src_paths = [ "/mcp/logs(/.*)?" ];
+              drop_src_path_prefix_parts = 2;
+            }
+            {
+              src_paths = [ "/mcp/traces(/.*)?" ];
+              drop_src_path_prefix_parts = 2;
+            }
+          ];
         in
-        if wildcardEntries == [ ] then
+        if got == expected then
           "echo OK > $out"
         else
           throw ''
-            Expected every metrics read-tier src_paths entry to be a closed
-            allow-list (specific endpoints), not a broad wildcard -- found:
-            ${builtins.toJSON wildcardEntries}
+            The read tier's route table changed.
+            expected: ${builtins.toJSON expected}
+            got:      ${builtins.toJSON got}
           ''
       );
 
@@ -2789,8 +2933,19 @@ in
               url_prefix = "http://127.0.0.1:4201/";
             }
             {
-              # Merely STARTS with a backend prefix.
-              src_paths = [ "/metricsX/foo" ];
+              # Merely STARTS with a backend prefix: a letter, a hyphen, an
+              # underscore and a digit after it all continue the name.
+              src_paths = [
+                "/metricsX/foo"
+                "/metrics-x/foo"
+                "/metrics_x/foo"
+                "/metrics9/foo"
+              ];
+              url_prefix = "http://127.0.0.1:4201/";
+            }
+            {
+              # An alternation cannot be attributed to one backend.
+              src_paths = [ "/metrics/(alt-one|alt-two)" ];
               url_prefix = "http://127.0.0.1:4201/";
             }
           ];
@@ -2827,7 +2982,14 @@ in
       # as an entry holding ONLY that path; none of the look-alikes.
       scoped = paths("scoped-extra-metrics-only")
       assert "/metrics/api/v1/status/tsdb" in scoped, scoped
-      for leaked in ("/logs/select/extra", "/metricsX/foo"):
+      for leaked in (
+          "/logs/select/extra",
+          "/metricsX/foo",
+          "/metrics-x/foo",
+          "/metrics_x/foo",
+          "/metrics9/foo",
+          "/metrics/(alt-one|alt-two)",
+      ):
           assert leaked not in scoped, (leaked, scoped)
       assert not any("src_paths" not in e for e in users["scoped-extra-metrics-only"]), users["scoped-extra-metrics-only"]
       assert all(len(e["src_paths"]) == 1 for e in users["scoped-extra-metrics-only"] if "tsdb" in e["src_paths"][0]), users["scoped-extra-metrics-only"]
@@ -2838,6 +3000,8 @@ in
           return any(e["src_paths"] == src_paths and e["url_prefix"] == "http://127.0.0.1:4201/" for e in entries)
 
       assert has(full, ["/metrics/api/v1/status/tsdb", "/logs/select/extra"]), full
+      assert has(full, ["/metrics/(alt-one|alt-two)"]), full
+      assert has(full, ["/metricsX/foo", "/metrics-x/foo", "/metrics_x/foo", "/metrics9/foo"]), full
       assert len(full) > len(users["scoped-extra-metrics-only"])
 
       # Same for the write tier.

@@ -22,17 +22,8 @@ let
         evaluated = evalWith enableModule;
         sc = evaluated.config.systemd.services.${serviceName}.serviceConfig;
         hardeningChecks = {
-          "NoNewPrivileges" = (sc.NoNewPrivileges or null) == true;
-          "ProtectSystem" = (sc.ProtectSystem or null) == "strict";
-          "CapabilityBoundingSet" = (sc.CapabilityBoundingSet or null) == "";
-          "PrivateDevices" = (sc.PrivateDevices or null) == true;
-          "MemoryDenyWriteExecute" = (sc.MemoryDenyWriteExecute or null) == true;
-          "RestrictAddressFamilies" =
-            (sc.RestrictAddressFamilies or null) == [
-              "AF_INET"
-              "AF_INET6"
-              "AF_UNIX"
-            ];
+          "full hardening profile (differs in: ${builtins.toJSON (testLib.hardeningDiff sc)})" =
+            testLib.hardeningDiff sc == [ ];
         };
         failed = lib.filterAttrs (_: ok: !ok) hardeningChecks;
       in
@@ -153,8 +144,10 @@ in
               enable = true;
               mcp = {
                 enable = true;
-                logLevel = "debug";
-                logFormat = "json";
+                # Neither is the other's possible default or a value the module
+                # could hardcode by accident: each must come from the option.
+                logLevel = "warn";
+                logFormat = "text";
                 disabledTools = [
                   "documentation"
                   "some-other-tool"
@@ -170,8 +163,8 @@ in
             # logs has no upstream-default-disabled set of its own
             # (unlike metrics, see below) -- stays absent when unset.
             "MCP_DISABLED_TOOLS absent when unset" = !(envUnset ? MCP_DISABLED_TOOLS);
-            "MCP_LOG_LEVEL present when set" = (envSet.MCP_LOG_LEVEL or null) == "debug";
-            "MCP_LOG_FORMAT present when set" = (envSet.MCP_LOG_FORMAT or null) == "json";
+            "MCP_LOG_LEVEL present when set" = (envSet.MCP_LOG_LEVEL or null) == "warn";
+            "MCP_LOG_FORMAT present when set" = (envSet.MCP_LOG_FORMAT or null) == "text";
             "MCP_DISABLED_TOOLS joined with commas when set" =
               (envSet.MCP_DISABLED_TOOLS or null) == "documentation,some-other-tool";
           };
@@ -344,6 +337,15 @@ in
               f"contain {expected_name!r}, got: {response!r}"
           )
 
+      # The MCP route ends at a path boundary: a longer name that merely starts
+      # with it is no route (vmauth's 400 "missing route"), not the MCP server.
+      for route in ("metricsX", "logsX", "tracesX", "metrics-x"):
+          code = machine.succeed(
+              "curl -s -o /dev/null -w '%{http_code}' -u admin:mcp-test-admin-password-value "  # gitleaks:allow
+              f"-X POST 'http://127.0.0.1:4204/mcp/{route}' -H 'Content-Type: application/json' -d '{{}}'"
+          )
+          assert code == "400", f"/mcp/{route} must be vmauth's 400 (no such route), got {code!r}"
+
       # The MCP servers' own listenAddress stay loopback-only by default
       # -- not directly reachable from outside without vmauth routing or
       # an explicit listenAddress override (checked separately below).
@@ -409,6 +411,37 @@ in
         else
           throw "vmauth.service's `after` is missing: ${builtins.toJSON missing}"
       );
+
+  # Each MCP unit starts after the backend it talks to; without it the MCP
+  # server can come up first and its readiness probe waits on a backend that
+  # has not started.
+  mcp-units-start-after-their-backend = pkgs.runCommand "mcp-units-start-after-their-backend" { } (
+    let
+      evaluated = evalWith {
+        services.victoriaStack = {
+          metrics.enable = true;
+          metrics.mcp.enable = true;
+          logs.enable = true;
+          logs.mcp.enable = true;
+          traces.enable = true;
+          traces.mcp.enable = true;
+        };
+      };
+      after = unit: evaluated.config.systemd.services.${unit}.after;
+      expected = {
+        mcp-victoriametrics = "victoriametrics.service";
+        mcp-victorialogs = "victorialogs.service";
+        mcp-victoriatraces = "victoriatraces.service";
+      };
+      missing = lib.attrNames (
+        lib.filterAttrs (unit: backend: !(lib.elem backend (after unit))) expected
+      );
+    in
+    if missing == [ ] then
+      "echo OK > $out"
+    else
+      throw "MCP units not ordered after their backend: ${builtins.toJSON missing}"
+  );
 
   mcp-reachable-directly-when-vmauth-off = pkgs.testers.nixosTest {
     name = "victoria-stack-mcp-direct-without-vmauth";

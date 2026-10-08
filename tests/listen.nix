@@ -52,6 +52,8 @@ in
     "hostPort does not re-bracket" = listen.hostPort "[::1]" 8443 == "[::1]:8443";
     "host connect for an empty http_addr" = listen.connectHost "" == "127.0.0.1";
     "host connect for a bare IPv6" = listen.connectHost "::1" == "[::1]";
+    # Grafana spells its IPv6 wildcard `::`, unbracketed.
+    "host connect for the bare :: wildcard" = listen.connectHost "::" == "127.0.0.1";
     "overlap: identical" = listen.overlaps "127.0.0.1:4204" "127.0.0.1:4204";
     "overlap: v4 wildcard vs specific v4" = listen.overlaps "0.0.0.0:4204" "127.0.0.1:4204";
     "overlap: bare :port vs anything" =

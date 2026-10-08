@@ -75,21 +75,9 @@ let
         evaluated = evalWith enableModule;
         sc = evaluated.config.systemd.services.${serviceName}.serviceConfig;
         postStart = evaluated.config.systemd.services.${serviceName}.postStart or "";
-        # A representative subset of nixpkgs' own profile -- not every
-        # single field, enough to catch "the hardening pass was dropped or
-        # never applied" as a class of regression.
         hardeningChecks = {
-          "NoNewPrivileges" = (sc.NoNewPrivileges or null) == true;
-          "ProtectSystem" = (sc.ProtectSystem or null) == "strict";
-          "CapabilityBoundingSet" = (sc.CapabilityBoundingSet or null) == "";
-          "PrivateDevices" = (sc.PrivateDevices or null) == true;
-          "MemoryDenyWriteExecute" = (sc.MemoryDenyWriteExecute or null) == true;
-          "RestrictAddressFamilies" =
-            (sc.RestrictAddressFamilies or null) == [
-              "AF_INET"
-              "AF_INET6"
-              "AF_UNIX"
-            ];
+          "full hardening profile (differs in: ${builtins.toJSON (testLib.hardeningDiff sc)})" =
+            testLib.hardeningDiff sc == [ ];
           "LimitNOFILE" = (sc.LimitNOFILE or null) == (if expectLimitNOFILE then 1048576 else null);
           "wait4x readiness (not a hand-rolled curl loop)" = lib.hasInfix "wait4x" postStart;
           # Orders the unit after the dataDir's own mount (e.g. a ZFS
@@ -223,6 +211,36 @@ let
       else
         throw "manageTmpfiles = false must suppress the every-boot tmpfiles ownership rule entirely for ${effectiveDir}"
     );
+  mkRetentionDocCheck =
+    {
+      name,
+      serviceAttr,
+      binary,
+      docClaim, # the default as the option description words it
+      helpDefault, # the same default as the binary's -help prints it
+    }:
+    let
+      description =
+        (evalWith { }).options.services.victoriaStack.${serviceAttr}.retentionPeriod.description;
+    in
+    if
+      lib.hasInfix docClaim description
+      && !lib.hasInfix "effectively unbounded for this binary" description
+    then
+      pkgs.runCommand name { } ''
+        ${binary} -help 2>&1 | grep -F -- "(default ${helpDefault})" > /dev/null || {
+          echo "${binary} -help does not name the default ${helpDefault} for -retentionPeriod" >&2
+          exit 1
+        }
+        echo OK > $out
+      ''
+    else
+      throw ''
+        ${serviceAttr}.retentionPeriod's description must state the real
+        upstream default (${docClaim}), not claim it's unbounded. Actual
+        description: ${description}
+      '';
+
 in
 {
   # --- eval-only: dynamicUser/dataDir warning behavior (fast, no container boot) ---
@@ -443,6 +461,12 @@ in
           "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_test_metric' "
           "| grep -q '\"value\":\\[.*,\"42\"\\]'"
       )
+
+      # The data directory systemd creates for a DynamicUser must not be
+      # readable by other local users (StateDirectoryMode); -L follows the
+      # /var/lib/<name> symlink into /var/lib/private.
+      mode = machine.succeed("stat -L -c %a /var/lib/victoriametrics").strip()
+      assert mode == "700", f"expected the state directory to be 0700, got {mode!r}"
     '';
   };
 
@@ -475,6 +499,9 @@ in
       assert owner == "victoriametrics", f"expected /data/victoria/metrics owned by victoriametrics, got {owner!r}"
       group = machine.succeed("stat -c %G /data/victoria/metrics").strip()
       assert group == "victoriametrics", f"expected /data/victoria/metrics group-owned by victoriametrics, got {group!r}"
+      # The tmpfiles rule keeps the data readable by the owner and its group only.
+      mode = machine.succeed("stat -c %a /data/victoria/metrics").strip()
+      assert mode == "750", f"expected /data/victoria/metrics to be 0750, got {mode!r}"
 
       # User+ownership alone doesn't prove the service can actually write
       # to and read from that directory -- a real ingest/query roundtrip
@@ -728,70 +755,34 @@ in
     expectLimitNOFILE = true; # same as nixpkgs' own victoriatraces module
   };
 
-  traces-retention-period-doc-states-real-7-day-default =
-    pkgs.runCommand "traces-retention-period-doc-states-real-7-day-default" { }
-      (
-        let
-          evaluated = evalWith { };
-          description = evaluated.options.services.victoriaStack.traces.retentionPeriod.description;
-        in
-        if
-          lib.hasInfix "7 day" description
-          && !lib.hasInfix "effectively unbounded for this binary" description
-        then
-          "echo OK > $out"
-        else
-          throw ''
-            traces.retentionPeriod's description must state the real
-            upstream default (7 days), not claim it's unbounded. Actual
-            description: ${description}
-          ''
-      );
+  # The option description states the binary's real default retention (the
+  # claim "effectively unbounded" was once wrong for all three). The claim is
+  # checked against the binary itself: its own -help must name the same default,
+  # so a package bump that changes it fails here instead of leaving the
+  # description quietly stale.
+  traces-retention-period-doc-states-real-7-day-default = mkRetentionDocCheck {
+    name = "traces-retention-period-doc-states-real-7-day-default";
+    serviceAttr = "traces";
+    binary = "${pkgs.victoriatraces}/bin/victoria-traces";
+    docClaim = "7 day";
+    helpDefault = "7d";
+  };
 
-  # Metrics' and logs' own descriptions had the exact same
-  # factually-wrong "effectively unbounded" claim traces' had (fixed in
-  # docs/decisions/0020, for traces only, at the time) -- confirmed via
-  # each binary's own --help: metrics defaults to 1 month, logs to 7
-  # days, neither to unbounded. Same pattern as the traces check above.
-  metrics-retention-period-doc-states-real-1-month-default =
-    pkgs.runCommand "metrics-retention-period-doc-states-real-1-month-default" { }
-      (
-        let
-          evaluated = evalWith { };
-          description = evaluated.options.services.victoriaStack.metrics.retentionPeriod.description;
-        in
-        if
-          lib.hasInfix "1 month" description
-          && !lib.hasInfix "effectively unbounded for this binary" description
-        then
-          "echo OK > $out"
-        else
-          throw ''
-            metrics.retentionPeriod's description must state the real
-            upstream default (1 month), not claim it's unbounded. Actual
-            description: ${description}
-          ''
-      );
+  metrics-retention-period-doc-states-real-1-month-default = mkRetentionDocCheck {
+    name = "metrics-retention-period-doc-states-real-1-month-default";
+    serviceAttr = "metrics";
+    binary = "${pkgs.victoriametrics}/bin/victoria-metrics";
+    docClaim = "1 month";
+    helpDefault = "1M";
+  };
 
-  logs-retention-period-doc-states-real-7-day-default =
-    pkgs.runCommand "logs-retention-period-doc-states-real-7-day-default" { }
-      (
-        let
-          evaluated = evalWith { };
-          description = evaluated.options.services.victoriaStack.logs.retentionPeriod.description;
-        in
-        if
-          lib.hasInfix "7 day" description
-          && !lib.hasInfix "effectively unbounded for this binary" description
-        then
-          "echo OK > $out"
-        else
-          throw ''
-            logs.retentionPeriod's description must state the real
-            upstream default (7 days), not claim it's unbounded. Actual
-            description: ${description}
-          ''
-      );
+  logs-retention-period-doc-states-real-7-day-default = mkRetentionDocCheck {
+    name = "logs-retention-period-doc-states-real-7-day-default";
+    serviceAttr = "logs";
+    binary = "${pkgs.victorialogs}/bin/victoria-logs";
+    docClaim = "7 day";
+    helpDefault = "7d";
+  };
 
   traces-ingest-query-roundtrip = pkgs.testers.nixosTest {
     name = "victoria-stack-traces-ingest-query-roundtrip";
@@ -961,8 +952,8 @@ in
     pkgs.runCommand "disk-usage-retention-mutually-exclusive" { }
       (
         let
-          fires =
-            svc:
+          firesWith =
+            svc: limits:
             lib.any
               (
                 m: lib.hasInfix "retentionMaxDiskSpaceUsageBytes" m && lib.hasInfix "retentionMaxDiskUsagePercent" m
@@ -973,17 +964,27 @@ in
                     (evalWith {
                       services.victoriaStack.${svc} = {
                         enable = true;
-                        retentionMaxDiskSpaceUsageBytes = "500GB";
-                        retentionMaxDiskUsagePercent = 80;
-                      };
+                      }
+                      // limits;
                     }).config.assertions
                 )
               );
+          both = {
+            retentionMaxDiskSpaceUsageBytes = "500GB";
+            retentionMaxDiskUsagePercent = 80;
+          };
+          fires = svc: firesWith svc both;
+          # Either limit on its own is the normal use and must stay quiet.
+          quietAlone =
+            svc:
+            !(firesWith svc { retentionMaxDiskSpaceUsageBytes = "500GB"; })
+            && !(firesWith svc { retentionMaxDiskUsagePercent = 80; })
+            && !(firesWith svc { });
         in
-        if fires "logs" && fires "traces" then
+        if fires "logs" && fires "traces" && quietAlone "logs" && quietAlone "traces" then
           "echo OK > $out"
         else
-          throw "expected a mutual-exclusion assertion for both logs and traces (logs=${builtins.toJSON (fires "logs")} traces=${builtins.toJSON (fires "traces")})"
+          throw "mutual-exclusion assertion wrong (fires on both: logs=${builtins.toJSON (fires "logs")} traces=${builtins.toJSON (fires "traces")}; quiet with one: logs=${builtins.toJSON (quietAlone "logs")} traces=${builtins.toJSON (quietAlone "traces")})"
       );
 
   metrics-manage-tmpfiles-false-rule-absent-at-default-data-dir = mkManageTmpfilesCheck {
@@ -1085,6 +1086,8 @@ in
             schedule = "hourly";
             maxAge = "7d";
           };
+          snapSvc = on.config.systemd.services."${unit}-snapshot";
+          snapExec = snapSvc.serviceConfig.ExecStart;
         in
         {
           "${attr}: disabled by default -> no timer/service" = !(hasUnits off);
@@ -1101,6 +1104,24 @@ in
           "${attr}: custom maxAge and schedule render" =
             lib.hasInfix "-snapshotsMaxAge=7d" (execStart custom)
             && custom.config.systemd.timers."${unit}-snapshot".timerConfig.OnCalendar == "hourly";
+          # The timer is only armed at boot because timers.target pulls it in.
+          "${attr}: timer is wanted by timers.target" =
+            on.config.systemd.timers."${unit}-snapshot".wantedBy == [ "timers.target" ];
+          # A missed run (machine off at the scheduled time) is caught up.
+          "${attr}: timer is Persistent" =
+            on.config.systemd.timers."${unit}-snapshot".timerConfig.Persistent == true;
+          # Not started alone: a stopped backend must pull in (and order after) the real one.
+          "${attr}: oneshot requires and follows the backend" =
+            snapSvc.requires == [ "${unit}.service" ] && snapSvc.after == [ "${unit}.service" ];
+          "${attr}: oneshot is a oneshot that fails on HTTP errors" =
+            snapSvc.serviceConfig.Type == "oneshot" && lib.hasInfix " --fail " snapExec;
+          # Network families only: the call is an HTTP POST over loopback, so
+          # AF_UNIX and AF_NETLINK stay closed.
+          "${attr}: oneshot may only open INET sockets" =
+            snapSvc.serviceConfig.RestrictAddressFamilies == [
+              "AF_INET"
+              "AF_INET6"
+            ];
         };
       checks =
         perService "metrics" "victoriametrics"
@@ -1125,6 +1146,7 @@ in
         enable = true;
         snapshots.enable = true;
       };
+      environment.systemPackages = [ pkgs.python3 ];
     };
 
     testScript = ''
@@ -1136,6 +1158,26 @@ in
       machine.succeed("systemctl start victoriametrics-snapshot.service")
       listed = json.loads(machine.succeed("curl -sf http://127.0.0.1:4201/snapshot/list"))
       assert listed["snapshots"], f"expected a snapshot, got {listed!r}"
+
+      # The schedule is really armed: enabled at boot and counting down.
+      machine.succeed("systemctl is-enabled victoriametrics-snapshot.timer")
+      machine.succeed("systemctl is-active victoriametrics-snapshot.timer")
+      timers = machine.succeed("systemctl list-timers --no-pager")
+      assert "victoriametrics-snapshot.timer" in timers, timers
+
+      # An HTTP error from the backend must fail the unit, not just a refused
+      # connection: swap the backend for a server that answers every POST
+      # with 501 (and skip the Requires= that would restart the real one).
+      machine.succeed("systemctl stop victoriametrics.service")
+      machine.succeed(
+          "systemd-run --unit=fake-backend "
+          "${pkgs.python3}/bin/python3 -m http.server 4201 --bind 127.0.0.1 --directory /tmp"
+      )
+      machine.wait_for_open_port(4201)
+      machine.fail("systemctl start --job-mode=ignore-dependencies victoriametrics-snapshot.service")
+      machine.succeed("systemctl is-failed victoriametrics-snapshot.service")
+      journal = machine.succeed("journalctl -u victoriametrics-snapshot.service --no-pager")
+      assert "501" in journal, journal
     '';
   };
 
@@ -1410,6 +1452,19 @@ in
               };
             };
             "vmauth.extraFlags" = warns "vmauth" { vmauth.extraFlags = flag; };
+            # The whole -pushmetrics.* family doubles the push, not only the URL.
+            "-pushmetrics.interval alone counts" = warns "logs" {
+              logs = {
+                enable = true;
+                extraFlags = [ "-pushmetrics.interval=10s" ];
+              };
+            };
+            "-pushmetrics.extraLabel alone counts" = warns "traces" {
+              traces = {
+                enable = true;
+                extraFlags = [ "-pushmetrics.extraLabel=a=\"b\"" ];
+              };
+            };
             "the old extraOptions name still counts (it is renamed to extraFlags)" = warns "logs" {
               logs = {
                 enable = true;

@@ -58,6 +58,31 @@ let
         ''
     );
 
+  # The failed own assertions are EXACTLY these messages, whole: a substring
+  # such as "mcp" or "vmauth" is satisfied by any neighbouring assertion.
+  mkAssertionMessagesAreCheck =
+    {
+      name,
+      module,
+      expected,
+    }:
+    let
+      evaluated = evalWith module;
+      failedOwn = ownMessages (
+        map (a: a.message) (builtins.filter (a: !a.assertion) evaluated.config.assertions)
+      );
+    in
+    pkgs.runCommand "${name}" { } (
+      if failedOwn == expected then
+        "echo OK > $out"
+      else
+        throw ''
+          check "${name}": the failed assertions differ.
+          expected: ${builtins.toJSON expected}
+          got:      ${builtins.toJSON failedOwn}
+        ''
+    );
+
   mkNoAssertionsFireCheck =
     { name, module }:
     let
@@ -188,6 +213,61 @@ let
     tokens:
       - token: ${grafanaReadToken}
   '';
+
+  # The systemd hardening profile the storage services, vmauth and the MCP
+  # servers all carry (docs/decisions/0015), spelled out in full so a dropped or
+  # loosened key in any of them is a failure, not just the handful that used to
+  # be spot-checked.
+  hardeningProfile = {
+    DeviceAllow = [ "/dev/null rw" ];
+    DevicePolicy = "strict";
+    LockPersonality = true;
+    MemoryDenyWriteExecute = true;
+    NoNewPrivileges = true;
+    PrivateDevices = true;
+    PrivateTmp = true;
+    PrivateUsers = true;
+    ProtectClock = true;
+    ProtectControlGroups = true;
+    ProtectHome = true;
+    ProtectHostname = true;
+    ProtectKernelLogs = true;
+    ProtectKernelModules = true;
+    ProtectKernelTunables = true;
+    ProtectProc = "invisible";
+    CapabilityBoundingSet = "";
+    ProtectSystem = "strict";
+    RemoveIPC = true;
+    RestrictAddressFamilies = [
+      "AF_INET"
+      "AF_INET6"
+      "AF_UNIX"
+    ];
+    RestrictNamespaces = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    SystemCallArchitectures = "native";
+    SystemCallFilter = [
+      "@system-service"
+      "~@privileged"
+      "mincore"
+    ];
+  };
+
+  # Names of the profile's keys that a serviceConfig lacks or sets differently.
+  hardeningDiff = sc: lib.attrNames (lib.filterAttrs (k: v: (sc.${k} or null) != v) hardeningProfile);
+
+  # Test-script snippet: one request, answered as (http_status, body). For
+  # negative controls that must name WHO refused: vmauth says 401 "missing
+  # 'Authorization'" / 401 "Unauthorized" / 400 "... missing route ...", while a
+  # bare `curl -sf` failing only proves some refusal happened (a backend 4xx, a
+  # connection error). Measured against vmauth 1.153.
+  httpTestPython = ''
+    def http(machine, url, auth="", extra=""):
+        out = machine.succeed(f"curl -s -w '\\n%{{http_code}}' {auth} {extra} '{url}'")
+        body, code = out.rsplit("\n", 1)
+        return code.strip(), body
+  '';
 in
 {
   inherit
@@ -197,10 +277,14 @@ in
     evalWith
     evalWithCollector
     mkAssertionFiresCheck
+    mkAssertionMessagesAreCheck
     mkNoAssertionsFireCheck
     mkWarningFiresCheck
     mkNoWarningsCheck
+    hardeningProfile
+    hardeningDiff
     otlpMetricGenerator
     otlpTestPython
+    httpTestPython
     ;
 }

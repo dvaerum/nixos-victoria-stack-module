@@ -582,43 +582,148 @@ in
           throw "grafana.readTokenFile handling broken: ${builtins.toJSON failed}"
       );
 
+  # The whole provisioning document the module hands to Grafana, spelled out: a
+  # datasource's type, uid, URL, default flag, access mode, editability and the
+  # delete-then-recreate list are all things Grafana only reveals at runtime, so
+  # a changed value is otherwise invisible until a deployment misbehaves.
+  datasource-provisioning-document-is-exactly-this =
+    pkgs.runCommand "grafana-datasource-provisioning-document" { }
+      (
+        let
+          evaluated = evalWith {
+            imports = [ grafanaTokenWiring ];
+            services.grafana.enable = true;
+            services.victoriaStack = {
+              metrics.enable = true;
+              logs.enable = true;
+              traces.enable = true;
+              grafana.enable = true;
+            };
+          };
+          authorized = {
+            access = "proxy";
+            editable = false;
+            jsonData.httpHeaderName1 = "Authorization";
+            secureJsonData.httpHeaderValue1 = "$__file{/run/grafana/vmauth-authorization}";
+          };
+          expected = {
+            apiVersion = 1;
+            prune = true;
+            datasources = [
+              (
+                {
+                  name = "VictoriaMetrics";
+                  type = "victoriametrics-metrics-datasource";
+                  uid = "victoriametrics-ds";
+                  url = "http://127.0.0.1:4204/metrics";
+                  isDefault = true;
+                }
+                // authorized
+              )
+              (
+                {
+                  name = "VictoriaLogs";
+                  type = "victoriametrics-logs-datasource";
+                  uid = "victorialogs-ds";
+                  url = "http://127.0.0.1:4204/logs";
+                  isDefault = false;
+                }
+                // authorized
+              )
+              (
+                {
+                  name = "VictoriaTraces";
+                  type = "jaeger";
+                  uid = "victoriatraces-ds";
+                  url = "http://127.0.0.1:4204/traces/select/jaeger";
+                  isDefault = false;
+                }
+                // authorized
+              )
+            ];
+            deleteDatasources = [
+              {
+                name = "VictoriaMetrics";
+                orgId = 1;
+              }
+              {
+                name = "VictoriaLogs";
+                orgId = 1;
+              }
+              {
+                name = "VictoriaTraces";
+                orgId = 1;
+              }
+            ];
+          };
+          got = evaluated.config.services.grafana.provision.datasources.settings;
+        in
+        if got == expected then
+          "echo OK > $out"
+        else
+          throw "the provisioning document changed.\nexpected: ${builtins.toJSON expected}\ngot:      ${builtins.toJSON got}"
+      );
+
+  # The datasource plugins come in with the backends that need them (traces use
+  # Grafana's built-in jaeger type, so none): a missing plugin makes Grafana
+  # reject its own provisioning file at start.
+  datasource-plugins-follow-the-enabled-backends =
+    pkgs.runCommand "grafana-datasource-plugins-follow-the-enabled-backends" { }
+      (
+        let
+          pluginsFor =
+            backends:
+            map (p: p.pname or p.name) (
+              lib.defaultTo [ ] (
+                (evalWith {
+                  imports = [ grafanaTokenWiring ];
+                  services.grafana.enable = true;
+                  services.victoriaStack = backends // {
+                    grafana.enable = true;
+                  };
+                }).config.services.grafana.declarativePlugins
+              )
+            );
+          checks = {
+            "metrics: the metrics plugin only" =
+              pluginsFor { metrics.enable = true; } == [ "victoriametrics-metrics-datasource" ];
+            "logs: the logs plugin only" =
+              pluginsFor { logs.enable = true; } == [ "victoriametrics-logs-datasource" ];
+            "traces: none" = pluginsFor { traces.enable = true; } == [ ];
+            "all: metrics then logs" =
+              pluginsFor {
+                metrics.enable = true;
+                logs.enable = true;
+                traces.enable = true;
+              } == [
+                "victoriametrics-metrics-datasource"
+                "victoriametrics-logs-datasource"
+              ];
+          };
+          failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) checks);
+        in
+        if failed == [ ] then
+          "echo OK > $out"
+        else
+          throw "datasource plugins wrong for: ${builtins.toJSON failed}; metrics=${
+            builtins.toJSON (pluginsFor {
+              metrics.enable = true;
+            })
+          } logs=${
+            builtins.toJSON (pluginsFor {
+              logs.enable = true;
+            })
+          }"
+      );
+
   # ADR 0020's documented workaround for tweaking one auto-provisioned
-  # datasource: mkForce the whole list, reconstructing the 3 built-in
-  # entries by hand, plus an extra one. Proves the workaround the README
-  # tells operators to use really yields exactly 4 entries.
+  # datasource: mkForce the whole list, rebuilt from what the module itself
+  # provisions (copy its output, change one entry, add one). The module's own
+  # list is the reference, so a hand-copied literal cannot drift from it.
   mkforce-reconstruct-workaround-yields-the-builtin-three-plus-one =
     pkgs.runCommand "grafana-mkforce-reconstruct-workaround" { }
       (
         let
-          builtinThree = [
-            {
-              name = "VictoriaMetrics";
-              type = "victoriametrics-metrics-datasource";
-              uid = "victoriametrics-ds";
-              url = "http://127.0.0.1:4201";
-              isDefault = true;
-              access = "proxy";
-              editable = false;
-            }
-            {
-              name = "VictoriaLogs";
-              type = "victoriametrics-logs-datasource";
-              uid = "victorialogs-ds";
-              url = "http://127.0.0.1:4202";
-              isDefault = false;
-              access = "proxy";
-              editable = false;
-            }
-            {
-              name = "VictoriaTraces";
-              type = "jaeger";
-              uid = "victoriatraces-ds";
-              url = "http://127.0.0.1:4203/select/jaeger";
-              isDefault = false;
-              access = "proxy";
-              editable = false;
-            }
-          ];
           extra = {
             name = "Extra";
             type = "prometheus";
@@ -631,7 +736,11 @@ in
           datasourcesOf =
             extraModule:
             (evalWith {
-              imports = [ extraModule ];
+              imports = [
+                grafanaTokenWiring
+                extraModule
+              ];
+              services.grafana.enable = true;
               services.victoriaStack = {
                 metrics.enable = true;
                 logs.enable = true;
@@ -640,25 +749,25 @@ in
               };
             }).config.services.grafana.provision.datasources.settings.datasources;
           untouched = datasourcesOf { };
+          # The operator's tweak: repoint the logs datasource, keep the rest.
+          tweak =
+            d: if d.uid == "victorialogs-ds" then d // { url = "http://logs.example.invalid:9428"; } else d;
           forced = datasourcesOf {
             services.grafana.provision.datasources.settings.datasources = lib.mkForce (
-              builtinThree ++ [ extra ]
+              map tweak untouched ++ [ extra ]
             );
           };
-          names = map (d: d.name) forced;
+          expected = map tweak untouched ++ [ extra ];
+          present = map (lib.filterAttrs (_: v: v != null));
         in
+        # nixpkgs adds null jsonData/secureJsonData to entries that lack them.
         if
           builtins.length untouched == 3
-          &&
-            names == [
-              "VictoriaMetrics"
-              "VictoriaLogs"
-              "VictoriaTraces"
-              "Extra"
-            ]
+          && present forced == present expected
+          && present forced != present (untouched ++ [ extra ])
         then
           "echo OK > $out"
         else
-          throw "mkForce workaround broken: untouched=${toString (builtins.length untouched)} forced=${builtins.toJSON names}"
+          throw "mkForce workaround broken: untouched=${toString (builtins.length untouched)} forced=${builtins.toJSON forced}"
       );
 }

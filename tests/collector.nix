@@ -1218,11 +1218,19 @@ in
       imports = [ collectorModule ];
       services.victoriaCollector = {
         metrics.enable = true;
+        metrics.scrapeInterval = "15s";
         logs.enable = true;
         traces.enable = true;
         writeEndpoint = "http://stack:4204";
         writeTokenFile = "${writeTokenFixture}";
         hostType = "server";
+      };
+      # Stays "activating" for good: a notify service that never notifies.
+      # Not wantedBy anything, so it cannot hold up boot.
+      systemd.services.test-activating.serviceConfig = {
+        Type = "notify";
+        ExecStart = "${pkgs.coreutils}/bin/sleep infinity";
+        TimeoutStartSec = "infinity";
       };
     };
 
@@ -1234,6 +1242,7 @@ in
       stack.wait_for_unit("victoriatraces.service")
       collector.wait_for_unit("alloy.service")
       collector.wait_for_unit("systemd-journal-upload.service")
+      collector.succeed("systemctl start --no-block test-activating.service")
       collector.wait_for_open_port(4318)
       stack.systemctl("start network-online.target")
       collector.systemctl("start network-online.target")
@@ -1278,6 +1287,85 @@ in
           "| grep -q victoria_stack_three_signals_service",
           timeout=120,
       )
+
+      import json
+      import time
+
+
+      def poll(fn, what, timeout=240):
+          deadline = time.time() + timeout
+          last = None
+          while time.time() < deadline:
+              try:
+                  last = fn()
+                  if last:
+                      return last
+              except json.JSONDecodeError as e:  # half-written or not yet shipped: keep polling
+                  last = repr(e)
+              time.sleep(3)
+          raise Exception(f"timed out waiting for {what}: last = {last!r}")
+
+
+      def instant(query):
+          rc, out = stack.execute(
+              f"curl -sf -G http://127.0.0.1:4201/api/v1/query --data-urlencode 'query={query}'"
+          )
+          assert rc == 0, out
+          return json.loads(out)["data"]["result"]
+
+
+      # node_systemd_unit_state is one-hot upstream (5 series per unit); the
+      # pipeline must keep the one true datapoint, as a number, without the
+      # `state` label. alloy.service is active (0), the notify unit activating (1).
+      def one_series(unit, code):
+          def check():
+              series = instant(f'node_systemd_unit_state{{name="{unit}"}}')
+              if len(series) != 1:
+                  return None
+              m = series[0]["metric"]
+              assert "state" not in m, series
+              assert m.get("host_type") == "server", series
+              assert series[0]["value"][1] == str(code), f"{unit}: {series}"
+              return series
+
+          return check
+
+
+      poll(one_series("alloy.service", 0), "alloy.service state series")
+      poll(one_series("test-activating.service", 1), "activating state series")
+
+      # Prometheus's scrape meta-metrics are renamed with an alloy_ prefix.
+      for meta in (
+          "up",
+          "scrape_duration_seconds",
+          "scrape_samples_scraped",
+          "scrape_samples_post_metric_relabeling",
+          "scrape_series_added",
+      ):
+          poll(lambda meta=meta: instant(f"alloy_{meta}"), f"alloy_{meta}")
+
+
+      # host_type must land on the stored span, checked through the Jaeger API.
+      def span_host_type():
+          rc, out = stack.execute(
+              "curl -sf http://127.0.0.1:4203/select/jaeger/api/traces/00000000000000000000000000000006"
+          )
+          assert rc == 0, out
+
+          def walk(node):
+              if isinstance(node, dict):
+                  if node.get("key") == "host_type":
+                      yield node.get("value")
+                  for v in node.values():
+                      yield from walk(v)
+              elif isinstance(node, list):
+                  for v in node:
+                      yield from walk(v)
+
+          return list(walk(json.loads(out))) == ["server"]
+
+
+      poll(span_host_type, "host_type=server on the stored span")
     '';
   };
 
@@ -1732,6 +1820,8 @@ in
         "10s needs none" = !(hasTimeout "10s");
         "30s needs none" = !(hasTimeout "30s");
         "1m30s needs none" = !(hasTimeout "1m30s");
+        # A bare minute is 60s, not 6s: a wrong unit constant would add a timeout.
+        "1m needs none" = !(hasTimeout "1m");
         "1h needs none" = !(hasTimeout "1h");
         "null needs none" = !(hasTimeout null);
       };
@@ -1742,6 +1832,85 @@ in
     else
       throw "scrape_timeout wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
   );
+
+  # The rendered OTLP exporter blocks, whole. `sizer = "items"` would read the
+  # byte cap as a count of queue items and nothing else in the suite looks at it.
+  otlp-exporter-blocks-render-exactly = pkgs.runCommand "otlp-exporter-blocks-render-exactly" { } (
+    let
+      text =
+        (evalWithCollector {
+          services.victoriaCollector = {
+            metrics.enable = true;
+            traces.enable = true;
+            writeEndpoint = "http://127.0.0.1:4204";
+            hostType = "server";
+          };
+        }).config.environment.etc."alloy/config.alloy".text;
+      lines = map lib.trim (lib.filter (l: lib.trim l != "") (lib.splitString "\n" text));
+      blockFrom =
+        header: n:
+        let
+          start = lib.lists.findFirstIndex (l: l == header) null lines;
+        in
+        if start == null then [ ] else lib.sublist start n lines;
+      expectedBlock = signal: path: [
+        ''otelcol.exporter.otlphttp "${signal}" {''
+        "client {"
+        ''endpoint = "http://127.0.0.1:4204${path}"''
+        "auth     = otelcol.auth.bearer.write_token.handler"
+        "}"
+        "sending_queue {"
+        "storage    = otelcol.storage.file.queue.handler"
+        ''sizer      = "bytes"''
+        "queue_size = 1073741824"
+        "}"
+        "retry_on_failure {"
+        ''max_elapsed_time = "0s"''
+        "}"
+        "}"
+      ];
+      expected = {
+        metrics = expectedBlock "metrics" "/opentelemetry";
+        traces = expectedBlock "traces" "/insert/opentelemetry";
+      };
+      got = lib.mapAttrs (
+        signal: block: blockFrom ''otelcol.exporter.otlphttp "${signal}" {'' (lib.length block)
+      ) expected;
+    in
+    if got == expected then
+      "echo OK > $out"
+    else
+      throw "exporter blocks differ.\nexpected: ${builtins.toJSON expected}\ngot: ${builtins.toJSON got}"
+  );
+
+  # The 10s boundary only sees the small units; every unit constant is pinned
+  # here, since a wrong h or m still lands on the same side of 10s.
+  duration-units-convert-to-exact-nanoseconds =
+    pkgs.runCommand "duration-units-convert-to-exact-nanoseconds" { }
+      (
+        let
+          inherit (import "${nixosModule}/nixosModule/victoriaCollector/common.nix" { inherit lib; })
+            durationNs
+            ;
+          expected = {
+            "1ns" = 1;
+            "1us" = 1000;
+            "1ms" = 1000000;
+            "1s" = 1000000000;
+            "1m" = 60000000000;
+            "1h" = 3600000000000;
+            "10s" = 10000000000;
+            "1h1m1s1ms1us1ns" = 3661001001001;
+            "01s" = 1000000000;
+            "9s999ms" = 9999000000;
+          };
+          wrong = lib.filterAttrs (d: ns: durationNs d != ns) expected;
+        in
+        if wrong == { } then
+          "echo OK > $out"
+        else
+          throw "durationNs wrong for: ${builtins.toJSON (builtins.attrNames wrong)}"
+      );
 
   # A zero-length interval fails at run time as well.
   zero-scrape-interval-is-rejected = pkgs.runCommand "zero-scrape-interval-rejected" { } (

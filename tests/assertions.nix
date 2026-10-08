@@ -3,7 +3,7 @@
 let
   inherit (pkgs) lib;
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) mkAssertionFiresCheck mkNoAssertionsFireCheck;
+  inherit (testLib) mkAssertionFiresCheck mkAssertionMessagesAreCheck mkNoAssertionsFireCheck;
 
   # Same throwaway fixture tests/grafana.nix uses -- nixpkgs' grafana
   # module requires a real secret_key file-provider, no silent default.
@@ -75,9 +75,22 @@ let
   ) flagServices;
 in
 {
-  nginx-requires-vmauth = mkAssertionFiresCheck {
+  nginx-requires-vmauth = mkAssertionMessagesAreCheck {
     name = "nginx-requires-vmauth";
-    expectMessageSubstring = "vmauth";
+    expected = [
+      ''
+        services.victoriaStack.nginx.enable requires
+        services.victoriaStack.vmauth.enable = true AND at least one of
+        metrics/logs/traces.enable = true -- nginx only ever
+        reverse-proxies to vmauth, never directly to a raw backend port,
+        so there is nothing for it to point at otherwise. vmauth.enable
+        alone is not sufficient: vmauth.nix's own config block only
+        activates when a backend is also enabled (see the comment above
+        on the vmauth.enable default), so `vmauth.enable = true` with
+        zero backends produces no actual vmauth service for nginx to
+        reverse-proxy to.
+      ''
+    ];
     module = {
       services.victoriaStack = {
         metrics.enable = true;
@@ -94,9 +107,22 @@ in
   # block only activates when a backend is also enabled, so this
   # configuration previously passed the (pre-Phase-36) assertion while
   # producing no actual vmauth service for nginx to reverse-proxy to.
-  nginx-requires-vmauth-with-a-real-backend = mkAssertionFiresCheck {
+  nginx-requires-vmauth-with-a-real-backend = mkAssertionMessagesAreCheck {
     name = "nginx-requires-vmauth-with-a-real-backend";
-    expectMessageSubstring = "vmauth";
+    expected = [
+      ''
+        services.victoriaStack.nginx.enable requires
+        services.victoriaStack.vmauth.enable = true AND at least one of
+        metrics/logs/traces.enable = true -- nginx only ever
+        reverse-proxies to vmauth, never directly to a raw backend port,
+        so there is nothing for it to point at otherwise. vmauth.enable
+        alone is not sufficient: vmauth.nix's own config block only
+        activates when a backend is also enabled (see the comment above
+        on the vmauth.enable default), so `vmauth.enable = true` with
+        zero backends produces no actual vmauth service for nginx to
+        reverse-proxy to.
+      ''
+    ];
     module = {
       services.victoriaStack = {
         vmauth.enable = true;
@@ -107,40 +133,216 @@ in
     };
   };
 
-  mcp-requires-own-backend = mkAssertionFiresCheck {
+  # An MCP server needs ITS OWN backend: the whole message is pinned (a bare
+  # "mcp" substring matches any neighbouring assertion), and each has a control
+  # with the backend on -- and one with only a DIFFERENT backend on, which is
+  # still the same mistake.
+  mcp-requires-own-backend = mkAssertionMessagesAreCheck {
     name = "mcp-requires-own-backend";
-    expectMessageSubstring = "mcp";
     module = {
       services.victoriaStack.metrics = {
         enable = false;
         mcp.enable = true;
       };
     };
+    expected = [
+      ''
+        services.victoriaStack.metrics.mcp.enable requires
+        services.victoriaStack.metrics.enable = true -- an mcp server
+        proxies to one specific backend instance by construction; if
+        metrics itself is disabled there is nothing for it to connect to.
+      ''
+    ];
   };
 
-  # The logs/traces copies of the same assertion
-  # (nixosModule/victoriaStack/assertions.nix) had zero coverage -- only
-  # the metrics variant was ever tested, even though all 3 are
-  # structurally identical (copy-pasted) per-service assertions.
-  logs-mcp-requires-own-backend = mkAssertionFiresCheck {
+  logs-mcp-requires-own-backend = mkAssertionMessagesAreCheck {
     name = "logs-mcp-requires-own-backend";
-    expectMessageSubstring = "mcp";
     module = {
       services.victoriaStack.logs = {
         enable = false;
         mcp.enable = true;
       };
     };
+    expected = [
+      ''
+        services.victoriaStack.logs.mcp.enable requires
+        services.victoriaStack.logs.enable = true -- an mcp server
+        proxies to one specific backend instance by construction; if logs
+        itself is disabled there is nothing for it to connect to.
+      ''
+    ];
   };
 
-  traces-mcp-requires-own-backend = mkAssertionFiresCheck {
+  traces-mcp-requires-own-backend = mkAssertionMessagesAreCheck {
     name = "traces-mcp-requires-own-backend";
-    expectMessageSubstring = "mcp";
     module = {
       services.victoriaStack.traces = {
         enable = false;
         mcp.enable = true;
       };
+    };
+    expected = [
+      ''
+        services.victoriaStack.traces.mcp.enable requires
+        services.victoriaStack.traces.enable = true -- an mcp server
+        proxies to one specific backend instance by construction; if
+        traces itself is disabled there is nothing for it to connect to.
+      ''
+    ];
+  };
+
+  # Only a different backend on: still no backend for this MCP server.
+  logs-mcp-with-only-another-backend-still-fires = mkAssertionMessagesAreCheck {
+    name = "logs-mcp-with-only-another-backend-still-fires";
+    module = {
+      services.victoriaStack = {
+        traces.enable = true;
+        logs.mcp.enable = true;
+      };
+    };
+    expected = [
+      ''
+        services.victoriaStack.logs.mcp.enable requires
+        services.victoriaStack.logs.enable = true -- an mcp server
+        proxies to one specific backend instance by construction; if logs
+        itself is disabled there is nothing for it to connect to.
+      ''
+    ];
+  };
+
+  metrics-mcp-with-only-another-backend-still-fires = mkAssertionMessagesAreCheck {
+    name = "metrics-mcp-with-only-another-backend-still-fires";
+    module = {
+      services.victoriaStack = {
+        logs.enable = true;
+        metrics.mcp.enable = true;
+      };
+    };
+    expected = [
+      ''
+        services.victoriaStack.metrics.mcp.enable requires
+        services.victoriaStack.metrics.enable = true -- an mcp server
+        proxies to one specific backend instance by construction; if
+        metrics itself is disabled there is nothing for it to connect to.
+      ''
+    ];
+  };
+
+  traces-mcp-with-only-another-backend-still-fires = mkAssertionMessagesAreCheck {
+    name = "traces-mcp-with-only-another-backend-still-fires";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        traces.mcp.enable = true;
+      };
+    };
+    expected = [
+      ''
+        services.victoriaStack.traces.mcp.enable requires
+        services.victoriaStack.traces.enable = true -- an mcp server
+        proxies to one specific backend instance by construction; if
+        traces itself is disabled there is nothing for it to connect to.
+      ''
+    ];
+  };
+
+  # Controls: each MCP server with its own backend (and no other) is fine.
+  metrics-mcp-with-its-own-backend-is-fine = mkNoAssertionsFireCheck {
+    name = "metrics-mcp-with-its-own-backend-is-fine";
+    module.services.victoriaStack.metrics = {
+      enable = true;
+      mcp.enable = true;
+    };
+  };
+
+  logs-mcp-with-its-own-backend-is-fine = mkNoAssertionsFireCheck {
+    name = "logs-mcp-with-its-own-backend-is-fine";
+    module.services.victoriaStack.logs = {
+      enable = true;
+      mcp.enable = true;
+    };
+  };
+
+  traces-mcp-with-its-own-backend-is-fine = mkNoAssertionsFireCheck {
+    name = "traces-mcp-with-its-own-backend-is-fine";
+    module.services.victoriaStack.traces = {
+      enable = true;
+      mcp.enable = true;
+    };
+  };
+
+  # --- vmauth.https certificate sources ---
+
+  # ACME and explicit files are alternatives: naming a certificate AND
+  # supplying a file is ambiguous, and one file without the other is half a pair.
+  https-acme-together-with-a-cert-file-fires = mkAssertionMessagesAreCheck {
+    name = "https-acme-together-with-a-cert-file-fires";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.https = {
+          enable = true;
+          acmeCertName = "example.test";
+          certFile = "/run/fake-cert.pem";
+        };
+      };
+      security.acme.certs."example.test" = { };
+    };
+    expected = [
+      ''
+        services.victoriaStack.vmauth.https.enable needs a certificate:
+        set BOTH vmauth.https.certFile and vmauth.https.keyFile, OR
+        vmauth.https.acmeCertName -- not both, and not just one of the
+        two files.
+      ''
+    ];
+  };
+
+  https-cert-file-without-key-fires = mkAssertionMessagesAreCheck {
+    name = "https-cert-file-without-key-fires";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.https = {
+          enable = true;
+          certFile = "/run/fake-cert.pem";
+        };
+      };
+    };
+    expected = [
+      ''
+        services.victoriaStack.vmauth.https.enable needs a certificate:
+        set BOTH vmauth.https.certFile and vmauth.https.keyFile, OR
+        vmauth.https.acmeCertName -- not both, and not just one of the
+        two files.
+      ''
+    ];
+  };
+
+  # Controls: each valid way to supply the certificate is accepted.
+  https-with-both-files-is-fine = mkNoAssertionsFireCheck {
+    name = "https-with-both-files-is-fine";
+    module.services.victoriaStack = {
+      metrics.enable = true;
+      vmauth.https = {
+        enable = true;
+        certFile = "/run/fake-cert.pem";
+        keyFile = "/run/fake-key.pem";
+      };
+    };
+  };
+
+  https-with-an-acme-certificate-alone-is-fine = mkNoAssertionsFireCheck {
+    name = "https-with-an-acme-certificate-alone-is-fine";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.https = {
+          enable = true;
+          acmeCertName = "example.test";
+        };
+      };
+      security.acme.certs."example.test" = { };
     };
   };
 
