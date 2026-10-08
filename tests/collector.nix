@@ -759,6 +759,30 @@ in
           ''
       );
 
+  alloy-requires-its-token-render-oneshot =
+    pkgs.runCommand "alloy-requires-its-token-render-oneshot" { }
+      (
+        let
+          evaluated = evalWithCollector {
+            services.victoriaCollector = {
+              metrics.enable = true;
+              writeTokenFile = "${writeTokenFixture}";
+              hostType = "server";
+            };
+          };
+          requires = evaluated.config.systemd.services.alloy.requires or [ ];
+        in
+        if lib.elem "victoria-collector-alloy-write-token.service" requires then
+          "echo OK > $out"
+        else
+          throw ''
+            alloy.service must `requires` victoria-collector-alloy-write-token:
+            a restart of the oneshot does not propagate over Wants=, so after a
+            token rotation Alloy would keep the old token (EnvironmentFile= is
+            only read at start) and every export would be a 401.
+          ''
+      );
+
   alloy-web-ui-does-not-expose-the-write-token = pkgs.testers.nixosTest {
     name = "victoria-collector-alloy-ui-hides-token";
 
@@ -795,6 +819,49 @@ in
               f"su nobody -s /bin/sh -c 'curl -s http://127.0.0.1:12345/api/v0/web/components/{comp}'"
           )
           assert "collector-test-write-token" not in detail, detail  # gitleaks:allow
+    '';
+  };
+
+  alloy-picks-up-a-rotated-write-token = pkgs.testers.nixosTest {
+    name = "victoria-collector-alloy-token-rotation";
+
+    containers.collector = {
+      imports = [
+        collectorModule
+        fakeGatewayModule
+      ];
+      # Rewritable at runtime, unlike a store path.
+      environment.etc."rotating-token".text = "rotation-old-token\n"; # gitleaks:allow
+      services.victoriaCollector = {
+        metrics.enable = true;
+        writeEndpoint = "http://127.0.0.1:4210";
+        writeTokenFile = "/etc/rotating-token";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      collector.wait_for_unit("fake-gateway.service")
+      collector.wait_for_unit("alloy.service")
+      collector.wait_until_succeeds(
+          "grep -qx 'Bearer rotation-old-token' /tmp/auth.log", timeout=120  # gitleaks:allow
+      )
+      # What sops-nix's restartUnits does after replacing the secret file.
+      collector.succeed("rm /etc/rotating-token; echo rotation-new-token > /etc/rotating-token")  # gitleaks:allow
+      collector.succeed("systemctl restart victoria-collector-alloy-write-token.service")
+      # A restart propagated over Requires= is queued behind the oneshot's own
+      # job, so poll instead of assuming Alloy is already the new process.
+      collector.wait_until_succeeds(
+          "tr '\\0' '\\n' < /proc/$(systemctl show -p MainPID --value alloy.service)/environ"
+          " | grep -qx VICTORIA_WRITE_TOKEN=rotation-new-token",  # gitleaks:allow
+          timeout=60,
+      )
+      collector.succeed("rm /tmp/auth.log")
+      collector.wait_until_succeeds(
+          "grep -qx 'Bearer rotation-new-token' /tmp/auth.log", timeout=120  # gitleaks:allow
+      )
+      collector.fail("grep -q 'rotation-old-token' /tmp/auth.log")
     '';
   };
 

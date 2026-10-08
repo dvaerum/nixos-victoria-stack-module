@@ -155,6 +155,14 @@ in
       # Rendered by victoria-collector-alloy-write-token (see above) --
       # NOT this unit's own preStart, which runs too late to satisfy its
       # own EnvironmentFile=.
+      # Requires=, not Wants=: only Requires= carries a restart of the oneshot
+      # over to alloy, whose EnvironmentFile= is read at start. With Wants=, a
+      # rotated token was rewritten to the env file but Alloy kept sending the
+      # old one.
+      systemd.services.alloy.requires = lib.mkIf (cfg.writeTokenFile != null) [
+        "victoria-collector-alloy-write-token.service"
+      ];
+
       systemd.services.victoria-collector-alloy-write-token = lib.mkIf (cfg.writeTokenFile != null) {
         description = "Render alloy's write-token EnvironmentFile=";
         before = [ "alloy.service" ];

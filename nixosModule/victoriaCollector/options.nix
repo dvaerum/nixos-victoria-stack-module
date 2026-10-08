@@ -126,6 +126,15 @@ in
         vmauth's own `writeTokensFile` list on the gateway side)
         authorizing this host's write traffic. Required whenever the
         gateway's own `requireAuthForWrites` is `true` (the default).
+
+        Rotation: replacing the file's content only takes effect once
+        `victoria-collector-alloy-write-token.service` (which renders it for
+        Alloy) and `victoria-collector-journal-upload-token.service` (for the
+        log uploader) are restarted; restarting them restarts the services that
+        require them, so Alloy and systemd-journal-upload send the new token. With
+        sops-nix, list both units in the secret's `restartUnits`. If a render
+        unit fails, the services that require it stop rather than keep sending
+        a stale or missing token.
       '';
     };
 
