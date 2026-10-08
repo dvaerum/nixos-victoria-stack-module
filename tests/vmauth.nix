@@ -2384,6 +2384,175 @@ in
     '';
   };
 
+  # --- low ports: CAP_NET_BIND_SERVICE only when a listener needs it ---
+
+  # The set stays empty unless some listener that actually exists (a door
+  # only counts when enabled) binds a port below 1024, and then holds exactly
+  # CAP_NET_BIND_SERVICE, in both the bounding and the ambient set.
+  low-port-capability-is-granted-only-when-needed =
+    let
+      fakeCerts = {
+        certFile = "/run/fake-cert.pem";
+        keyFile = "/run/fake-key.pem";
+      };
+      caps =
+        vmauth:
+        let
+          sc =
+            (evalWith {
+              services.victoriaStack = {
+                metrics.enable = true;
+                inherit vmauth;
+              };
+            }).config.systemd.services.vmauth.serviceConfig;
+        in
+        {
+          bounding = sc.CapabilityBoundingSet or null;
+          ambient = sc.AmbientCapabilities or null;
+          privateUsers = sc.PrivateUsers or null;
+        };
+      none = {
+        bounding = "";
+        ambient = null;
+        privateUsers = true;
+      };
+      # PrivateUsers is off here: capabilities held inside a user namespace do
+      # not count for binding a port in the host's network namespace.
+      bind = {
+        bounding = [ "CAP_NET_BIND_SERVICE" ];
+        ambient = [ "CAP_NET_BIND_SERVICE" ];
+        privateUsers = false;
+      };
+      cases = {
+        "default ports" = {
+          got = caps { };
+          want = none;
+        };
+        "internal listener on 80" = {
+          got = caps { listenAddress = "127.0.0.1:80"; };
+          want = bind;
+        };
+        "IPv6 internal listener on 80" = {
+          got = caps { listenAddress = "[::1]:80"; };
+          want = bind;
+        };
+        "wildcard internal listener on 80" = {
+          got = caps { listenAddress = ":80"; };
+          want = bind;
+        };
+        "internal (pages) listener on 1023" = {
+          got = caps { internalListenAddress = "127.0.0.1:1023"; };
+          want = bind;
+        };
+        "internal (pages) listener on 1024 is not privileged" = {
+          got = caps { internalListenAddress = "127.0.0.1:1024"; };
+          want = none;
+        };
+        "https door on 443" = {
+          got = caps {
+            https = {
+              enable = true;
+              port = 443;
+            }
+            // fakeCerts;
+          };
+          want = bind;
+        };
+        "https door on 443 but disabled" = {
+          got = caps { https.port = 443; };
+          want = none;
+        };
+        "http door on 80" = {
+          got = caps {
+            http = {
+              enable = true;
+              ipAddress = "127.0.0.1";
+              port = 80;
+            };
+          };
+          want = bind;
+        };
+        "http door on 80 but disabled" = {
+          got = caps { http.port = 80; };
+          want = none;
+        };
+      };
+      failed = lib.filterAttrs (_: c: c.got != c.want) cases;
+    in
+    pkgs.runCommand "vmauth-low-port-capability" { } (
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "unexpected vmauth capability sets: ${builtins.toJSON failed}"
+    );
+
+  # Real boot: doors on 80 and 443 bind and answer for the unprivileged
+  # DynamicUser, and the kernel's own view of the process (CapBnd/CapEff/
+  # CapAmb) matches the unit -- empty on default ports, exactly bit 10
+  # (CAP_NET_BIND_SERVICE, 0x400) below 1024.
+  vmauth-low-port-doors-boot-with-only-net-bind-service = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-low-ports";
+
+    containers.low = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          writeTokensFile = "${writeTokensFixture}";
+          https = {
+            enable = true;
+            port = 443;
+            certFile = "${selfSignedCert}/cert.pem";
+            keyFile = "${selfSignedCert}/key.pem";
+          };
+          http = {
+            enable = true;
+            ipAddress = "127.0.0.1";
+            port = 80;
+          };
+        };
+      };
+    };
+    containers.high = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
+      };
+    };
+
+    testScript = ''
+      ${otlpTestPython}
+      start_all()
+
+      def caps(machine):
+          pid = machine.succeed("systemctl show -p MainPID --value vmauth.service").strip()
+          status = machine.succeed(f"cat /proc/{pid}/status")
+          return {
+              k: v.strip()
+              for k, v in (l.split(":", 1) for l in status.splitlines() if l.startswith("Cap"))
+          }
+
+      low.wait_for_unit("vmauth.service")
+      low.wait_for_open_port(80)
+      low.wait_for_open_port(443)
+      code, body = otlp_status(low, "http://127.0.0.1:80/opentelemetry/v1/metrics")
+      assert code == "401" and "missing 'Authorization'" in body, (code, body)
+      code, body = otlp_status(
+          low, "https://127.0.0.1:443/opentelemetry/v1/metrics", "--cacert ${selfSignedCert}/cert.pem"
+      )
+      assert code == "401" and "missing 'Authorization'" in body, (code, body)
+      c = caps(low)
+      for k in ("CapBnd", "CapEff", "CapAmb"):
+          assert c[k] == "0000000000000400", (k, c)
+
+      high.wait_for_unit("vmauth.service")
+      c = caps(high)
+      for k in ("CapBnd", "CapEff", "CapAmb"):
+          assert c[k] == "0000000000000000", (k, c)
+    '';
+  };
+
   # --- accessLog (per-request log lines for credentialed users) ---
 
   access-log-is-off-by-default-and-renders-nothing = pkgs.testers.nixosTest {

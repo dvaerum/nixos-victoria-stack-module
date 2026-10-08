@@ -71,6 +71,16 @@ let
   };
   anyTls = lib.any (l: l.tls) listeners;
 
+  # The unit runs with an empty capability set; a listener below 1024 is the one
+  # thing that needs more (docs/decisions/0015). The pages listener counts too.
+  needsLowPort = lib.any (
+    addr:
+    let
+      sp = listen.split addr;
+    in
+    sp != null && lib.toInt sp.port < 1024
+  ) (map (l: l.addr) listeners ++ [ cfg.internalListenAddress ]);
+
   # vmauth's own `headers`/`response_headers` url_map keys -- applied
   # uniformly to every entry this module builds (read, write, and MCP
   # routes alike) when configured, omitted entirely otherwise.
@@ -594,6 +604,8 @@ in
         );
         RuntimeDirectory = "vmauth";
         RuntimeDirectoryMode = "0700";
+        # A non-root DynamicUser keeps no capability across exec unless it is ambient.
+        AmbientCapabilities = lib.mkIf needsLowPort [ "CAP_NET_BIND_SERVICE" ];
         # Default UMask (0022) would render config.json -- every bearer
         # token and the admin password, in cleartext -- world-readable
         # (mode 644). Applies to ExecStartPre too, so the file it renders
@@ -612,7 +624,9 @@ in
         NoNewPrivileges = true;
         PrivateDevices = true;
         PrivateTmp = true;
-        PrivateUsers = true;
+        # Capabilities held inside a user namespace do not count for binding a
+        # port in the host's network namespace, so a low port rules this out.
+        PrivateUsers = !needsLowPort;
         ProtectClock = true;
         ProtectControlGroups = true;
         ProtectHome = true;
@@ -621,7 +635,7 @@ in
         ProtectKernelModules = true;
         ProtectKernelTunables = true;
         ProtectProc = "invisible";
-        CapabilityBoundingSet = "";
+        CapabilityBoundingSet = if needsLowPort then [ "CAP_NET_BIND_SERVICE" ] else "";
         ProtectSystem = "strict";
         RemoveIPC = true;
         RestrictAddressFamilies = [

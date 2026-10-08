@@ -12,7 +12,10 @@ syscall filtering, etc. — initially copied from nixpkgs, not re-derived), plus
 nixpkgs' own asymmetry — logs doesn't set it either, upstream).
 
 Since raised: `ProtectSystem=strict` and an empty `CapabilityBoundingSet` on the
-storage, vmauth and mcp units. Measured: DynamicUser units were already
+storage, vmauth and mcp units. The one exception is vmauth with a listener on a port
+below 1024: it gets `CAP_NET_BIND_SERVICE` (bounding and ambient) and `PrivateUsers=false`,
+because a capability held inside a user namespace does not count for binding in the host's
+network namespace (a real boot failed with `bind: permission denied` otherwise). Measured: DynamicUser units were already
 effectively strict even with an explicit `full`; only static-user units truly
 ran with `full`.
 
