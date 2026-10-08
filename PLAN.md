@@ -672,3 +672,55 @@ single tool-call timeout for a full nspawn build) + nixfmt-rfc-style clean,
 commit separately, push. Any genuinely open question discovered mid-phase
 gets researched (nixpkgs source, sibling repos, upstream docs) and recorded
 as a new ADR in the same commit — never guessed past silently.
+
+## Hardening and bug-fix batch outcome (what shipped, and what was measured)
+
+A four-way critical review of both modules after Round 4 produced a bug
+catalog; every item was fixed red-first, mutation-checked, and gated with a
+full `nix flake check -L` before its commit. Details live in the commits and
+ADRs 0027 and 0028; this records what is not obvious from them.
+
+Shipped:
+- vmauth's own pages (`/health`, `/metrics`, `/flags`, `/debug/pprof`,
+  `/-/reload`) moved to a loopback-only internal listener
+  (`-httpInternalListenAddr`, `vmauth.internalListenAddress`), so they are
+  never on the public doors (ADR 0027).
+- vmauth strips the caller's `Authorization` header on every module-built
+  route; the render script keeps secrets off `jq`'s command line, rejects
+  empty/duplicate/unknown token entries, and filters scoped tokens per path
+  with a boundary rule. `extraFlags` are shell-escaped (ADR 0028).
+- nginx streams request bodies and caps them (`nginx.maxRequestBodySize`,
+  default 8m); Grafana gets a default `root_url` behind `/grafana/`.
+- One shared listen-address helper; wildcard-safe URLs; a port-aware listener
+  collision check; longer start timeouts.
+- Collector: `scrape_timeout` follows a short scrape interval; Alloy export
+  retry is forever by default (bounded by the disk queue); validated option
+  types and escaped strings; OTLP receiver ports are options;
+  `alloy.dynamicUser = false` gives a static user with its tmpfiles rule and
+  re-added sandbox; the dummy client certificate is gone (`"-"` disables
+  client-cert loading).
+- vmauth restarts itself (systemd path watchers) when a secret file it copied
+  at start is replaced: admin password, token files, https cert/key and
+  `backendTls.*` (a store-path CA excepted; ACME keeps using `reloadServices`).
+- All module-built units use `ProtectSystem=strict` and an empty capability
+  set.
+
+Measured, and different from what was assumed:
+- A vmauth reload (`/-/reload`, SIGHUP) cannot replace the restart: it
+  re-reads only `config.json`, skips when that is byte-identical, and the
+  credential copies are fixed at start.
+- DynamicUser units were already effectively `strict` even when the module
+  said `full`; only static-user units truly ran with `full`.
+- The journal-upload token oneshot needs `CAP_CHOWN` (an empty set made it
+  fail in a real boot); every other unit runs with none.
+- The `backendTls` CA/cert/key flags were misspelt (vmauth's are
+  `-backend.TLSCAFile` etc., capitalised), so enabling them crash-looped vmauth
+  from the day they were added; no test booted it until this batch.
+- Deleting `chmod 640` from the token-drop-in script is an equivalent mutant
+  (`umask 027` already yields 640), so it is not a test gap.
+
+Process: each new test was mutation-checked; a real-boot test replaced the
+weak script-text greps where a runtime property mattered. The doc audit ran
+in three rounds (rounds 1 and 2 each found small errors the previous round
+introduced). A global lychee pre-commit hook (home-manager config) now checks
+Markdown links at commit time.

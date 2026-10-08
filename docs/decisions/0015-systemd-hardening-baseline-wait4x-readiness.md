@@ -5,11 +5,16 @@ storage
 
 `metrics.nix`/`logs.nix`/`traces.nix` now carry the exact hardening
 profile nixpkgs' own `victoriametrics`/`victorialogs`/`victoriatraces`
-modules already ship (`NoNewPrivileges`, `ProtectSystem=full` (since raised to `strict` with an empty `CapabilityBoundingSet` on the storage, vmauth, mcp and Alloy-oneshot units; DynamicUser units were already effectively strict, only static-user units ran with `full`),
+modules already ship (`NoNewPrivileges`, `ProtectSystem=full`,
 `PrivateDevices`, `MemoryDenyWriteExecute`, `RestrictAddressFamilies`,
 syscall filtering, etc. — initially copied from nixpkgs, not re-derived), plus
 `LimitNOFILE = 1048576` on metrics and traces specifically (matching
 nixpkgs' own asymmetry — logs doesn't set it either, upstream).
+
+Since raised: `ProtectSystem=strict` and an empty `CapabilityBoundingSet` on the
+storage, vmauth and mcp units. Measured: DynamicUser units were already
+effectively strict even with an explicit `full`; only static-user units truly
+ran with `full`.
 
 Readiness is a `wait4x http <url>/ping --timeout 90s` call instead of a
 hand-rolled `until curl ...; do sleep 1; done` loop. `wait4x` is already
@@ -25,8 +30,10 @@ apply — none of these binaries implement `sd_notify()` or
 
 Hardening (not readiness — there's no HTTP health endpoint to poll) is
 also applied to `vmauth.nix` and `mcp.nix`'s three services, and a
-lighter basics-only pass (`NoNewPrivileges`, `PrivateTmp`, `ProtectHome`)
-to the two Alloy write-token/journal-upload-token oneshots.
+lighter pass (`NoNewPrivileges`, `PrivateTmp`, `ProtectHome`, and later an
+empty `CapabilityBoundingSet`) to the two token oneshots. The exception is
+the journal-upload one, which keeps `CAP_CHOWN` because it must `chgrp` its
+drop-in to `systemd-journal`; an empty set made it fail in a real boot.
 
 The Alloy write-token oneshot specifically no longer runs as root. Per
 `systemd.exec(5)`: `EnvironmentFile=` is read by the service manager

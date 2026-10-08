@@ -3,8 +3,8 @@
 ## Decision
 
 `dynamicUser = true` (the default) combined with a `dataDir` that has been
-changed away from the upstream default produces a build-time `lib.warnIf`
-warning, not a hard assertion — and the warning is itself suppressible via
+changed away from the upstream default produces a build-time warning (an
+entry in `warnings`), not a hard assertion — and the warning is itself suppressible via
 `suppressDynamicUserWarning`.
 
 ## Why

@@ -4,8 +4,8 @@
 
 Supersedes part of 0005's exact mechanism (the "why a drop-in, not a
 hand-rolled unit" reasoning in 0005 stands; this ADR corrects the
-specific *path* and *rendering mechanism*, discovered to be wrong/
-incomplete during Phase 10 implementation).
+specific *path* and *rendering mechanism*, which turned out to be
+wrong/incomplete when implemented).
 
 ## Decision
 
