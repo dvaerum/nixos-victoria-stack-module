@@ -269,6 +269,38 @@ in
           reverse-proxy "/grafana/" at a service that was never started.
         '';
       }
+      # Grafana's datasource proxy forwards any method and path to the
+      # datasource URL for every Viewer, so the datasources must go through
+      # vmauth's read tier with a token (docs/decisions/0029). Nothing is
+      # provisioned without a backend, so nothing is required either.
+      {
+        assertion = !(cfg.grafana.enable && anyBackendEnabled) || cfg.vmauth.enable;
+        message = ''
+          services.victoriaStack.grafana.enable requires vmauth.enable = true:
+          Grafana's datasources reach the backends only through vmauth's read
+          tier, because a datasource pointing straight at a backend lets every
+          Grafana Viewer write and delete data
+          (docs/decisions/0029-grafana-datasources-through-vmauth-read-tier.md).
+        '';
+      }
+      {
+        assertion = !(cfg.grafana.enable && anyBackendEnabled) || cfg.grafana.readTokenFile != null;
+        message = ''
+          services.victoriaStack.grafana.readTokenFile must be set when
+          grafana.enable is on: it is the bearer token Grafana's datasources
+          send to vmauth's read tier
+          (docs/decisions/0029-grafana-datasources-through-vmauth-read-tier.md).
+        '';
+      }
+      {
+        assertion = !(cfg.grafana.enable && anyBackendEnabled) || cfg.vmauth.readTokensFile != null;
+        message = ''
+          services.victoriaStack.grafana.enable needs vmauth.readTokensFile:
+          the token in grafana.readTokenFile must be listed there, or vmauth
+          rejects every datasource query
+          (docs/decisions/0029-grafana-datasources-through-vmauth-read-tier.md).
+        '';
+      }
       {
         assertion =
           !cfg.vmauth.https.enable

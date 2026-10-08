@@ -1,5 +1,9 @@
 # 0023: MCP's trust boundary extends ADR 0010's reasoning
 
+Status: the Grafana half of this reasoning is superseded by
+[0029](./0029-grafana-datasources-through-vmauth-read-tier.md); the MCP
+decision stands.
+
 ## Decision
 
 The three MCP servers (`mcp-victoriametrics`, `mcp-victorialogs`,

@@ -179,9 +179,21 @@ let
         body, code = out.rsplit("\n", 1)
         return code.strip(), body
   '';
+
+  # The pair Grafana needs (grafana.readTokenFile + the same token in
+  # vmauth.readTokensFile); obviously fake values for throwaway containers.
+  grafanaReadToken = "grafana-fixture-read-token"; # gitleaks:allow
+  grafanaReadTokenFile = pkgs.writeText "grafana-read-token" grafanaReadToken;
+  vmauthReadTokensWithGrafana = pkgs.writeText "vmauth-read-tokens-with-grafana.yaml" ''
+    tokens:
+      - token: ${grafanaReadToken}
+  '';
 in
 {
   inherit
+    grafanaReadToken
+    grafanaReadTokenFile
+    vmauthReadTokensWithGrafana
     evalWith
     evalWithCollector
     mkAssertionFiresCheck

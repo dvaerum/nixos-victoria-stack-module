@@ -5,7 +5,12 @@ let
   module = nixosModule.nixosModules.victoriaStack;
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) otlpMetricGenerator evalWith;
+  inherit (testLib)
+    otlpMetricGenerator
+    evalWith
+    grafanaReadTokenFile
+    vmauthReadTokensWithGrafana
+    ;
   otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
 
   # Throwaway self-signed server cert, generated at build time (not a
@@ -225,9 +230,13 @@ in
       imports = [ module ];
       services.victoriaStack = {
         metrics.enable = true;
-        grafana.enable = true;
+        grafana = {
+          enable = true;
+          readTokenFile = "${grafanaReadTokenFile}";
+        };
         nginx.enable = true;
         vmauth.adminPasswordFile = "${adminPasswordFixture}";
+        vmauth.readTokensFile = "${vmauthReadTokensWithGrafana}";
       };
       services.grafana = {
         enable = true;
@@ -333,12 +342,16 @@ in
       imports = [ module ];
       services.victoriaStack = {
         metrics.enable = true;
-        grafana.enable = true;
+        grafana = {
+          enable = true;
+          readTokenFile = "${grafanaReadTokenFile}";
+        };
         nginx = {
           enable = true;
           domain = "victoria-stack-test.example.com";
         };
         vmauth.adminPasswordFile = "${adminPasswordFixture}";
+        vmauth.readTokensFile = "${vmauthReadTokensWithGrafana}";
       };
       services.grafana = {
         enable = true;

@@ -8,27 +8,50 @@
 let
   topCfg = config.services.victoriaStack;
   cfg = topCfg.grafana;
+  listen = import ./listen.nix { inherit lib; };
+
+  # Datasources talk to vmauth's read tier, never to a backend: Grafana's
+  # datasource proxy forwards any method and path for any Viewer
+  # (docs/decisions/0029). vmauth.effectiveUrl hops (docs/decisions/0019) stay
+  # vmauth's business.
+  vmauthUrl = "http://${listen.connectAddr topCfg.vmauth.listenAddress}";
+
+  # LoadCredential= makes the token readable by Grafana's own user whatever
+  # the source file's owner. The header value must be ONE `$__file{}`
+  # reference or nixpkgs warns that the token leaks into the store (its check
+  # rejects a "Bearer " prefix), so the unit builds the whole header value
+  # into a file first. `$__file{}` is expanded by Grafana when it loads the
+  # provisioning file; only the path is in the store.
+  tokenCredential = "grafana-read-token";
+  headerFile = "/run/grafana/vmauth-authorization";
+  buildAuthHeader = pkgs.writeShellApplication {
+    name = "grafana-vmauth-auth-header";
+    text = ''
+      umask 077
+      printf 'Bearer %s' "$(<"$CREDENTIALS_DIRECTORY/${tokenCredential}")" >${headerFile}
+    '';
+  };
 
   datasourceSpecs =
     lib.optional topCfg.metrics.enable {
       name = "VictoriaMetrics";
       type = "victoriametrics-metrics-datasource";
       uid = "victoriametrics-ds";
-      url = topCfg.metrics.effectiveUrl; # docs/decisions/0019
+      url = "${vmauthUrl}/metrics";
       isDefault = true;
     }
     ++ lib.optional topCfg.logs.enable {
       name = "VictoriaLogs";
       type = "victoriametrics-logs-datasource";
       uid = "victorialogs-ds";
-      url = topCfg.logs.effectiveUrl;
+      url = "${vmauthUrl}/logs";
       isDefault = false;
     }
     ++ lib.optional topCfg.traces.enable {
       name = "VictoriaTraces";
       type = "jaeger";
       uid = "victoriatraces-ds";
-      url = "${topCfg.traces.effectiveUrl}/select/jaeger";
+      url = "${vmauthUrl}/traces/select/jaeger";
       isDefault = false;
     };
 in
@@ -57,6 +80,29 @@ in
       (lib.mkIf topCfg.logs.enable [ pkgs.grafanaPlugins.victoriametrics-logs-datasource ])
     ];
 
+    systemd.services.grafana.serviceConfig = lib.mkIf (cfg.readTokenFile != null) {
+      LoadCredential = [ "${tokenCredential}:${cfg.readTokenFile}" ];
+      ExecStartPre = [ (lib.getExe buildAuthHeader) ];
+    };
+
+    # try-restart: a rotation while Grafana is stopped must not start it.
+    systemd.services.grafana-secret-restart = lib.mkIf (cfg.readTokenFile != null) {
+      description = "Restart Grafana after its vmauth read token changed";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${config.systemd.package}/bin/systemctl try-restart grafana.service";
+        CapabilityBoundingSet = "";
+      };
+    };
+    systemd.paths.grafana-read-token-watch = lib.mkIf (cfg.readTokenFile != null) {
+      description = "Watch Grafana's vmauth read token file for replacement";
+      wantedBy = [ "multi-user.target" ];
+      pathConfig = {
+        PathChanged = cfg.readTokenFile;
+        Unit = "grafana-secret-restart.service";
+      };
+    };
+
     services.grafana.provision.datasources.settings = {
       apiVersion = 1;
       # Without prune, a datasource whose backend was later disabled stays
@@ -80,6 +126,8 @@ in
           ;
         access = "proxy";
         editable = false;
+        jsonData.httpHeaderName1 = "Authorization";
+        secureJsonData.httpHeaderValue1 = "$__file{${headerFile}}";
       });
 
       # Grafana >=12.2 matches an existing datasource by id+uid (not just

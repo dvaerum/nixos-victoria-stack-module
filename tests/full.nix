@@ -5,7 +5,7 @@ let
   example = import ../examples { };
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) otlpMetricGenerator;
+  inherit (testLib) otlpMetricGenerator grafanaReadToken;
   otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
 
   # Same throwaway-fixture pattern as every other test group -- these
@@ -15,11 +15,13 @@ let
   readTokensFixture = pkgs.writeText "full-read-tokens.yaml" ''
     tokens:
       - token: full-test-read-token
+      - token: ${grafanaReadToken}
   '';
   writeTokensFixture = pkgs.writeText "full-write-tokens.yaml" ''
     tokens:
       - token: full-test-write-token
   '';
+  grafanaReadTokenFixture = pkgs.writeText "full-grafana-read-token" grafanaReadToken;
   grafanaSecretKeyFixture = pkgs.writeText "full-grafana-secret-key" "full-test-grafana-secret-key";
   grafanaAdminPasswordFixture = pkgs.writeText "full-grafana-admin-password" "full-test-grafana-admin-password";
   # Server cert for the maximal test's TLS-fronted gateway; SAN matches
@@ -51,6 +53,7 @@ in
           readTokensFile = lib.mkForce "${readTokensFixture}";
           writeTokensFile = lib.mkForce "${writeTokensFixture}";
         };
+        services.victoriaStack.grafana.readTokenFile = lib.mkForce "${grafanaReadTokenFixture}";
         services.grafana.settings.security = {
           secret_key = lib.mkForce "$__file{${grafanaSecretKeyFixture}}";
           admin_password = lib.mkForce "$__file{${grafanaAdminPasswordFixture}}";
@@ -259,6 +262,7 @@ in
             writeTokensFile = lib.mkForce "${writeTokensFixture}";
           };
           nginx.domain = "stack";
+          grafana.readTokenFile = lib.mkForce "${grafanaReadTokenFixture}";
           # Collectors write to vmauth's own HTTPS door; nginx on 80/443
           # is reads and Grafana only (docs/decisions/0025).
           vmauth.https = {

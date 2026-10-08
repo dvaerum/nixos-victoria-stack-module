@@ -808,16 +808,39 @@ in
       };
     };
 
-    grafana.enable = mkEnableOption ''
-      Grafana datasource provisioning for whichever of metrics/logs/traces
-      is enabled. Configures services.grafana only for the datasources and,
-      when `nginx.enable` is on, a default `root_url` for the `/grafana/`
-      sub-path; users and passwords are left to the consumer. Never routes
-      through vmauth, so anyone who can log in to Grafana effectively gets
-      full read access to every enabled backend, whatever their vmauth
-      credentials -- see
-      docs/decisions/0010-grafana-direct-loopback-own-auth.md
-    '';
+    grafana = {
+      enable = mkEnableOption ''
+        Grafana datasource provisioning for whichever of metrics/logs/traces
+        is enabled. Configures services.grafana only for the datasources and,
+        when `nginx.enable` is on, a default `root_url` for the `/grafana/`
+        sub-path; users and passwords are left to the consumer. The
+        datasources go through vmauth's read tier, never straight to a
+        backend, so a Grafana Viewer can read but not write or delete. Needs
+        `vmauth.enable` and `readTokenFile` -- see
+        docs/decisions/0029-grafana-datasources-through-vmauth-read-tier.md
+      '';
+
+      readTokenFile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          Path (as a plain string -- see `vmauth.writeTokensFile`'s
+          description for why not a Nix path literal) to a file holding ONE
+          bearer token, the credential Grafana's datasources send to vmauth.
+          Required when `grafana.enable` is on.
+
+          The same token must also be listed in `vmauth.readTokensFile`;
+          this module does not add it for you, so a mismatch makes every
+          datasource query fail with 401 (closed, never open). Keep it
+          separate from your other read tokens, so it can be rotated alone.
+
+          The file is delivered to Grafana's unit with systemd
+          `LoadCredential=`, so it need not be readable by the `grafana`
+          user. Replacing it restarts Grafana automatically, since Grafana
+          reads it only at start.
+        '';
+      };
+    };
 
     nginx = {
       enable = mkEnableOption ''

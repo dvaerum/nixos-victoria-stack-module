@@ -93,12 +93,12 @@ happen automatically.
 │                                            co-located backend) │       │
 │                                                                 ▼       │
 │                                                             Grafana     │
-│                                                          (:3000, direct │
-│                                                           loopback,     │
-│                                                           own auth --   │
-│                                                           NEVER through │
-│                                                           vmauth, ADR   │
-│                                                           0010)         │
+│                                                          (:3000, own    │
+│                                                           auth; its     │
+│                                                           datasources   │
+│                                                           call vmauth's │
+│                                                           read tier,    │
+│                                                           ADR 0029)     │
 │                                                                      │
 │   ┌──────────────────────────────────────────────────────┐          │
 │   │ victoriaCollector (can be this SAME host, self-         │          │
@@ -136,10 +136,9 @@ What you still have behind a proxy:
 
 ## Key properties this diagram makes explicit
 
-- **Grafana is never reached through vmauth**, in either direction —
-  nginx's `/grafana/` location and vmauth's `/metrics/`, `/logs/`,
-  `/traces/` routes are structurally separate paths to separate backends
-  (ADR 0010).
+- **Grafana reaches the backends only through vmauth's read tier** (ADR 0029),
+  with its own read token; nginx's `/grafana/` location proxies to Grafana
+  itself, not through vmauth.
 - **vmauth is the only thing every storage backend's own native API
   goes through** when reached from outside this host — metrics/logs/
   traces/mcp×3 all bind loopback-only and have no other sanctioned way

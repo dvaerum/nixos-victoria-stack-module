@@ -170,12 +170,67 @@ in
     };
   };
 
-  # Control: victoriaStack.grafana.enable with services.grafana.enable
-  # both on -- no assertion should fire.
+  # The datasources send a vmauth read token and go through vmauth
+  # (docs/decisions/0029); each missing piece must stop the build instead of
+  # leaving Grafana with a way to reach a backend directly or no credential.
+  grafana-requires-read-token-file = mkAssertionFiresCheck {
+    name = "grafana-requires-read-token-file";
+    expectMessageSubstring = "grafana.readTokenFile";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana.enable = true;
+        vmauth.readTokensFile = "/run/fake-read-tokens.yaml";
+      };
+      services.grafana.enable = true;
+    };
+  };
+
+  grafana-requires-vmauth = mkAssertionFiresCheck {
+    name = "grafana-requires-vmauth";
+    expectMessageSubstring = "grafana.enable requires vmauth.enable";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana = {
+          enable = true;
+          readTokenFile = "/run/fake-grafana-token";
+        };
+        vmauth.enable = lib.mkForce false;
+      };
+      services.grafana.enable = true;
+    };
+  };
+
+  grafana-requires-token-in-vmauth-read-tier = mkAssertionFiresCheck {
+    name = "grafana-requires-token-in-vmauth-read-tier";
+    expectMessageSubstring = "vmauth.readTokensFile";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana = {
+          enable = true;
+          readTokenFile = "/run/fake-grafana-token";
+        };
+        # vmauth.readTokensFile deliberately unset: no token Grafana sends
+        # could be accepted.
+      };
+      services.grafana.enable = true;
+    };
+  };
+
+  # Control: everything wired -- no assertion should fire.
   grafana-with-grafana-service-is-not-an-assertion-failure = mkNoAssertionsFireCheck {
     name = "grafana-with-grafana-service-is-not-an-assertion-failure";
     module = {
-      services.victoriaStack.grafana.enable = true;
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana = {
+          enable = true;
+          readTokenFile = "/run/fake-grafana-token";
+        };
+        vmauth.readTokensFile = "/run/fake-read-tokens.yaml";
+      };
       services.grafana = {
         enable = true;
         settings.security.secret_key = "$__file{${secretKeyFixture}}";

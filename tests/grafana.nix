@@ -5,7 +5,13 @@ let
   module = nixosModule.nixosModules.victoriaStack;
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) mkWarningFiresCheck mkNoWarningsCheck evalWith;
+  inherit (testLib)
+    mkWarningFiresCheck
+    mkNoWarningsCheck
+    evalWith
+    grafanaReadTokenFile
+    vmauthReadTokensWithGrafana
+    ;
 
   # services.grafana.* itself is entirely the consumer's own
   # responsibility (docs/decisions/0010) -- this module only adds
@@ -21,6 +27,15 @@ let
     services.grafana = {
       enable = true;
       settings.security.secret_key = "$__file{${secretKeyFixture}}";
+    };
+  };
+
+  # grafana.enable needs a read token Grafana sends and the same token in
+  # vmauth's read tier (docs/decisions/0029).
+  grafanaTokenWiring = {
+    services.victoriaStack = {
+      grafana.readTokenFile = "${grafanaReadTokenFile}";
+      vmauth.readTokensFile = "${vmauthReadTokensWithGrafana}";
     };
   };
 
@@ -46,6 +61,7 @@ let
         imports = [
           module
           grafanaConsumerConfig
+          grafanaTokenWiring
         ];
         services.victoriaStack = backends // {
           grafana.enable = true;
@@ -75,6 +91,7 @@ in
       imports = [
         module
         grafanaConsumerConfig
+        grafanaTokenWiring
       ];
       services.victoriaStack = {
         metrics.enable = true;
@@ -103,42 +120,158 @@ in
     '';
   };
 
-  datasources-direct-loopback-not-vmauth = pkgs.testers.nixosTest {
-    name = "victoria-stack-grafana-datasources-direct-loopback";
+  # The datasources must point at vmauth's read tier, not at a backend:
+  # Grafana's datasource proxy forwards any method and path for any Viewer, so
+  # a raw backend URL lets a Viewer write and delete (docs/decisions/0029).
+  datasources-through-vmauth-read-tier = pkgs.testers.nixosTest {
+    name = "victoria-stack-grafana-datasources-through-vmauth";
 
     containers.machine = {
       imports = [
         module
         grafanaConsumerConfig
+        grafanaTokenWiring
       ];
       services.victoriaStack = {
         metrics.enable = true;
+        logs.enable = true;
+        traces.enable = true;
         grafana.enable = true;
-        # nginx fronting everything must not drag the datasource URL
-        # through vmauth/nginx either.
         nginx = {
           enable = true;
           domain = "victoria-stack-test.example.com";
         };
-        # vmauth ends up auto-enabled (any backend on) but Grafana's own
-        # datasource URL must NOT route through it -- confirmed by
-        # checking the provisioned datasource's own url field points at
-        # the backend's loopback address directly, not vmauth's.
       };
     };
 
     testScript = ''
+      import json
+
       start_all()
       machine.wait_for_unit("grafana.service")
       machine.wait_for_open_port(3000)
 
-      datasources = machine.succeed(
+      datasources = json.loads(machine.succeed(
           "curl -sf -u admin:admin 'http://127.0.0.1:3000/api/datasources'"  # gitleaks:allow
+      ))
+      urls = {d["uid"]: d["url"] for d in datasources}
+      assert urls == {
+          "victoriametrics-ds": "http://127.0.0.1:4204/metrics",
+          "victorialogs-ds": "http://127.0.0.1:4204/logs",
+          "victoriatraces-ds": "http://127.0.0.1:4204/traces/select/jaeger",
+      }, f"datasources must go through vmauth's read tier, not a backend: {urls!r}"
+    '';
+  };
+
+  # The security property of docs/decisions/0029, end to end with the real
+  # plugins: a Grafana Viewer reads through the datasource proxy, and every
+  # write/delete/snapshot/flags request is rejected by vmauth's read tier
+  # (docs/decisions/0021) -- and really changes nothing in the backend.
+  viewer-reads-but-cannot-write-through-datasource-proxy = pkgs.testers.nixosTest {
+    name = "victoria-stack-grafana-viewer-read-only";
+
+    containers.machine = {
+      imports = [
+        module
+        grafanaConsumerConfig
+        grafanaTokenWiring
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        logs.enable = true;
+        traces.enable = true;
+        grafana.enable = true;
+      };
+    };
+
+    testScript = ''
+      import json
+
+      start_all()
+      machine.wait_for_unit("grafana.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(3000)
+      machine.wait_for_open_port(4204)
+
+      admin = "-u admin:admin"  # gitleaks:allow
+      viewer = "-u viewer:viewer-fixture-password"  # gitleaks:allow
+      grafana = "http://127.0.0.1:3000"
+
+      machine.wait_until_succeeds(f"curl -sf {admin} {grafana}/api/health")
+      machine.succeed(
+          f"curl -sf {admin} -X POST {grafana}/api/admin/users "
+          "-H 'Content-Type: application/json' "
+          "-d '{\"name\":\"viewer\",\"login\":\"viewer\",\"password\":\"viewer-fixture-password\"}'"  # gitleaks:allow
       )
-      assert "127.0.0.1:4201" in datasources, (
-          f"expected the metrics datasource URL to point directly at "
-          f"victoriametrics' own loopback address, not vmauth: {datasources!r}"
+      role = json.loads(machine.succeed(f"curl -sf {viewer} {grafana}/api/user/orgs"))[0]["role"]
+      assert role == "Viewer", f"the probe user must be a plain Viewer, got {role!r}"
+
+      # The ingest formats are line based and drop an unterminated last line,
+      # so every body is sent with a trailing newline.
+      def curl_with_body(data, curl_args):
+          return f"printf '%s\\n' '{data}' | curl -H 'Content-Type: application/stream+json' --data-binary @- {curl_args}"
+
+      def proxy(ds, method, path, data=None):
+          args = f"-s -w '\\n%{{http_code}}' {viewer} -X {method} '{grafana}/api/datasources/proxy/uid/{ds}{path}'"
+          out = machine.succeed(curl_with_body(data, args) if data else f"curl {args}")
+          text, code = out.rsplit("\n", 1)
+          return int(code), text
+
+      # Data the operator writes straight to the backends.
+      machine.succeed(
+          curl_with_body(
+              "grafana_probe_metric 42",
+              "-sf -X POST http://127.0.0.1:4201/api/v1/import/prometheus",
+          )
       )
+      machine.succeed("curl -sf http://127.0.0.1:4201/internal/force_flush")
+      machine.succeed(
+          curl_with_body(
+              '{"_msg":"operator-line","date":"0"}',
+              "-sf -X POST 'http://127.0.0.1:4202/insert/jsonline?_time_field=date'",
+          )
+      )
+      machine.wait_until_succeeds(
+          "out=$(curl -sf http://127.0.0.1:4202/select/logsql/query -d 'query=operator-line') && [[ $out == *operator-line* ]]"
+      )
+
+      # Reads work through the proxy.
+      def read_ok(ds, path, needle):
+          code, text = proxy(ds, "GET", path)
+          assert code == 200 and needle in text, (ds, path, code, text[:300])
+
+      machine.wait_until_succeeds(
+          "out=$(curl -sf http://127.0.0.1:4201/api/v1/series -d 'match[]=grafana_probe_metric') "
+          "&& [[ $out == *grafana_probe_metric* ]]"
+      )
+      read_ok("victoriametrics-ds", "/api/v1/series?match[]=grafana_probe_metric", "grafana_probe_metric")
+      read_ok("victoriametrics-ds", "/api/v1/labels", "__name__")
+      read_ok("victorialogs-ds", "/select/logsql/query?query=operator-line", "operator-line")
+
+      # Everything that changes or leaks state is refused by vmauth itself.
+      def refused(ds, method, path, data=None):
+          code, text = proxy(ds, method, path, data)
+          assert code == 400 and "missing route" in text, (ds, method, path, code, text[:300])
+
+      refused("victoriametrics-ds", "POST", "/api/v1/import/prometheus", "viewer_written_metric 1")
+      refused("victoriametrics-ds", "POST", "/api/v1/admin/tsdb/delete_series?match[]=grafana_probe_metric")
+      refused("victoriametrics-ds", "GET", "/snapshot/create")
+      refused("victoriametrics-ds", "GET", "/flags")
+      refused(
+          "victorialogs-ds", "POST", "/insert/jsonline?_time_field=date",
+          '{"_msg":"viewer-written-line","date":"0"}',
+      )
+      refused("victorialogs-ds", "GET", "/flags")
+
+      # ...and nothing happened in the backends.
+      machine.succeed("curl -sf http://127.0.0.1:4201/internal/force_flush")
+      series = machine.succeed(
+          "curl -sf http://127.0.0.1:4201/api/v1/series --data-urlencode 'match[]={__name__=~\".+\"}'"
+      )
+      assert "grafana_probe_metric" in series, f"delete_series must not have run: {series!r}"
+      assert "viewer_written_metric" not in series, f"import must not have run: {series!r}"
+      logs = machine.succeed("curl -sf http://127.0.0.1:4202/select/logsql/query -d 'query=*'")
+      assert "viewer-written-line" not in logs, f"insert must not have run: {logs!r}"
     '';
   };
 
@@ -149,6 +282,7 @@ in
       imports = [
         module
         grafanaConsumerConfig
+        grafanaTokenWiring
       ];
       services.victoriaStack = {
         metrics.enable = true;
@@ -186,6 +320,7 @@ in
       imports = [
         module
         grafanaConsumerConfig
+        grafanaTokenWiring
       ];
       services.victoriaStack = {
         # metrics deliberately left disabled.
@@ -334,42 +469,117 @@ in
           throw "expected services.grafana.provision.datasources.settings.prune = true, got ${builtins.toJSON prune}"
       );
 
-  # The grafana side of the effectiveUrl seam (docs/decisions/0019): every
-  # datasource URL must derive from the backend's effectiveUrl, not
-  # listenAddress. Mirrors mcp.nix's mcp-metrics-entrypoint-uses-effective-url.
-  datasource-urls-use-effective-url =
-    pkgs.runCommand "grafana-datasource-urls-use-effective-url" { }
+  # Datasource URLs are vmauth's internal data listener (dialled on loopback
+  # for a wildcard address) plus the backend's read prefix. They no longer
+  # derive from the backends' effectiveUrl (docs/decisions/0019): vmauth does
+  # that hop, so the seam stays in one place.
+  datasource-urls-go-through-vmauth-listener =
+    pkgs.runCommand "grafana-datasource-urls-go-through-vmauth-listener" { }
       (
         let
-          fake = name: "http://${name}.example.invalid:9999";
           evaluated = evalWith {
+            imports = [ grafanaTokenWiring ];
             services.victoriaStack = {
               metrics = {
                 enable = true;
-                effectiveUrl = lib.mkForce (fake "m");
+                effectiveUrl = lib.mkForce "http://m.example.invalid:9999";
               };
-              logs = {
-                enable = true;
-                effectiveUrl = lib.mkForce (fake "l");
-              };
-              traces = {
-                enable = true;
-                effectiveUrl = lib.mkForce (fake "t");
-              };
+              logs.enable = true;
+              traces.enable = true;
               grafana.enable = true;
+              vmauth.listenAddress = "0.0.0.0:4999";
             };
           };
           urls = map (d: d.url) evaluated.config.services.grafana.provision.datasources.settings.datasources;
           expected = [
-            (fake "m")
-            (fake "l")
-            "${fake "t"}/select/jaeger"
+            "http://127.0.0.1:4999/metrics"
+            "http://127.0.0.1:4999/logs"
+            "http://127.0.0.1:4999/traces/select/jaeger"
           ];
         in
         if urls == expected then
           "echo OK > $out"
         else
-          throw "datasource urls did not track effectiveUrl: expected ${builtins.toJSON expected}, got ${builtins.toJSON urls}"
+          throw "datasource urls must be vmauth's connect address plus the read prefix: expected ${builtins.toJSON expected}, got ${builtins.toJSON urls}"
+      );
+
+  # Every datasource sends the read token as an Authorization header read from
+  # the unit's credentials directory; the token itself never reaches the store.
+  datasources-send-the-read-token-from-a-credential =
+    pkgs.runCommand "grafana-datasources-send-the-read-token-from-a-credential" { }
+      (
+        let
+          evaluated = evalWith {
+            imports = [ grafanaTokenWiring ];
+            services.grafana.enable = true;
+            services.victoriaStack = {
+              metrics.enable = true;
+              logs.enable = true;
+              traces.enable = true;
+              grafana.enable = true;
+            };
+          };
+          settings = evaluated.config.services.grafana.provision.datasources.settings;
+          headerFile = "/run/grafana/vmauth-authorization";
+          checks = {
+            "header name on every datasource" = lib.all (
+              d: d.jsonData.httpHeaderName1 == "Authorization"
+            ) settings.datasources;
+            "header value is one $__file{} on every datasource" = lib.all (
+              d: d.secureJsonData.httpHeaderValue1 == "$__file{${headerFile}}"
+            ) settings.datasources;
+            # nixpkgs warns about any secureJsonData value that is not a whole
+            # $__file{}/$__env{} reference, a prefix such as "Bearer " included.
+            "no secureJsonData leak warning from nixpkgs" =
+              !(lib.any (lib.hasInfix "secureJsonData") evaluated.config.warnings);
+            "header file is built from the credential before Grafana starts" =
+              lib.any (lib.hasInfix "grafana-vmauth-auth-header") (
+                map toString evaluated.config.systemd.services.grafana.serviceConfig.ExecStartPre
+              );
+            "credential loaded into the grafana unit" = lib.elem "grafana-read-token:${grafanaReadTokenFile}" (
+              evaluated.config.systemd.services.grafana.serviceConfig.LoadCredential
+            );
+            "token value absent from the provisioning settings" =
+              !(lib.hasInfix testLib.grafanaReadToken (builtins.toJSON settings));
+          };
+          failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) checks);
+        in
+        if failed == [ ] then
+          "echo OK > $out"
+        else
+          throw "datasource credential wiring broken: ${builtins.toJSON failed}"
+      );
+
+  # Like vmauth's own secret files: a plain string (a Nix path literal would
+  # copy the secret into the store at evaluation), and a replaced file restarts
+  # the unit that only reads it at start.
+  grafana-read-token-file-is-a-plain-string-and-watched =
+    pkgs.runCommand "grafana-read-token-file-is-a-plain-string-and-watched" { }
+      (
+        let
+          evaluated = evalWith {
+            imports = [ grafanaTokenWiring ];
+            services.victoriaStack = {
+              metrics.enable = true;
+              grafana.enable = true;
+            };
+          };
+          watch = evaluated.config.systemd.paths."grafana-read-token-watch" or null;
+          checks = {
+            "option type is str" =
+              evaluated.options.services.victoriaStack.grafana.readTokenFile.type.nestedTypes.elemType.name
+              == "str";
+            "a path watches the file" =
+              watch != null && watch.pathConfig.PathChanged == "${grafanaReadTokenFile}";
+            "a change try-restarts grafana" =
+              lib.hasInfix "try-restart grafana.service" evaluated.config.systemd.services.grafana-secret-restart.serviceConfig.ExecStart;
+          };
+          failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) checks);
+        in
+        if failed == [ ] then
+          "echo OK > $out"
+        else
+          throw "grafana.readTokenFile handling broken: ${builtins.toJSON failed}"
       );
 
   # ADR 0020's documented workaround for tweaking one auto-provisioned

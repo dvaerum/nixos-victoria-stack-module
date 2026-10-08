@@ -89,6 +89,23 @@ section):
 }
 ```
 
+### Grafana
+
+Grafana's datasources go through vmauth's read tier, so a Grafana Viewer can
+read but not write or delete (ADR 0029). Give Grafana its own read token and
+list the same token in vmauth's read tokens:
+
+```nix
+services.victoriaStack.grafana = {
+  enable = true;
+  readTokenFile = "/run/secrets/grafana-read-token";  # one bearer token, plain text
+};
+services.victoriaStack.vmauth.readTokensFile = "/run/secrets/vmauth-read-tokens.yaml";
+# ...whose `tokens:` list contains an entry with that same token.
+```
+
+`grafana.enable` needs `vmauth.enable` (the default whenever a backend is on).
+
 ### Where collectors write
 
 Collectors write to vmauth's own doors, not through nginx (which is reads

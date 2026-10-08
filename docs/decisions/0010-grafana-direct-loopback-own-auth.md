@@ -1,5 +1,11 @@
 # 0010: Grafana stays on its own auth, direct loopback, never through vmauth
 
+Status: the direct-to-backend datasources are superseded by
+[0029](./0029-grafana-datasources-through-vmauth-read-tier.md), which routes
+them through vmauth's read tier (a Grafana Viewer could write and delete through
+the datasource proxy). Grafana's own users, roles and the `root_url` default
+stand.
+
 ## Decision
 
 `services.victoriaStack.grafana.enable` only provisions datasources pointing

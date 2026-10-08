@@ -39,7 +39,11 @@
       writeTokensFile = "/run/secrets/victoria/vmauth-write-tokens.yaml";
     };
 
-    grafana.enable = true;
+    grafana = {
+      enable = true;
+      # The same token must be listed in vmauth.readTokensFile.
+      readTokenFile = "/run/secrets/victoria/grafana-read-token";
+    };
 
     nginx = {
       enable = true;
