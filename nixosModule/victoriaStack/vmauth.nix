@@ -557,14 +557,14 @@ in
             cfg.maxConcurrentPerUserRequests != null
           ) "-maxConcurrentPerUserRequests=${toString cfg.maxConcurrentPerUserRequests}"
           ++ lib.optional cfg.backendTls.insecureSkipVerify "-backend.tlsInsecureSkipVerify=true"
-          ++ lib.optional (cfg.backendTls.caFile != null) "-backend.tlsCAFile=%d/backend-tls-ca"
+          ++ lib.optional (cfg.backendTls.caFile != null) "-backend.TLSCAFile=%d/backend-tls-ca"
           # %d expands to $CREDENTIALS_DIRECTORY at the service manager
           # level (same pattern nixpkgs' own victoriametrics.nix module
           # uses for -httpAuth.password=file://%d/basic_auth_password) --
           # never a literal path, the credential is staged there by
           # LoadCredential= at runtime.
-          ++ lib.optional (cfg.backendTls.certFile != null) "-backend.tlsCertFile=%d/backend-tls-cert"
-          ++ lib.optional (cfg.backendTls.keyFile != null) "-backend.tlsKeyFile=%d/backend-tls-key"
+          ++ lib.optional (cfg.backendTls.certFile != null) "-backend.TLSCertFile=%d/backend-tls-cert"
+          ++ lib.optional (cfg.backendTls.keyFile != null) "-backend.TLSKeyFile=%d/backend-tls-key"
           ++ selfMonitoring.mkFlags {
             selfMonitoring = cfg.selfMonitoring;
             metricsEnabled = topCfg.metrics.enable;

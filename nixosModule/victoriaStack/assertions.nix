@@ -234,7 +234,7 @@ in
           services.victoriaStack.vmauth.backendTls.certFile and .keyFile
           must be set together or not at all -- they form one mTLS client
           certificate pair passed to vmauth as
-          -backend.tlsCertFile/-backend.tlsKeyFile; supplying only one half
+          -backend.TLSCertFile/-backend.TLSKeyFile; supplying only one half
           produces an incomplete client certificate vmauth's underlying Go
           TLS stack will reject at connection time, not at eval time.
         '';

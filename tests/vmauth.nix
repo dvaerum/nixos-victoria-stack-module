@@ -272,11 +272,11 @@ in
             "flags absent when unset" = !(lib.hasInfix "backend.tls" execStartUnset);
             "insecureSkipVerify flag present" = lib.hasInfix "-backend.tlsInsecureSkipVerify=true" execStartSet;
             "caFile references %d (LoadCredential), not a literal path" =
-              lib.hasInfix "-backend.tlsCAFile=%d/backend-tls-ca" execStartSet;
+              lib.hasInfix "-backend.TLSCAFile=%d/backend-tls-ca" execStartSet;
             "caFile staged via LoadCredential" = lib.any (lib.hasPrefix "backend-tls-ca:") loadCredentialSet;
             "certFile/keyFile reference %d (LoadCredential), not a literal path" =
-              lib.hasInfix "-backend.tlsCertFile=%d/backend-tls-cert" execStartSet
-              && lib.hasInfix "-backend.tlsKeyFile=%d/backend-tls-key" execStartSet;
+              lib.hasInfix "-backend.TLSCertFile=%d/backend-tls-cert" execStartSet
+              && lib.hasInfix "-backend.TLSKeyFile=%d/backend-tls-key" execStartSet;
             "certFile/keyFile staged via LoadCredential" =
               lib.any (lib.hasPrefix "backend-tls-cert:") loadCredentialSet
               && lib.any (lib.hasPrefix "backend-tls-key:") loadCredentialSet;
@@ -735,6 +735,41 @@ in
       )
       serves("token-generation-three")
       assert status("token-generation-two") == "401"
+    '';
+  };
+
+  # vmauth's flag names are case-sensitive and not uniform: -backend.TLSCAFile,
+  # -backend.TLSCertFile and -backend.TLSKeyFile are capitalised, but
+  # -backend.tlsInsecureSkipVerify is not. A misspelt one makes vmauth exit with
+  # "flag provided but not defined", which an eval-only check cannot see, so this
+  # boots vmauth for real with every backendTls option set.
+  backend-tls-flags-are-accepted-by-vmauth = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-backend-tls-flags";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.backendTls = {
+          caFile = "${selfSignedCert}/cert.pem";
+          certFile = "${selfSignedCert}/cert.pem";
+          keyFile = "${selfSignedCert}/key.pem";
+          insecureSkipVerify = true;
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_open_port(4204, timeout=90)
+      machine.succeed("systemctl is-active vmauth.service")
+      # The flags reached vmauth with its own spelling.
+      cmdline = machine.succeed(
+          "tr '\\0' ' ' < /proc/$(systemctl show -p MainPID --value vmauth.service)/cmdline"
+      )
+      for flag in ("-backend.TLSCAFile=", "-backend.TLSCertFile=", "-backend.TLSKeyFile=",
+                   "-backend.tlsInsecureSkipVerify=true"):
+          assert flag in cmdline, (flag, cmdline)
     '';
   };
 

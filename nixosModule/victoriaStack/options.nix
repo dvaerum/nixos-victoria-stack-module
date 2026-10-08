@@ -577,7 +577,7 @@ in
           type = types.nullOr types.path;
           default = null;
           description = ''
-            vmauth's `-backend.tlsCAFile` -- CA bundle for verifying
+            vmauth's `-backend.TLSCAFile` -- CA bundle for verifying
             backend TLS certificates. A real Nix path is fine here (unlike
             the credential options below): a CA bundle is public by
             nature, not a runtime-staged secret. It is still staged through
@@ -590,7 +590,7 @@ in
           type = types.nullOr types.str;
           default = null;
           description = ''
-            vmauth's `-backend.tlsCertFile` -- client certificate for
+            vmauth's `-backend.TLSCertFile` -- client certificate for
             mTLS to HTTPS backends. Plain string; see `writeTokensFile`.
             Staged via `LoadCredential=` at runtime.
           '';
@@ -600,7 +600,7 @@ in
           type = types.nullOr types.str;
           default = null;
           description = ''
-            vmauth's `-backend.tlsKeyFile` -- the client private key
+            vmauth's `-backend.TLSKeyFile` -- the client private key
             paired with `certFile`, for mTLS to HTTPS backends. Plain string;
             see `writeTokensFile` (a private key must not reach the Nix
             store). Staged via `LoadCredential=` at runtime.
