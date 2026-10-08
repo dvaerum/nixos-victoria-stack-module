@@ -2452,6 +2452,27 @@ in
           throw "secret watchers wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
+  # The restart-on-replacement behaviour must be visible on each option that
+  # names a watched secret file, not only on one of them (a shared string in
+  # options.nix keeps the three in step).
+  secret-file-options-all-document-the-restart =
+    pkgs.runCommand "vmauth-secret-options-document-restart" { }
+      (
+        let
+          opts = (evalWith { }).options.services.victoriaStack.vmauth;
+          note = "restarts vmauth automatically";
+          failed = lib.filter (n: !(lib.hasInfix note opts.${n}.description)) [
+            "writeTokensFile"
+            "readTokensFile"
+            "adminPasswordFile"
+          ];
+        in
+        if failed == [ ] then
+          "echo OK > $out"
+        else
+          throw "options missing the restart-on-replacement note: ${builtins.toJSON failed}"
+      );
+
   # acmeCertName is the one door option with no boot test (a real ACME issuance
   # is impossible in the sandbox): pin its wiring instead.
   acme-cert-name-is-wired-into-the-unit = pkgs.runCommand "vmauth-acme-cert-name-wiring" { } (

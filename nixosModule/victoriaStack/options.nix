@@ -7,6 +7,18 @@ let
     types
     ;
 
+  # The one place the restart-on-replacement rule and its watched-file list are
+  # written; interpolated into every option that names a watched secret file
+  # (the list mirrors `watchedSecrets` in vmauth.nix).
+  secretReplacementNote = ''
+    Replacing this file restarts vmauth automatically, since vmauth reads its
+    secret files only at start; the same holds for `writeTokensFile`,
+    `readTokensFile`, `adminPasswordFile`, `https.certFile`, `https.keyFile`,
+    `backendTls.certFile`, `backendTls.keyFile` and `backendTls.caFile` (unless
+    it is a Nix store path). A file that is invalid after the replacement makes
+    vmauth fail at start with the validation message (it fails closed).
+  '';
+
   # Not lib.mkPackageOption: it resolves its default from `pkgs.<name>`, which
   # is wrong for the MCP packages (this flake's own packages/*, not nixpkgs).
   # Every package option is instead a plain `types.package` with no literal
@@ -685,13 +697,7 @@ in
           healthy regardless, so this fails silently until writes are
           actually attempted).
 
-          Replacing this file (or `readTokensFile`, `adminPasswordFile`,
-          `https.certFile`, `https.keyFile`, `backendTls.certFile`,
-          `backendTls.keyFile`, or `backendTls.caFile` unless it is a Nix
-          store path) restarts vmauth automatically, since vmauth reads them
-          only at start. A file that is invalid after the replacement makes
-          vmauth fail at start with the validation message (it fails
-          closed).
+          ${secretReplacementNote}
         '';
       };
 
@@ -709,6 +715,8 @@ in
           `/traces/*` and `/mcp/traces` only). Deliberately a SEPARATE file
           from `writeTokensFile` -- see
           docs/decisions/0003-vmauth-two-credential-tiers.md for why.
+
+          ${secretReplacementNote}
         '';
       };
 
@@ -721,6 +729,8 @@ in
           plaintext password for vmauth's Basic Auth "admin" user (read +
           MCP paths, same access as any `readTokensFile` entry, just a
           different credential type).
+
+          ${secretReplacementNote}
         '';
       };
 
