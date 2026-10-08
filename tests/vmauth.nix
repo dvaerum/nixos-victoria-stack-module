@@ -3125,4 +3125,36 @@ in
       else
         throw "idleConnTimeout format wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
     );
+
+  # systemd expands specifiers and ${VAR} even inside quotes: user-supplied
+  # text must reach ExecStart escaped, while the module's own %d
+  # credential-directory flags must stay raw (escaping them would break
+  # every TLS credential). Boot proof: storage.execstart-specifiers-reach-process-literally.
+  vmauth-execstart-escapes-user-text-but-not-own-specifiers =
+    pkgs.runCommand "vmauth-execstart-escapes-user-text" { }
+      (
+        let
+          execStart =
+            (evalWith {
+              services.victoriaStack = {
+                metrics.enable = true;
+                vmauth = {
+                  extraFlags = [ "-envflag.prefix=p%h-\${HOME}" ];
+                  idleConnTimeout = "5m";
+                  backendTls.caFile = "/run/fake/ca.pem";
+                };
+              };
+            }).config.systemd.services.vmauth.serviceConfig.ExecStart;
+          checks = {
+            "extraFlags escaped" = lib.hasInfix "-envflag.prefix=p%%h-$${HOME}" execStart;
+            "no raw %h left" = !(lib.hasInfix "p%h" execStart);
+            "own %d credential flag stays raw" = lib.hasInfix "-backend.TLSCAFile=%d/backend-tls-ca" execStart;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "vmauth ExecStart escaping wrong: ${builtins.toJSON (builtins.attrNames failed)}\n${execStart}"
+      );
 }

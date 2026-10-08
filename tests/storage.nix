@@ -1556,4 +1556,77 @@ in
       static.succeed("test -n \"$(find /srv/vm-data -mindepth 1 -user victoriametrics | head -n1)\"")
     '';
   };
+
+  # systemd expands specifiers (%h) and ${VAR} even inside quotes, so
+  # user-supplied flag text and dataDir must reach ExecStart as %% / $$.
+  # Boot proof of the same rule: execstart-specifiers-reach-process-literally.
+  execstart-escapes-systemd-specifiers =
+    let
+      flag = "-envflag.prefix=p%h-\${HOME}";
+      escaped = "-envflag.prefix=p%%h-$${HOME}";
+    in
+    pkgs.runCommand "execstart-escapes-systemd-specifiers" { } (
+      let
+        units = {
+          metrics = "victoriametrics";
+          logs = "victorialogs";
+          traces = "victoriatraces";
+        };
+        results = lib.mapAttrsToList (
+          attr: unit:
+          let
+            e = evalWith {
+              services.victoriaStack.${attr} = {
+                enable = true;
+                extraFlags = [ flag ];
+                dataDir = "/data/100%/\${x}";
+              };
+            };
+            execStart = e.config.systemd.services.${unit}.serviceConfig.ExecStart;
+            snapshotStart =
+              (evalWith {
+                services.victoriaStack.${attr} = {
+                  enable = true;
+                  snapshots.enable = true;
+                  listenAddress = "127.0.0.1:1%h";
+                };
+              }).config.systemd.services."${unit}-snapshot".serviceConfig.ExecStart;
+          in
+          {
+            "${attr}: extraFlags escaped" = lib.hasInfix escaped execStart;
+            "${attr}: no raw %h left" = !(lib.hasInfix "p%h" execStart);
+            "${attr}: dataDir escaped" = lib.hasInfix "/data/100%%/$${x}" execStart;
+            "${attr}: snapshot URL escaped" = lib.hasInfix ":1%%h" snapshotStart;
+          }
+        ) units;
+        failed = lib.filterAttrs (_: ok: !ok) (lib.foldl' lib.mergeAttrs { } results);
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "ExecStart does not escape systemd specifiers: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
+
+  execstart-specifiers-reach-process-literally = pkgs.testers.nixosTest {
+    name = "victoria-stack-execstart-specifiers-literal";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack.metrics = {
+        enable = true;
+        extraFlags = [ "-envflag.prefix=p%h-\${HOME}" ];
+      };
+      services.victoriaStack.vmauth.extraFlags = [ "-envflag.prefix=p%h-\${HOME}" ];
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("victoriametrics.service")
+      machine.wait_for_unit("vmauth.service")
+      for unit in ["victoriametrics", "vmauth"]:
+          pid = machine.succeed(f"systemctl show -p MainPID --value {unit}.service").strip()
+          cmdline = machine.succeed(f"tr '\\0' '\\n' < /proc/{pid}/cmdline")
+          assert "-envflag.prefix=p%h-''${HOME}" in cmdline.splitlines(), f"{unit}: flag was expanded: {cmdline!r}"
+    '';
+  };
 }

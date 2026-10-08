@@ -33,6 +33,10 @@ let
   # What the module itself dials (readiness probe, snapshot call, effectiveUrl):
   # loopback for a wildcard listenAddress (:port, 0.0.0.0:port, [::]:port).
   bindAddr = listen.connectAddr cfg.listenAddress;
+
+  # systemd expands specifiers (%h) and ${VAR} in Exec* lines even inside
+  # quotes; user-supplied text must reach the process literally.
+  escapeSystemd = lib.replaceStrings [ "%" "$" ] [ "%%" "$$" ];
 in
 {
   # Renamed from extraOptions to match vmauth.extraFlags and the
@@ -117,32 +121,34 @@ in
           serviceConfig = lib.mkMerge [
             {
               ExecStart = lib.escapeShellArgs (
-                [
-                  "${cfg.package}/bin/${binaryName}"
-                  "-storageDataPath=${toString cfg.dataDir}"
-                  "-httpListenAddr=${cfg.listenAddress}"
-                ]
-                ++ lib.optionals (cfg.retentionPeriod != null) [ "-retentionPeriod=${cfg.retentionPeriod}" ]
-                # Exist only on logs/traces (options.nix), hence `or null`.
-                ++ selfMonitoring.mkFlags {
-                  selfMonitoring = cfg.selfMonitoring;
-                  metricsEnabled = topCfg.metrics.enable;
-                  metricsUrl = topCfg.metrics.effectiveUrl;
-                  job = unitName;
-                }
-                # null passes 0, which DISABLES pruning: omitting the flag would
-                # leave the binaries' own 3d default in force (each binary's
-                # -help), deleting snapshots the operator meant to keep.
-                ++ lib.optional cfg.snapshots.enable "-snapshotsMaxAge=${
-                  if cfg.snapshots.maxAge == null then "0" else cfg.snapshots.maxAge
-                }"
-                ++ lib.optional (
-                  (cfg.retentionMaxDiskSpaceUsageBytes or null) != null
-                ) "-retention.maxDiskSpaceUsageBytes=${cfg.retentionMaxDiskSpaceUsageBytes}"
-                ++ lib.optional (
-                  (cfg.retentionMaxDiskUsagePercent or null) != null
-                ) "-retention.maxDiskUsagePercent=${toString cfg.retentionMaxDiskUsagePercent}"
-                ++ cfg.extraFlags
+                map escapeSystemd (
+                  [
+                    "${cfg.package}/bin/${binaryName}"
+                    "-storageDataPath=${toString cfg.dataDir}"
+                    "-httpListenAddr=${cfg.listenAddress}"
+                  ]
+                  ++ lib.optionals (cfg.retentionPeriod != null) [ "-retentionPeriod=${cfg.retentionPeriod}" ]
+                  # Exist only on logs/traces (options.nix), hence `or null`.
+                  ++ selfMonitoring.mkFlags {
+                    selfMonitoring = cfg.selfMonitoring;
+                    metricsEnabled = topCfg.metrics.enable;
+                    metricsUrl = topCfg.metrics.effectiveUrl;
+                    job = unitName;
+                  }
+                  # null passes 0, which DISABLES pruning: omitting the flag would
+                  # leave the binaries' own 3d default in force (each binary's
+                  # -help), deleting snapshots the operator meant to keep.
+                  ++ lib.optional cfg.snapshots.enable "-snapshotsMaxAge=${
+                    if cfg.snapshots.maxAge == null then "0" else cfg.snapshots.maxAge
+                  }"
+                  ++ lib.optional (
+                    (cfg.retentionMaxDiskSpaceUsageBytes or null) != null
+                  ) "-retention.maxDiskSpaceUsageBytes=${cfg.retentionMaxDiskSpaceUsageBytes}"
+                  ++ lib.optional (
+                    (cfg.retentionMaxDiskUsagePercent or null) != null
+                  ) "-retention.maxDiskUsagePercent=${toString cfg.retentionMaxDiskUsagePercent}"
+                  ++ cfg.extraFlags
+                )
               );
               Restart = "on-failure";
               RestartSec = 5;
@@ -226,15 +232,17 @@ in
           requires = [ "${unitName}.service" ];
           serviceConfig = {
             Type = "oneshot";
-            ExecStart = lib.escapeShellArgs [
-              (lib.getExe pkgs.curl)
-              "--silent"
-              "--show-error"
-              "--fail"
-              "--request"
-              "POST"
-              "http://${bindAddr}${snapshotCreatePath}"
-            ];
+            ExecStart = lib.escapeShellArgs (
+              map escapeSystemd [
+                (lib.getExe pkgs.curl)
+                "--silent"
+                "--show-error"
+                "--fail"
+                "--request"
+                "POST"
+                "http://${bindAddr}${snapshotCreatePath}"
+              ]
+            );
             DynamicUser = true;
             CapabilityBoundingSet = "";
             NoNewPrivileges = true;
