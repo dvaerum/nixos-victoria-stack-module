@@ -26,7 +26,8 @@ objects (`- token: <value>`), each optionally followed by an inline `#`
 comment naming the host/purpose it belongs to, and optionally carrying a
 `backends: [metrics, logs, traces]` list that scopes that one token to those
 backends' routes (Phase 52; an entry without it is unscoped, the full
-tier). Originally each entry was a bare string -- that format is rejected
+tier; `backends: []` grants no access -- entries that grant no access warn and are
+left out, see [0030](0030-vmauth-token-entries-warn-dont-break.md)). Originally each entry was a bare string -- that format is rejected
 with a migration message, not auto-migrated (Nix can't rewrite a
 runtime-supplied file). Parsed with `yq-go` (comments stripped natively by any real YAML
 parser) rather than `jq -R -s -c 'split("\n")...'` (the earlier mechanism, since replaced by `yq -o=json '.tokens'`; it

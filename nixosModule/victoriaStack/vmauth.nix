@@ -295,14 +295,13 @@ let
       validate_tokens_shape() {
         local label="$1"
         local tokens_json="$2"
-        local prefixes_file="$3"
         # Pre-scoping format: a bare list of strings. Detected on its own
         # so the failure says how to migrate rather than just "malformed".
         if jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' <<<"$tokens_json" >/dev/null; then
           echo "vmauth-render-config: $label lists tokens as bare strings, the old format -- each entry must now be an object: '- token: <value>' (optionally with 'backends: [metrics, logs, traces]' to scope it to those backends)" >&2
           exit 1
         fi
-        if ! jq -e 'type == "array" and all(.[]; type == "object" and (.token | type == "string") and ((.backends // []) | type == "array" and all(.[]; type == "string")))' <<<"$tokens_json" >/dev/null; then
+        if ! jq -e 'type == "array" and all(.[]; type == "object" and has("token") and (.token | type == "string" or . == null) and ((.backends // []) | type == "array" and all(.[]; type == "string")))' <<<"$tokens_json" >/dev/null; then
           # Reports only the JSON type, never the contents: the file holds
           # secrets and this lands in the journal.
           echo "vmauth-render-config: $label must contain a top-level 'tokens:' key whose value is a YAML list of objects, each with a string \`token\` key and an optional \`backends\` list of strings (optionally with inline '#' comments) -- got a value of type: $(jq -r type <<<"$tokens_json")" >&2
@@ -314,81 +313,98 @@ let
           echo "vmauth-render-config: $label entry $bad has an unknown key (only 'token' and 'backends' are allowed)" >&2
           exit 1
         fi
-        bad=$(jq -r '[to_entries[] | select(.value.token == "") | "#\(.key + 1)"] | join(", ")' <<<"$tokens_json")
-        if [ -n "$bad" ]; then
-          echo "vmauth-render-config: $label entry $bad has an empty token" >&2
-          exit 1
-        fi
         # vmauth itself dies on a duplicate and prints the token in its fatal line.
-        bad=$(jq -r '[.[].token] | to_entries | group_by(.value) | map(select(length > 1) | map("#\(.key + 1)") | join(" and ")) | join("; ")' <<<"$tokens_json")
+        bad=$(jq -r '[to_entries[] | select((.value.token // "") != "") | {n: (.key + 1), t: .value.token}] | group_by(.t) | map(select(length > 1) | map("#\(.n)") | join(" and ")) | join("; ")' <<<"$tokens_json")
         if [ -n "$bad" ]; then
           echo "vmauth-render-config: $label lists the same token more than once (entries $bad)" >&2
           exit 1
         fi
-        local unknown
-        unknown=$(jq -r --slurpfile prefixes "$prefixes_file" \
-          '[.[] | (.backends // [])[]] | unique - ($prefixes[0] | keys) | join(", ")' <<<"$tokens_json")
-        if [ -n "$unknown" ]; then
-          echo "vmauth-render-config: $label scopes a token to unknown backend(s): $unknown -- valid names: $(jq -r 'keys | join(", ")' "$prefixes_file")" >&2
-          exit 1
-        fi
       }
 
-      # Turns one tier's (already validated) token list into vmauth users: an
-      # unscoped token (no/empty `backends`) gets the tier's full url_map, a
-      # scoped one only the PATHS under its backends' prefixes. Filtering is per
+      # Turns one tier's (already validated) token list into vmauth users: a
+      # token with no `backends` key gets the tier's full url_map, a scoped one
+      # only the PATHS under its backends' prefixes. Filtering is per
       # src_path, not per entry: an entry listing several paths keeps only the
       # matching ones (otherwise a multi-path extra entry leaks its other paths),
       # and a prefix matches only at a boundary (`/metricsX` is not under
       # `/metrics`). An alternation (`|`) cannot be attributed to one backend and
       # an entry with no src_paths has nothing to match, so both are dropped for
-      # scoped tokens (fail closed). Echoes the old users array plus these.
+      # scoped tokens (fail closed).
+      #
+      # Warn, don't break (docs/decisions/0030): an entry that ends up with no
+      # access -- an empty token, an empty or all-unknown or all-disabled
+      # `backends` list -- is warned about and left OUT (vmauth rejects a user
+      # with an empty url_map, and the caller then gets the plain 401 of an
+      # unknown token). An unknown backend name is warned about and ignored.
+      # Warnings name the option and entry number, never a token. Echoes the old
+      # users array plus these.
       append_token_users() {
         local label="$1" users="$2" tokens_json="$3" urlmap_file="$4" prefixes_file="$5"
         local result
-        result=$(jq --slurpfile tokens <(printf '%s' "$tokens_json") --slurpfile urlmap "$urlmap_file" \
+        # The label travels in the environment: no data may reach jq as a
+        # command-line argument (guarded in tests/vmauth.nix).
+        result=$(label="$label" jq --slurpfile tokens <(printf '%s' "$tokens_json") --slurpfile urlmap "$urlmap_file" \
           --slurpfile prefixes "$prefixes_file" \
-          '. + ($tokens[0] | map(
-             . as $t
-             | (if (($t.backends // []) | length) == 0 then $urlmap[0]
-                else ($t.backends | map($prefixes[0][.]) | add) as $pfx
-                  | $urlmap[0]
-                  | map(
-                      (.src_paths |= ((. // []) | map(select(
-                          . as $p
-                          | ($p | contains("|") | not)
-                          and any($pfx[]; . as $pre
-                              | ($p | startswith($pre))
-                              and (($p[($pre | length):]) | (. == "" or (.[0:1] | test("[A-Za-z0-9_-]") | not))))))))
-                      | select((.src_paths | length) > 0))
-                end) as $um
-             | {bearer_token: $t.token, url_map: $um, scoped: (($t.backends // []) | length > 0), backends: ($t.backends // [])}))' <<<"$users")
-        # A scoped token left with no routes (its backends aren't enabled)
-        # would be an empty url_map, which vmauth rejects -- fail closed
-        # here with a message that doesn't echo the token itself.
-        local empty
-        empty=$(jq -r '[.[] | select(.scoped and (.url_map | length) == 0) | (.backends | join("/"))] | join(", ")' <<<"$result")
-        if [ -n "$empty" ]; then
-          echo "vmauth-render-config: $label has a token scoped to [$empty] but none of its backends is enabled -- it would have no routes" >&2
-          exit 1
-        fi
-        jq 'map(del(.scoped, .backends))' <<<"$result"
+          '$ENV.label as $label
+           | ($prefixes[0] | keys) as $known
+           | ($tokens[0] | to_entries | map(
+               (.key + 1) as $n
+               | .value as $t
+               | ($t.token // "") as $tok
+               | ($t | has("backends")) as $scoped
+               | (($t.backends // []) | unique) as $req
+               | ($req - $known) as $unknown
+               | ($req - $unknown) as $valid
+               | (if $scoped then
+                    (if ($valid | length) == 0 then []
+                     else ($valid | map($prefixes[0][.]) | add) as $pfx
+                       | $urlmap[0]
+                       | map(
+                           (.src_paths |= ((. // []) | map(select(
+                               . as $p
+                               | ($p | contains("|") | not)
+                               and any($pfx[]; . as $pre
+                                   | ($p | startswith($pre))
+                                   and (($p[($pre | length):]) | (. == "" or (.[0:1] | test("[A-Za-z0-9_-]") | not))))))))
+                           | select((.src_paths | length) > 0))
+                     end)
+                  else $urlmap[0] end) as $um
+               | {
+                   user: (if $tok != "" and ($um | length) > 0 then {bearer_token: $tok, url_map: $um} else null end),
+                   warnings: (
+                     if $tok == "" then ["\($label) entry #\($n) has an empty token -- skipped"]
+                     else
+                       (if ($unknown | length) > 0
+                        then ["\($label) entry #\($n) names unknown backend(s): \($unknown | join(", ")) -- ignored (valid names: \($known | join(", ")))"]
+                        else [] end)
+                       + (if $scoped and ($valid | length) == 0
+                          then ["\($label) entry #\($n) has no valid backend (an empty or all-unknown backends list) -- the token gets no access and is left out of the configuration"]
+                          elif ($um | length) == 0 and $scoped
+                          then ["\($label) entry #\($n) is scoped to [\($valid | join(", "))], none of which is enabled -- the token gets no access and is left out of the configuration"]
+                          elif ($um | length) == 0
+                          then ["\($label) entry #\($n) has no routes to grant -- the token gets no access and is left out of the configuration"]
+                          else [] end)
+                     end)
+                 })) as $entries
+           | {users: (. + [$entries[] | .user | select(. != null)]), warnings: [$entries[] | .warnings[]]}' <<<"$users")
+        jq -r '.warnings[] | "vmauth-render-config: warning: " + .' <<<"$result" >&2
+        jq '.users' <<<"$result"
       }
 
       read_tokens_json=""
       write_tokens_json=""
       if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/read-tokens" ]; then
         read_tokens_json=$(yq -o=json '.tokens' "$credentials_directory/read-tokens")
-        validate_tokens_shape readTokensFile "$read_tokens_json" "$READ_BACKEND_PREFIXES_FILE"
+        validate_tokens_shape readTokensFile "$read_tokens_json"
       fi
       if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/write-tokens" ]; then
         write_tokens_json=$(yq -o=json '.tokens' "$credentials_directory/write-tokens")
-        validate_tokens_shape writeTokensFile "$write_tokens_json" "$WRITE_BACKEND_PREFIXES_FILE"
+        validate_tokens_shape writeTokensFile "$write_tokens_json"
       fi
       # The same token in both tiers would give one bearer two routings.
       if [ -n "$read_tokens_json" ] && [ -n "$write_tokens_json" ]; then
         shared=$(jq -n -r --slurpfile r <(printf '%s' "$read_tokens_json") --slurpfile w <(printf '%s' "$write_tokens_json") \
-          '[$r[0] | to_entries[] | . as $e | ($w[0] | to_entries[] | select(.value.token == $e.value.token)) as $m | "readTokensFile (entry #\($e.key + 1)) and writeTokensFile (entry #\($m.key + 1))"] | join("; ")')
+          '[$r[0] | to_entries[] | . as $e | select(($e.value.token // "") != "") | ($w[0] | to_entries[] | select(.value.token == $e.value.token)) as $m | "readTokensFile (entry #\($e.key + 1)) and writeTokensFile (entry #\($m.key + 1))"] | join("; ")')
         if [ -n "$shared" ]; then
           echo "vmauth-render-config: the same token is in $shared" >&2
           exit 1
@@ -397,12 +413,13 @@ let
 
       if [ -n "$credentials_directory" ] && [ -f "$credentials_directory/admin-password" ]; then
         admin_password=$(cat "$credentials_directory/admin-password")
-        if [ -z "$admin_password" ]; then
-          echo "vmauth-render-config: adminPasswordFile is empty -- refusing to create an admin user with an empty password" >&2
-          exit 1
+        if [ -z "''${admin_password//[[:space:]]/}" ]; then
+          # An admin user with a blank password would accept `curl -u admin:`.
+          echo "vmauth-render-config: warning: adminPasswordFile is empty or only whitespace -- no admin user is created" >&2
+        else
+          users_json=$(jq --rawfile pw "$credentials_directory/admin-password" --slurpfile urlmap "$READ_URL_MAP_FILE" \
+            '. + [{username: "admin", password: ($pw | sub("\n+$"; "")), url_map: $urlmap[0]}]' <<<"$users_json")
         fi
-        users_json=$(jq --rawfile pw "$credentials_directory/admin-password" --slurpfile urlmap "$READ_URL_MAP_FILE" \
-          '. + [{username: "admin", password: ($pw | sub("\n+$"; "")), url_map: $urlmap[0]}]' <<<"$users_json")
       fi
 
       if [ -n "$read_tokens_json" ]; then

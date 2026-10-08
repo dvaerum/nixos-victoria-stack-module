@@ -2098,30 +2098,128 @@ in
     expectInJournal = "a string `token` key";
   };
 
-  unknown-backend-name-in-a-token-is-a-legible-error = mkBadTokensFileTest {
-    name = "unknown-backend-name";
-    tier = "read";
-    yaml = ''
-      tokens:
-        - token: some-token
-          backends: ["metricz"]
-    '';
-    expectInJournal = "unknown backend";
-  };
+  # Entries that grant no access are warned about and left out of config.json;
+  # vmauth keeps running for the rest (docs/decisions/0030). Real boot: the
+  # callers must get exactly the 401 vmauth gives any unknown token.
+  token-and-admin-entries-without-access-warn-and-are-left-out = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-no-access-entries-warn";
 
-  token-scoped-only-to-a-disabled-backend-is-a-legible-error = mkBadTokensFileTest {
-    name = "scoped-to-disabled-backend";
-    tier = "read";
-    yaml = ''
-      tokens:
-        - token: some-token
-          backends: ["traces"]
-    '';
-    expectInJournal = "none of its backends is enabled";
-    # traces deliberately NOT enabled.
-    backends = {
-      metrics.enable = true;
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        traces.enable = true; # logs deliberately NOT enabled
+        vmauth = {
+          readTokensFile = "${pkgs.writeText "warn-read-tokens.yaml" ''
+            tokens:
+              - token: read-empty-backends-token # gitleaks:allow
+                backends: []
+              - token: read-typo-backends-token # gitleaks:allow
+                backends: ["trackers"]
+              - token: read-mixed-backends-token # gitleaks:allow
+                backends: ["traces", "trackers"]
+              - token: read-disabled-backend-token # gitleaks:allow
+                backends: ["logs"]
+              - token: read-null-backends-token # gitleaks:allow
+                backends:
+              - token: read-good-token # gitleaks:allow
+              - token: ""
+          ''}";
+          writeTokensFile = "${pkgs.writeText "warn-write-tokens.yaml" ''
+            tokens:
+              - token: write-empty-backends-token # gitleaks:allow
+                backends: []
+              - token: write-typo-backends-token # gitleaks:allow
+                backends: ["trackers"]
+              - token: write-good-token # gitleaks:allow
+              - token:
+          ''}";
+          # Whitespace only (and a newline): no admin user, no empty-password login.
+          adminPasswordFile = "${pkgs.writeText "blank-admin-password" "  \t \n"}";
+        };
+      };
     };
+
+    testScript = ''
+      ${otlpTestPython}
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+
+      journal = machine.succeed("journalctl --no-pager")
+      for expected in [
+          "readTokensFile entry #1 has no valid backend",
+          "readTokensFile entry #2 names unknown backend(s): trackers",
+          "readTokensFile entry #2 has no valid backend",
+          "readTokensFile entry #3 names unknown backend(s): trackers",
+          "readTokensFile entry #4 is scoped to [logs], none of which is enabled",
+          "readTokensFile entry #5 has no valid backend",
+          "readTokensFile entry #7 has an empty token",
+          "writeTokensFile entry #1 has no valid backend",
+          "writeTokensFile entry #2 names unknown backend(s): trackers",
+          "writeTokensFile entry #4 has an empty token",
+          "adminPasswordFile is empty or only whitespace",
+      ]:
+          assert expected in journal, (expected, journal)
+      # The journal must never carry a credential, whichever entry it is.
+      for secret in [
+          "read-empty-backends-token", "read-typo-backends-token", "read-mixed-backends-token",
+          "read-disabled-backend-token", "read-null-backends-token", "read-good-token",
+          "write-empty-backends-token", "write-typo-backends-token", "write-good-token",
+      ]:
+          assert secret not in journal, secret
+
+      def read(token, path):
+          out = machine.succeed(
+              f"curl -s -w '\\n%{{http_code}}' -H 'Authorization: Bearer {token}' 'http://127.0.0.1:4204{path}'"
+          )
+          body, code = out.rsplit("\n", 1)
+          return code.strip(), body
+
+      unknown = read("a-token-nobody-configured", "/metrics/api/v1/labels")  # gitleaks:allow
+      assert unknown[0] == "401" and "Unauthorized" in unknown[1], unknown
+
+      # Tokens without access get exactly an unknown token's answer.
+      for token in [
+          "read-empty-backends-token", "read-typo-backends-token",
+          "read-disabled-backend-token", "read-null-backends-token",
+      ]:
+          assert read(token, "/metrics/api/v1/labels") == unknown, token
+
+      # The mixed entry keeps its valid backend, and only that one.
+      assert read("read-mixed-backends-token", "/traces/select/jaeger/api/services")[0] == "200"  # gitleaks:allow
+      assert read("read-mixed-backends-token", "/metrics/api/v1/labels")[0] == "400"  # gitleaks:allow
+      # The good token is untouched.
+      assert read("read-good-token", "/metrics/api/v1/labels")[0] == "200"  # gitleaks:allow
+      assert read("read-good-token", "/traces/select/jaeger/api/services")[0] == "200"  # gitleaks:allow
+
+      # The blank admin password creates no admin user, so `admin:` is just a
+      # wrong credential.
+      admin = machine.succeed(
+          "curl -s -w '\\n%{http_code}' -u 'admin:' 'http://127.0.0.1:4204/metrics/api/v1/labels'"
+      ).rsplit("\n", 1)
+      assert admin[1].strip() == "401" and "Unauthorized" in admin[0], admin
+
+      # Write tier: good token writes, the others get the unknown-token answer.
+      url = "http://127.0.0.1:4204/opentelemetry/v1/metrics"
+      unknown_w = otlp_status(machine, url, "-H 'Authorization: Bearer a-token-nobody-configured'")  # gitleaks:allow
+      assert unknown_w[0] == "401", unknown_w
+      for token in ["write-empty-backends-token", "write-typo-backends-token"]:
+          assert otlp_status(machine, url, f"-H 'Authorization: Bearer {token}'") == unknown_w, token
+      code, body = otlp_status(machine, url, "-H 'Authorization: Bearer write-good-token'")  # gitleaks:allow
+      assert code in ("200", "204"), (code, body)
+
+      # config.json: only the entries with access are present.
+      config = machine.succeed("cat /run/vmauth/config.json")
+      for token in ["read-good-token", "read-mixed-backends-token", "write-good-token"]:
+          assert token in config, token
+      for token in [
+          "read-empty-backends-token", "read-typo-backends-token", "read-disabled-backend-token",
+          "read-null-backends-token", "write-empty-backends-token", "write-typo-backends-token",
+      ]:
+          assert token not in config, token
+      assert '"admin"' not in config, config
+    '';
   };
 
   # --- public write doors (vmauth.https / vmauth.http) ---
@@ -2986,16 +3084,6 @@ in
   # --- token validation (every message names the OPTION and entry numbers, never
   # a token value or the name of a mistyped key, which can itself be a token) ---
 
-  empty-token-is-a-legible-error = mkBadTokensFileTest {
-    name = "empty-token";
-    tier = "read";
-    yaml = ''
-      tokens:
-        - token: ""
-    '';
-    expectInJournal = "readTokensFile entry #1 has an empty token";
-  };
-
   duplicate-token-within-a-file-is-a-legible-error = mkBadTokensFileTest {
     name = "duplicate-token-in-file";
     tier = "read";
@@ -3039,7 +3127,7 @@ in
     expectNotInJournal = "some-token-value";
   };
 
-  empty-admin-password-file-is-a-legible-error = pkgs.testers.nixosTest {
+  empty-admin-password-file-warns-and-creates-no-admin = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-empty-admin-password";
 
     containers.machine = {
@@ -3047,16 +3135,28 @@ in
       services.victoriaStack = {
         metrics.enable = true;
         # An empty file used to render an admin user with an EMPTY password
-        # (`curl -u admin:` was accepted).
-        vmauth.adminPasswordFile = "${pkgs.writeText "empty-admin-password" ""}";
+        # (`curl -u admin:` was accepted). It now warns and renders no admin;
+        # the token still works, so vmauth demonstrably kept running.
+        vmauth = {
+          adminPasswordFile = "${pkgs.writeText "empty-admin-password" ""}";
+          readTokensFile = "${readTokensFixture}";
+        };
       };
     };
 
     testScript = ''
       start_all()
-      machine.fail("systemctl is-active vmauth.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
       machine.succeed(
-          "journalctl -u vmauth.service --no-pager | grep -qF 'adminPasswordFile is empty'"
+          "journalctl -u vmauth.service --no-pager | grep -qF 'adminPasswordFile is empty or only whitespace'"
+      )
+      out = machine.succeed(
+          "curl -s -w '\\n%{http_code}' -u 'admin:' 'http://127.0.0.1:4204/metrics/api/v1/labels'"
+      ).rsplit("\n", 1)
+      assert out[1].strip() == "401" and "Unauthorized" in out[0], out
+      machine.succeed(
+          "curl -sf -H 'Authorization: Bearer read-token-one' 'http://127.0.0.1:4204/metrics/api/v1/labels'"  # gitleaks:allow
       )
     '';
   };

@@ -702,7 +702,14 @@ in
           comment (stripped automatically) naming which host/purpose it's
           for, and an optional `backends` list (any of `metrics`, `logs`,
           `traces`) scoping that one token to only those backends' ingest
-          doors; without it the token reaches every enabled backend.
+          doors; without the key the token reaches every enabled backend.
+          `backends: []`, only unknown names, or only backends that are not
+          enabled give NO access: vmauth logs a warning naming the entry
+          number, leaves that token out of its configuration (callers get
+          the same 401 as for an unknown token) and keeps running; an unknown
+          name next to valid ones is ignored. An entry with an empty `token`
+          is skipped with a warning too. See
+          docs/decisions/0030-vmauth-token-entries-warn-dont-break.md.
 
           ```yaml
           tokens:
@@ -753,7 +760,9 @@ in
           for why not a Nix path literal) to a file containing the
           plaintext password for vmauth's Basic Auth "admin" user (read +
           MCP paths, same access as any `readTokensFile` entry, just a
-          different credential type).
+          different credential type). An empty or whitespace-only file
+          creates no admin user and logs a warning; vmauth keeps running
+          with the other credentials.
 
           ${secretReplacementNote}
         '';
