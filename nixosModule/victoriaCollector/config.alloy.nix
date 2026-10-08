@@ -3,6 +3,7 @@
 let
   common = import ./common.nix { inherit lib; };
   needsAlloyOtlp = common.needsAlloyOtlp cfg;
+  writeBase = common.stripTrailingSlashes cfg.writeEndpoint;
 
   # Every interpolated string literal goes through JSON encoding: it escapes
   # quotes, backslashes and control characters, and Alloy accepts the result as a
@@ -216,7 +217,7 @@ let
     // /opentelemetry/v1/metrics.
     otelcol.exporter.otlphttp "metrics" {
       client {
-        endpoint = ${str "${cfg.writeEndpoint}/opentelemetry"}
+        endpoint = ${str "${writeBase}/opentelemetry"}
         auth     = otelcol.auth.bearer.write_token.handler
         ${tlsBlock}
       }
@@ -233,7 +234,7 @@ let
     // Resolves to /insert/opentelemetry/v1/traces.
     otelcol.exporter.otlphttp "traces" {
       client {
-        endpoint = ${str "${cfg.writeEndpoint}/insert/opentelemetry"}
+        endpoint = ${str "${writeBase}/insert/opentelemetry"}
         auth     = otelcol.auth.bearer.write_token.handler
         ${tlsBlock}
       }

@@ -8,6 +8,14 @@ rec {
   journaldEndpoint =
     cfg: if cfg.journaldWriteEndpoint != null then cfg.journaldWriteEndpoint else cfg.writeEndpoint;
 
+  # Drops trailing slashes so `<base>/path` never becomes `<base>//path`.
+  stripTrailingSlashes =
+    s:
+    let
+      m = lib.match "(.*[^/])/*" s;
+    in
+    if m == null then s else builtins.head m;
+
   # A Go-style duration as Alloy accepts it ("30s", "1m30s", "500ms"). Interpolated
   # into the generated config, so the charset is restricted rather than escaped.
   durationRegex = "([0-9]+(ns|us|ms|s|m|h))+";

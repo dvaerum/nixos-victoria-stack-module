@@ -14,17 +14,14 @@ let
   journaldWriteEndpoint = common.journaldEndpoint cfg;
 
   # What systemd-journal-upload is given: it only recognises a lower-case
-  # scheme (HTTPS://host became "https://HTTPS://host"), and a trailing slash
-  # would make the URL `//insert/journald`. URL schemes are case-insensitive,
-  # so lower-casing is not a change of meaning.
+  # scheme (HTTPS://host became "https://HTTPS://host"). URL schemes are
+  # case-insensitive, so lower-casing is not a change of meaning.
   journaldBaseUrl =
     let
-      m = lib.match "([A-Za-z][A-Za-z0-9+.-]*)://(.*[^/])/*" journaldWriteEndpoint;
+      stripped = common.stripTrailingSlashes journaldWriteEndpoint;
+      m = lib.match "([A-Za-z][A-Za-z0-9+.-]*)://(.*)" stripped;
     in
-    if m == null then
-      journaldWriteEndpoint
-    else
-      "${lib.toLower (builtins.elemAt m 0)}://${builtins.elemAt m 1}";
+    if m == null then stripped else "${lib.toLower (builtins.elemAt m 0)}://${builtins.elemAt m 1}";
   journaldIsHttps = lib.hasPrefix "https://" journaldBaseUrl;
 
   # `..` is rejected by assertions.nix, so a plain prefix test is sound here.

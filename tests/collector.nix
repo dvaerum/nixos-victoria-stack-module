@@ -318,6 +318,128 @@ in
     '';
   };
 
+  # A trailing slash on writeEndpoint used to build `//opentelemetry/...`
+  # export paths; telemetry must arrive regardless.
+  trailing-slash-write-endpoint-roundtrip = pkgs.testers.nixosTest {
+    name = "victoria-collector-trailing-slash-write-endpoint";
+
+    containers.stack = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ stackModule ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        traces.enable = true;
+        vmauth.writeTokensFile = "${writeTokensFixture}";
+        vmauth.listenAddress = "0.0.0.0:4204";
+      };
+      networking.firewall.allowedTCPPorts = [ 4204 ];
+    };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        traces.enable = true;
+        writeEndpoint = "http://stack:4204/";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      stack.wait_for_unit("vmauth.service")
+      stack.wait_for_unit("victoriametrics.service")
+      stack.wait_for_unit("victoriatraces.service")
+      collector.wait_for_unit("alloy.service")
+      collector.wait_for_open_port(4318)
+      for m in (stack, collector):
+          m.systemctl("start network-online.target")
+          m.wait_for_unit("network-online.target")
+      collector.wait_until_succeeds("ping -c 1 stack")
+
+      config_text = collector.succeed("cat /etc/alloy/config.alloy")
+      assert "//opentelemetry" not in config_text.replace("http://", ""), config_text
+
+      collector.succeed(
+          "now=$(date +%s%N); "
+          "payload=$(cat <<JSON\n"
+          "{\"resourceSpans\":[{\"resource\":{\"attributes\":["
+          "{\"key\":\"service.name\",\"value\":{\"stringValue\":\"victoria_trailing_slash_service\"}}"
+          "]},\"scopeSpans\":[{\"spans\":[{"
+          "\"traceId\":\"00000000000000000000000000000005\","
+          "\"spanId\":\"0000000000000005\","
+          "\"name\":\"victoria_trailing_slash_span\","
+          "\"kind\":1,"
+          "\"startTimeUnixNano\":\"$now\","
+          "\"endTimeUnixNano\":\"$now\""
+          "}]}]}]}\nJSON\n); "
+          "curl -sf -X POST -H 'Content-Type: application/json' --data-binary \"$payload\" "
+          "'http://127.0.0.1:4318/v1/traces'"
+      )
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4203/select/jaeger/api/services' "
+          "| grep -q victoria_trailing_slash_service",
+          timeout=120,
+      )
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          timeout=120,
+      )
+    '';
+  };
+
+  # Eval-level: every consumer of writeEndpoint (both Alloy exporters and the
+  # journal uploader) sees the same slash-free base.
+  write-endpoint-trailing-slashes-are-normalised =
+    pkgs.runCommand "collector-write-endpoint-normalised" { }
+      (
+        let
+          render =
+            endpoint:
+            let
+              evaluated = evalWithCollector {
+                services.victoriaCollector = {
+                  metrics.enable = true;
+                  traces.enable = true;
+                  logs.enable = true;
+                  writeEndpoint = endpoint;
+                  writeTokenFile = "${writeTokenFixture}";
+                  hostType = "server";
+                };
+              };
+            in
+            {
+              alloy = evaluated.config.environment.etc."alloy/config.alloy".text;
+              uploadUrl = evaluated.config.services.journald.upload.settings.Upload.URL;
+            };
+          check =
+            endpoint:
+            let
+              r = render endpoint;
+            in
+            lib.optional (
+              !lib.hasInfix ''endpoint = "http://h:4204/opentelemetry"'' r.alloy
+            ) "${endpoint}: metrics exporter endpoint"
+            ++ lib.optional (
+              !lib.hasInfix ''endpoint = "http://h:4204/insert/opentelemetry"'' r.alloy
+            ) "${endpoint}: traces exporter endpoint"
+            ++ lib.optional (
+              r.uploadUrl != "http://h:4204/insert/journald"
+            ) "${endpoint}: journal upload URL (${r.uploadUrl})";
+          failures = lib.concatMap check [
+            "http://h:4204"
+            "http://h:4204/"
+            "http://h:4204//"
+          ];
+        in
+        if failures == [ ] then
+          "echo OK > $out"
+        else
+          throw "writeEndpoint was not normalised for: ${builtins.toJSON failures}"
+      );
+
   per-signal-toggles-independent = pkgs.testers.nixosTest {
     name = "victoria-collector-per-signal-toggles-independent";
 
