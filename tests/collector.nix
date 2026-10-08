@@ -1869,6 +1869,7 @@ in
         }
       );
       suppressed = evalFor (custom // { alloy.suppressDynamicUserWarning = true; });
+      staticDefaultDir = evalFor { alloy.dynamicUser = false; };
       checks = {
         "default: dynamic user, nothing changed" =
           (unit dynamicDefault).DynamicUser == true
@@ -1897,7 +1898,14 @@ in
           && (unit staticCustom).ProtectHome == "read-only"
           && (unit staticCustom).PrivateTmp == true
           && (unit staticCustom).RemoveIPC == true
-          && (unit staticCustom).NoNewPrivileges == true;
+          && (unit staticCustom).NoNewPrivileges == true
+          && (unit staticCustom).RestrictSUIDSGID == true;
+        # The default queue directory is inside alloy's own StateDirectory, which
+        # systemd creates for the user: a tmpfiles rule would fight it, and
+        # ReadWritePaths is unnecessary.
+        "static + default queue dir: no tmpfiles rule, no extra ReadWritePaths" =
+          !(lib.any (lib.hasInfix "/var/lib/alloy") staticDefaultDir.config.systemd.tmpfiles.rules)
+          && (unit staticDefaultDir).ReadWritePaths == [ ];
         "the queue dir is writable under ProtectSystem=strict" =
           lib.elem "/srv/alloy-queue" (unit staticCustom).ReadWritePaths;
       };
@@ -1907,6 +1915,30 @@ in
       "echo OK > $out"
     else
       throw "alloy user wiring wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # The package option has to reach the unit, not just exist.
+  alloy-package-override-takes-effect = pkgs.runCommand "alloy-package-override-takes-effect" { } (
+    let
+      overridePackage = pkgs.hello; # any derivation with a /bin: only the store path is checked
+      e = evalWithCollector {
+        services.victoriaCollector = {
+          metrics.enable = true;
+          hostType = "server";
+          writeEndpoint = "http://127.0.0.1:4204";
+          alloy.package = overridePackage;
+        };
+      };
+    in
+    if
+      e.config.services.alloy.package == overridePackage
+      && lib.hasInfix (builtins.unsafeDiscardStringContext "${overridePackage}") (
+        builtins.unsafeDiscardStringContext e.config.systemd.services.alloy.serviceConfig.ExecStart
+      )
+    then
+      "echo OK > $out"
+    else
+      throw "alloy.package did not reach services.alloy / the unit's ExecStart"
   );
 
   # systemd-journal-upload does not follow the https=443 / http=80 convention: it
