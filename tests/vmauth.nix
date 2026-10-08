@@ -2755,25 +2755,37 @@ in
           throw "secret watchers wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # The restart-on-replacement behaviour must be visible on each option that
-  # names a watched secret file, not only on one of them (a shared string in
-  # options.nix keeps the three in step).
+  # The restart-on-replacement behaviour, and its limit, must be visible on
+  # each option that names a watched secret file, not only on one of them (a
+  # shared string in options.nix keeps them in step). The limit: the watchers
+  # see the file itself change, not a symlinked directory being swapped
+  # (sops-nix), which needs `restartUnits`.
   secret-file-options-all-document-the-restart =
     pkgs.runCommand "vmauth-secret-options-document-restart" { }
       (
         let
-          opts = (evalWith { }).options.services.victoriaStack.vmauth;
-          note = "restarts vmauth automatically";
-          failed = lib.filter (n: !(lib.hasInfix note opts.${n}.description)) [
-            "writeTokensFile"
-            "readTokensFile"
-            "adminPasswordFile"
+          vmauth = (evalWith { }).options.services.victoriaStack.vmauth;
+          options = {
+            writeTokensFile = vmauth.writeTokensFile;
+            readTokensFile = vmauth.readTokensFile;
+            adminPasswordFile = vmauth.adminPasswordFile;
+            "https.certFile" = vmauth.https.certFile;
+            "https.keyFile" = vmauth.https.keyFile;
+            "backendTls.caFile" = vmauth.backendTls.caFile;
+            "backendTls.certFile" = vmauth.backendTls.certFile;
+            "backendTls.keyFile" = vmauth.backendTls.keyFile;
+          };
+          notes = [
+            "restarts vmauth automatically"
+            "swaps a symlinked directory"
+            "`restartUnits`"
           ];
+          failed = lib.filterAttrs (_: o: !(lib.all (n: lib.hasInfix n o.description) notes)) options;
         in
-        if failed == [ ] then
+        if failed == { } then
           "echo OK > $out"
         else
-          throw "options missing the restart-on-replacement note: ${builtins.toJSON failed}"
+          throw "options missing the restart-on-replacement note: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
   # acmeCertName is the one door option with no boot test (a real ACME issuance

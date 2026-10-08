@@ -11,12 +11,15 @@ let
   # written; interpolated into every option that names a watched secret file
   # (the list mirrors `watchedSecrets` in vmauth.nix).
   secretReplacementNote = ''
-    Replacing this file restarts vmauth automatically, since vmauth reads its
-    secret files only at start; the same holds for `writeTokensFile`,
-    `readTokensFile`, `adminPasswordFile`, `https.certFile`, `https.keyFile`,
-    `backendTls.certFile`, `backendTls.keyFile` and `backendTls.caFile` (unless
-    it is a Nix store path). A file that is invalid after the replacement makes
-    vmauth fail at start with the validation message (it fails closed).
+    Writing this file, or renaming a new file over it, restarts vmauth automatically,
+    since vmauth reads its secret files only at start; the same holds for
+    `writeTokensFile`, `readTokensFile`, `adminPasswordFile`, `https.certFile`, `https.keyFile`, `backendTls.certFile`,
+    `backendTls.keyFile` and `backendTls.caFile` (unless it is a Nix store
+    path). A secrets manager that instead swaps a symlinked directory
+    (sops-nix) does not trigger that watch, so it must restart vmauth itself:
+    with sops-nix, list `vmauth.service` in the secret's `restartUnits`. A file
+    that is invalid after the replacement makes vmauth fail at start with the
+    validation message (it fails closed).
   '';
 
   # Not lib.mkPackageOption: it resolves its default from `pkgs.<name>`, which
@@ -524,16 +527,21 @@ in
             Path (plain string; see `writeTokensFile`) to the PEM certificate
             chain. Staged through systemd `LoadCredential=`, so it never enters
             the Nix store. Set together with `keyFile`, or use `acmeCertName`
-            instead. vmauth reads a copy (`LoadCredential=`) at start, so
-            replacing the file restarts vmauth through a path watcher (ACME
+            instead. vmauth reads a copy (`LoadCredential=`) at start (ACME
             renewals use `reloadServices`, see `acmeCertName`).
+
+            ${secretReplacementNote}
           '';
         };
 
         keyFile = mkOption {
           type = types.nullOr types.str;
           default = null;
-          description = "Path (plain string; see `writeTokensFile`) to the PEM private key matching `certFile`.";
+          description = ''
+            Path (plain string; see `writeTokensFile`) to the PEM private key matching `certFile`.
+
+            ${secretReplacementNote}
+          '';
         };
 
         acmeCertName = mkOption {
@@ -609,9 +617,9 @@ in
             the credential options below): a CA bundle is public by
             nature, not a runtime-staged secret. It is still staged through
             systemd `LoadCredential=` like every other TLS file, so the file's
-            owner and mode don't matter to vmauth's dynamic user. Replacing
-            the file restarts vmauth, except for a store path, which cannot
-            change in place.
+            owner and mode don't matter to vmauth's dynamic user.
+
+            ${secretReplacementNote}
           '';
         };
 
@@ -621,8 +629,9 @@ in
           description = ''
             vmauth's `-backend.TLSCertFile` -- client certificate for
             mTLS to HTTPS backends. Plain string; see `writeTokensFile`.
-            Staged via `LoadCredential=` at runtime; replacing the file
-            restarts vmauth.
+            Staged via `LoadCredential=` at runtime.
+
+            ${secretReplacementNote}
           '';
         };
 
@@ -633,8 +642,9 @@ in
             vmauth's `-backend.TLSKeyFile` -- the client private key
             paired with `certFile`, for mTLS to HTTPS backends. Plain string;
             see `writeTokensFile` (a private key must not reach the Nix
-            store). Staged via `LoadCredential=` at runtime; replacing the
-            file restarts vmauth.
+            store). Staged via `LoadCredential=` at runtime.
+
+            ${secretReplacementNote}
           '';
         };
       };
