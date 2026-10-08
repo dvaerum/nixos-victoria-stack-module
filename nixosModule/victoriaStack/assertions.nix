@@ -5,36 +5,103 @@ let
   anyBackendEnabled = cfg.metrics.enable || cfg.logs.enable || cfg.traces.enable;
   listen = import ./listen.nix { inherit lib; };
 
-  # Every listener this module would bind -- vmauth only counts when it
-  # actually activates (vmauth.nix needs a backend too).
-  enabledListenAddrs =
-    lib.optional cfg.metrics.enable cfg.metrics.listenAddress
-    ++ lib.optional cfg.logs.enable cfg.logs.listenAddress
-    ++ lib.optional cfg.traces.enable cfg.traces.listenAddress
-    ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled) cfg.vmauth.listenAddress
-    ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled) cfg.vmauth.internalListenAddress
-    ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled && cfg.vmauth.https.enable) (
-      listen.hostPort cfg.vmauth.https.ipAddress cfg.vmauth.https.port
-    )
-    ++ lib.optional (cfg.vmauth.enable && anyBackendEnabled && cfg.vmauth.http.enable) (
-      listen.hostPort cfg.vmauth.http.ipAddress cfg.vmauth.http.port
-    )
-    ++ lib.optional (cfg.metrics.enable && cfg.metrics.mcp.enable) cfg.metrics.mcp.listenAddress
-    ++ lib.optional (cfg.logs.enable && cfg.logs.mcp.enable) cfg.logs.mcp.listenAddress
-    ++ lib.optional (cfg.traces.enable && cfg.traces.mcp.enable) cfg.traces.mcp.listenAddress;
+  active = cfg.vmauth.enable && anyBackendEnabled;
+  mcp = svc: cfg.${svc}.enable && cfg.${svc}.mcp.enable;
+  at = name: addr: { inherit name addr; };
 
-  # Two listeners collide when they cannot both be bound -- the same address, or a
-  # wildcard (`0.0.0.0:p`, `:p`, `[::]:p`) next to an address it covers; comparing
-  # the raw strings missed `0.0.0.0:4204` next to vmauth's `127.0.0.1:4204`.
-  listenIndexes = lib.range 0 (builtins.length enabledListenAddrs - 1);
-  anyListenersCollide = lib.any (
-    i:
-    lib.any (
-      j:
-      j > i
-      && listen.overlaps (builtins.elemAt enabledListenAddrs i) (builtins.elemAt enabledListenAddrs j)
-    ) listenIndexes
-  ) listenIndexes;
+  # nginx's listen lines for the module's own virtualHost, resolved the way
+  # nixpkgs' nginx module does (vhost.listen, else defaultListen, else the
+  # listenAddresses, each given the default HTTP/TLS port). Unix sockets don't
+  # take part.
+  nginxListeners =
+    let
+      ngx = config.services.nginx;
+      vhost = ngx.virtualHosts."victoria-stack";
+      hasSsl = vhost.onlySSL || vhost.addSSL || vhost.forceSSL;
+      withPorts =
+        lines:
+        lib.optionals (hasSsl || vhost.rejectSSL) (
+          map (l: { port = ngx.defaultSSLListenPort; } // l) (lib.filter (l: l.ssl or true) lines)
+        )
+        ++ lib.optionals (!vhost.onlySSL) (
+          map (l: { port = ngx.defaultHTTPListenPort; } // l) (lib.filter (l: !(l.ssl or false)) lines)
+        );
+      lines =
+        if vhost.listen != [ ] then
+          vhost.listen
+        else if ngx.defaultListen != [ ] then
+          withPorts (map (lib.filterAttrs (_: v: v != null)) ngx.defaultListen)
+        else
+          withPorts (
+            map (addr: { inherit addr; }) (
+              if vhost.listenAddresses != [ ] then vhost.listenAddresses else ngx.defaultListenAddresses
+            )
+          );
+    in
+    map (
+      l:
+      at "services.victoriaStack.nginx (virtualHost \"victoria-stack\")" (listen.hostPort l.addr l.port)
+    ) (lib.filter (l: !(lib.hasPrefix "unix:" l.addr)) lines);
+
+  # Every listener this module would bind, labelled so a collision can name
+  # both sides -- vmauth only counts when it actually activates (vmauth.nix
+  # needs a backend too).
+  enabledListeners =
+    lib.optional cfg.metrics.enable (
+      at "services.victoriaStack.metrics.listenAddress" cfg.metrics.listenAddress
+    )
+    ++ lib.optional cfg.logs.enable (
+      at "services.victoriaStack.logs.listenAddress" cfg.logs.listenAddress
+    )
+    ++ lib.optional cfg.traces.enable (
+      at "services.victoriaStack.traces.listenAddress" cfg.traces.listenAddress
+    )
+    ++ lib.optional active (at "services.victoriaStack.vmauth.listenAddress" cfg.vmauth.listenAddress)
+    ++ lib.optional active (
+      at "services.victoriaStack.vmauth.internalListenAddress" cfg.vmauth.internalListenAddress
+    )
+    ++ lib.optional (active && cfg.vmauth.https.enable) (
+      at "services.victoriaStack.vmauth.https" (
+        listen.hostPort cfg.vmauth.https.ipAddress cfg.vmauth.https.port
+      )
+    )
+    ++ lib.optional (active && cfg.vmauth.http.enable) (
+      at "services.victoriaStack.vmauth.http" (
+        listen.hostPort cfg.vmauth.http.ipAddress cfg.vmauth.http.port
+      )
+    )
+    ++ lib.optional (mcp "metrics") (
+      at "services.victoriaStack.metrics.mcp.listenAddress" cfg.metrics.mcp.listenAddress
+    )
+    ++ lib.optional (mcp "logs") (
+      at "services.victoriaStack.logs.mcp.listenAddress" cfg.logs.mcp.listenAddress
+    )
+    ++ lib.optional (mcp "traces") (
+      at "services.victoriaStack.traces.mcp.listenAddress" cfg.traces.mcp.listenAddress
+    )
+    ++ lib.optionals cfg.nginx.enable nginxListeners
+    ++ lib.optional cfg.grafana.enable (
+      at "services.grafana.settings.server (http_addr, http_port)" (
+        listen.hostPort config.services.grafana.settings.server.http_addr config.services.grafana.settings.server.http_port
+      )
+    );
+
+  # Two listeners collide when they cannot both be bound -- the same address, a
+  # wildcard (`0.0.0.0:p`, `:p`, `[::]:p`) next to an address it covers, or
+  # `localhost` next to a loopback address.
+  collisions = lib.concatLists (
+    lib.imap0 (
+      i: a:
+      map (b: { inherit a b; }) (
+        # Same name = one party's own lines (nginx's 0.0.0.0 and [::0] pair), which it binds
+        # together on purpose.
+        lib.filter (b: a.name != b.name && listen.overlaps a.addr b.addr) (
+          lib.drop (i + 1) enabledListeners
+        )
+      )
+    ) enabledListeners
+  );
+  anyListenersCollide = collisions != [ ];
 in
 {
   config = {
@@ -101,9 +168,13 @@ in
       {
         assertion = !anyListenersCollide;
         message = ''
-          services.victoriaStack: two enabled services are configured with
+          services.victoriaStack: two enabled listeners are configured with
           the same listenAddress -- the second one to start would fail to
-          bind and crash-loop. Enabled listenAddresses: ${lib.concatStringsSep ", " enabledListenAddrs}
+          bind and crash-loop. Colliding: ${
+            lib.concatMapStringsSep "; " (
+              c: "${c.a.name} (${c.a.addr}) and ${c.b.name} (${c.b.addr})"
+            ) collisions
+          }
         '';
       }
       {

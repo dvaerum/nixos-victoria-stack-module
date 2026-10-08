@@ -21,7 +21,10 @@ rec {
         port = builtins.elemAt m 1;
       };
 
-  isWildcardHost = host: host == "" || host == "0.0.0.0" || host == "[::]";
+  # `[::0]` is how nginx's own IPv6 default is spelled.
+  isIpv6Wildcard = host: host == "[::]" || host == "[::0]";
+
+  isWildcardHost = host: host == "" || host == "0.0.0.0" || isIpv6Wildcard host;
 
   isWildcard =
     addr:
@@ -61,7 +64,15 @@ rec {
   # Does the wildcard host `wild` also accept a connection addressed to `other`?
   # `:port` and `[::]` are dual-stack; `0.0.0.0` only covers IPv4 addresses.
   covers =
-    wild: other: wild == "" || wild == "[::]" || (wild == "0.0.0.0" && !(lib.hasPrefix "[" other));
+    wild: other: wild == "" || isIpv6Wildcard wild || (wild == "0.0.0.0" && !(lib.hasPrefix "[" other));
+
+  # `localhost` resolves to 127.0.0.1 and/or ::1, so it clashes with any
+  # loopback address, not just a byte-identical string.
+  isLoopbackAddress = host: host == "[::1]" || lib.hasPrefix "127." host;
+
+  sameHost =
+    a: b:
+    a == b || (a == "localhost" && isLoopbackAddress b) || (b == "localhost" && isLoopbackAddress a);
 
   # Can two listen addresses NOT both be bound?
   overlaps =
@@ -74,7 +85,7 @@ rec {
     && sb != null
     && sa.port == sb.port
     && (
-      sa.host == sb.host
+      sameHost sa.host sb.host
       || (isWildcardHost sa.host && covers sa.host sb.host)
       || (isWildcardHost sb.host && covers sb.host sa.host)
     );

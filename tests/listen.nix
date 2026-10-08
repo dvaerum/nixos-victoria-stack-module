@@ -61,6 +61,15 @@ in
     "no overlap: different ports" = !(listen.overlaps "0.0.0.0:4204" "127.0.0.1:4205");
     "no overlap: two different specific addresses" =
       !(listen.overlaps "127.0.0.1:4204" "10.0.0.5:4204");
+    "overlap: localhost vs 127.0.0.1" = listen.overlaps "localhost:4204" "127.0.0.1:4204";
+    "overlap: 127.0.0.1 vs localhost (symmetric)" = listen.overlaps "127.0.0.1:4204" "localhost:4204";
+    "overlap: localhost vs [::1]" = listen.overlaps "localhost:4204" "[::1]:4204";
+    "overlap: localhost vs localhost" = listen.overlaps "localhost:4204" "localhost:4204";
+    "overlap: localhost vs the v4 wildcard" = listen.overlaps "localhost:4204" "0.0.0.0:4204";
+    "no overlap: localhost vs a non-loopback address" =
+      !(listen.overlaps "localhost:4204" "10.0.0.5:4204");
+    "no overlap: localhost on another port" = !(listen.overlaps "localhost:4299" "127.0.0.1:4204");
+    "[::0] is a wildcard (nginx spells its IPv6 default so)" = listen.isWildcard "[::0]:80";
   };
 
   # A wildcard listenAddress used to be mapped to loopback only for the module's own
@@ -201,6 +210,97 @@ in
           vmauth.listenAddress = "[::1]:4204";
         });
       "distinct ports do not fire" = !(fires { metrics.listenAddress = "0.0.0.0:4299"; });
+    };
+
+  # Hostnames (localhost) and the listeners of nginx and Grafana are part of the
+  # same collision check, and the message names both parties.
+  listener-collision-localhost-nginx-grafana =
+    let
+      messages =
+        extra: m:
+        lib.filter (lib.hasInfix "same listenAddress") (
+          lib.filter (lib.hasInfix "services.victoriaStack") (
+            map (a: a.message) (
+              builtins.filter (a: !a.assertion)
+                (evalWith {
+                  imports = [
+                    { services.victoriaStack = lib.recursiveUpdate { metrics.enable = true; } m; }
+                    extra
+                  ];
+                }).config.assertions
+            )
+          )
+        );
+      fires = m: messages { } m != [ ];
+      firesWith = extra: m: messages extra m != [ ];
+      names = m: needles: lib.all (n: lib.any (lib.hasInfix n) (messages { } m)) needles;
+      grafana = {
+        services.victoriaStack.grafana.enable = true;
+        services.grafana.settings.security.secret_key = "$__file{${secretKeyFixture}}";
+      };
+    in
+    mkTableCheck "listener-collision-localhost-nginx-grafana" {
+      "localhost vs vmauth's 127.0.0.1" = fires { metrics.listenAddress = "localhost:4204"; };
+      "localhost on another port does not fire" = !(fires { metrics.listenAddress = "localhost:4299"; });
+      "the message names both parties" = names { metrics.listenAddress = "localhost:4204"; } [
+        "services.victoriaStack.metrics.listenAddress"
+        "services.victoriaStack.vmauth.listenAddress"
+        "localhost:4204"
+        "127.0.0.1:4204"
+      ];
+      "a service on Grafana's default port" = firesWith grafana {
+        metrics.listenAddress = "127.0.0.1:3000";
+      };
+      "Grafana named in the message" = lib.any (lib.hasInfix "services.grafana.settings.server") (
+        messages grafana { metrics.listenAddress = "127.0.0.1:3000"; }
+      );
+      "Grafana's configured port is used, not 3000" = firesWith (lib.recursiveUpdate grafana {
+        services.grafana.settings.server.http_port = 3100;
+      }) { metrics.listenAddress = "127.0.0.1:3100"; };
+      "a moved Grafana frees 3000" =
+        !(firesWith (lib.recursiveUpdate grafana { services.grafana.settings.server.http_port = 3100; }) {
+          metrics.listenAddress = "127.0.0.1:3000";
+        });
+      "Grafana not enabled by the module: 3000 is free" =
+        !(fires { metrics.listenAddress = "127.0.0.1:3000"; });
+      "nginx's default port 80" = fires {
+        nginx.enable = true;
+        metrics.listenAddress = "127.0.0.1:80";
+      };
+      "nginx named in the message" =
+        names
+          {
+            nginx.enable = true;
+            metrics.listenAddress = "127.0.0.1:80";
+          }
+          [
+            "services.victoriaStack.nginx"
+            "services.victoriaStack.metrics.listenAddress"
+          ];
+      "nginx's configured listen port" =
+        firesWith
+          {
+            services.nginx.virtualHosts."victoria-stack".listen = [
+              {
+                addr = "127.0.0.1";
+                port = 8081;
+              }
+            ];
+          }
+          {
+            nginx.enable = true;
+            metrics.listenAddress = "127.0.0.1:8081";
+          };
+      "nginx's 443 only when the vhost serves TLS" =
+        !(fires {
+          nginx.enable = true;
+          metrics.listenAddress = "127.0.0.1:443";
+        })
+        && firesWith { services.nginx.virtualHosts."victoria-stack".forceSSL = true; } {
+          nginx.enable = true;
+          metrics.listenAddress = "127.0.0.1:443";
+        };
+      "nginx off: port 80 is free" = !(fires { metrics.listenAddress = "127.0.0.1:80"; });
     };
 
   # For real, with wildcard listen addresses on the database, its MCP server and
