@@ -29,6 +29,10 @@ component's own choices; this page is purely the connective picture.
 │   .vmauth.http (opt-in)       │ 0.0.0.0:8080        │ As configured: open,   │
 │                                │ (or 127.0.0.1)      │ or loopback for        │
 │                                │                     │ `tailscale serve`      │
+│   .logs.syslog.{udp,tcp,tls}  │ (no listener until   │ YES once an address is │
+│    (opt-in)                    │ ipAddress is set;    │ set -- unauthenticated,│
+│                                │ ports 514/514/6514)  │ TLS only encrypts      │
+│                                │                     │ (ADR 0031)            │
 │   .metrics.mcp                │ 127.0.0.1:4205      │ No                     │
 │   .logs.mcp                   │ 127.0.0.1:4206      │ No                     │
 │   .traces.mcp                 │ 127.0.0.1:4207      │ No                     │
@@ -52,6 +56,12 @@ component's own choices; this page is purely the connective picture.
 **Writes and reads use different doors** (docs/decisions/0025): collectors
 write to vmauth's own `https` / `http` listeners; nginx fronts reads and
 Grafana only. The public doors also accept (credentialed) reads.
+
+**Syslog is a third door that bypasses vmauth** (docs/decisions/0031): devices
+that only speak syslog write straight to VictoriaLogs' own listeners, which have
+no authentication, so vmauth's per-host tokens do not apply to them. The slots
+are opt-in, and the module opens no firewall port unless a slot sets
+`openFirewall`.
 
 **Important note on vmauth's default:** vmauth is the one service in
 `victoriaStack` whose entire *purpose* is accepting traffic from other
@@ -151,8 +161,9 @@ What you still have behind a proxy:
   explicitly widen a `listenAddress`** (mcp's or a storage service's
   directly) — the documented exceptions are nginx, whose entire purpose is
   being the externally-reachable front door (requires
-  `services.victoriaStack.nginx.enable = true`), and the opt-in
-  `vmauth.https` / `vmauth.http` doors (ADR 0025).
+  `services.victoriaStack.nginx.enable = true`), the opt-in
+  `vmauth.https` / `vmauth.http` doors (ADR 0025) and the opt-in
+  `logs.syslog` slots (ADR 0031).
 - **nginx speaks plain HTTP only, by design** — `services.nginx.
   virtualHosts."victoria-stack"` is a stable extension point (ADR 0022)
   an operator adds `forceSSL`/`enableACME` (or any other real nginx TLS

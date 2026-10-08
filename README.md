@@ -126,6 +126,35 @@ services.victoriaStack.vmauth = {
 Collectors then use `writeEndpoint = "https://host:8443"`. See
 [`docs/decisions/0025`](./docs/decisions/0025-vmauth-public-write-doors.md).
 
+### Syslog from devices
+
+Devices that can only send syslog (routers, switches, appliances) can write to
+VictoriaLogs directly. Nothing listens until you name an address:
+
+```nix
+services.victoriaStack.logs.syslog = {
+  udp = { enable = true; ipAddress = "192.0.2.10"; };   # port 514
+  tcp = { enable = true; ipAddress = "192.0.2.10"; };   # port 514
+  tls = {                                               # port 6514
+    enable = true;
+    ipAddress = "192.0.2.10";
+    certFile = "/run/secrets/syslog-cert.pem";
+    keyFile = "/run/secrets/syslog-key.pem";
+  };
+  # Every entry gets `source=syslog` unless you set extraFields.
+  # Add openFirewall = true to a slot to open its port; the module opens none by default.
+};
+```
+
+VictoriaLogs' syslog ingestion has **no authentication** (TLS only encrypts):
+anyone who can reach a port can write logs and create streams, so bind a
+specific address and restrict who can reach it. Evaluation warns about a plain
+(udp or tcp) listener on a non-loopback address until you set that slot's
+`suppressExposureWarning`. Ports below 1024 give the
+VictoriaLogs unit `CAP_NET_BIND_SERVICE` and nothing else. Anything beyond the
+three slots (unix sockets, tenants, stream fields) goes through `logs.extraFlags`;
+see [`docs/decisions/0031`](./docs/decisions/0031-victorialogs-syslog-listeners.md).
+
 ### Fleet topology
 
 One gateway host running `victoriaStack`, N other hosts running

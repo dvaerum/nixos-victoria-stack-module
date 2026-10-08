@@ -273,6 +273,16 @@ in
         };
       }
 
+      (lib.optionalAttrs supportsSyslog (
+        let
+          ports = syslog.firewallPorts cfg.syslog;
+        in
+        {
+          networking.firewall.allowedTCPPorts = ports.tcp;
+          networking.firewall.allowedUDPPorts = ports.udp;
+        }
+      ))
+
       # The unit reads a copy of each file (LoadCredential=), so a replaced file
       # must restart it. try-restart: a rotation while the service is stopped must
       # not start it. --no-block: the path unit only re-arms once this helper

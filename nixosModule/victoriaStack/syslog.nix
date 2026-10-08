@@ -77,6 +77,19 @@ rec {
       s: s.name != "tls" && !listen.isLoopbackHost s.slot.ipAddress && !s.slot.suppressExposureWarning
     ) (active syslog);
 
+  # Ports the slots ask to have opened, by firewall list. The tls slot is tcp.
+  firewallPorts =
+    syslog:
+    let
+      ports =
+        transport:
+        map (s: s.slot.port) (lib.filter (s: s.slot.openFirewall) (onTransport syslog transport));
+    in
+    {
+      tcp = ports "tcp";
+      udp = ports "udp";
+    };
+
   tlsActive = syslog: lib.any (s: s.name == "tls") (active syslog);
 
   # The tls slot's files, by credential name. LoadCredential= hands the unit a

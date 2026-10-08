@@ -125,6 +125,21 @@ let
         '';
       };
 
+      openFirewall = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Whether to open the listener's port in the NixOS firewall
+          (`networking.firewall.allowed${
+            if proto == "udp" then "UDP" else "TCP"
+          }Ports`) for every interface. Off by
+          default, since the listener has no authentication: open it only where
+          every host that can reach the port may write logs, or restrict it with
+          your own firewall rules instead. It does not change the address the
+          listener binds.
+        '';
+      };
+
       extraFields = mkOption {
         type = types.attrsOf types.str;
         default = {
@@ -311,6 +326,24 @@ let
           listeners, so a flag of the same array here is rejected at build time.
           Every other `-syslog.*` flag, and the `unix` transport, can be passed
           here freely.
+
+          A unix socket is not a slot (and the module does not test it): pass
+          `-syslog.listenAddr.unix=/run/victorialogs/syslog.sock` here
+          (`unixgram:/run/victorialogs/syslog.sock` for datagrams) and give the
+          unit a runtime folder yourself,
+          `systemd.services.victorialogs.serviceConfig.RuntimeDirectory = "victorialogs";`.
+          Mind these:
+
+          - The unit has a private `/tmp` and a read-only file system apart from its
+            data and runtime folders, so the socket must live in the runtime folder.
+          - The path must stay short (about 107 characters at most).
+          - The socket's mode is `0777` minus the unit's `UMask` (default `0022`),
+            so by default only the unit's own user can write to it. Other programs
+            can write only with `UMask = "0000"`, which makes the socket
+            world-writable.
+          - After a hard kill a stale socket file blocks the next start, unless the
+            socket lives in `RuntimeDirectory`, which systemd empties when the unit
+            stops.
         '';
       };
 

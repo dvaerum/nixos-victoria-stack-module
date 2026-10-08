@@ -158,15 +158,60 @@ let
   # Throwaway server certificates (the SAN must cover the address the client
   # dials); generated at build time, never committed.
   mkCert =
-    cn:
+    cn: san:
     pkgs.runCommand "syslog-test-cert-${cn}" { nativeBuildInputs = [ pkgs.openssl ]; } ''
       mkdir -p $out
       openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
-        -subj "/CN=${cn}" -addext "subjectAltName=IP:127.0.0.1" \
+        -subj "/CN=${cn}" -addext "subjectAltName=${san}" \
         -keyout $out/key.pem -out $out/cert.pem
     '';
-  certOne = mkCert "syslog-test-one";
-  certTwo = mkCert "syslog-test-two";
+  certOne = mkCert "syslog-test-one" "IP:127.0.0.1";
+  certTwo = mkCert "syslog-test-two" "IP:127.0.0.1";
+  certHosts = mkCert "syslog-test-hosts" "DNS:exposed,DNS:sealed,IP:127.0.0.1";
+  certStack = mkCert "syslog-test-stack" "DNS:stack,IP:127.0.0.1";
+
+  # The end-to-end scenario's stack, written the way a user would: logs behind
+  # vmauth with a read token, and all three syslog slots open to the network.
+  # `suppress` is the plain slots' suppressExposureWarning.
+  scenarioServices = suppress: {
+    logs = {
+      enable = true;
+      syslog = {
+        udp = (slot "0.0.0.0" 514) // {
+          openFirewall = true;
+          suppressExposureWarning = suppress;
+        };
+        tcp = (slot "0.0.0.0" 514) // {
+          openFirewall = true;
+          suppressExposureWarning = suppress;
+        };
+        tls =
+          (slot "0.0.0.0" 6514)
+          // runtimeCert
+          // {
+            openFirewall = true;
+            extraFields = {
+              source = "edge";
+              site = "lab";
+            };
+          };
+      };
+    };
+    vmauth.readTokensFile = "${pkgs.writeText "syslog-e2e-read-tokens.yaml" ''
+      tokens:
+        - token: syslog-e2e-read-token # gitleaks:allow
+    ''}";
+  };
+
+  scenarioStack = suppress: {
+    virtualisation.vlans = [ 1 ];
+    imports = [
+      module
+      (tlsFilesFrom certStack)
+    ];
+    environment.systemPackages = tools;
+    services.victoriaStack = scenarioServices suppress;
+  };
 
   # The files sit at a runtime path, root-only like a secrets manager leaves
   # them, so the unit can only read them through LoadCredential=.
@@ -748,6 +793,95 @@ in
         !((eval { tcp = slot "192.0.2.10" 5514; }).systemd.services ? victorialogs-secret-restart);
     };
 
+  # --- firewall ---
+
+  # The module opens a slot's port only when asked, in the list of its
+  # transport (tls is tcp), and leaves what the operator already opened alone.
+  open-firewall-adds-the-slot-port =
+    let
+      opened =
+        syslog:
+        let
+          fw =
+            (evalWith {
+              services.victoriaStack.logs = {
+                enable = true;
+                inherit syslog;
+              };
+              networking.firewall = {
+                allowedTCPPorts = [ 22 ];
+                allowedUDPPorts = [ 123 ];
+              };
+            }).config.networking.firewall;
+        in
+        {
+          tcp = lib.sort (a: b: a < b) fw.allowedTCPPorts;
+          udp = lib.sort (a: b: a < b) fw.allowedUDPPorts;
+        };
+      open = s: s // { openFirewall = true; };
+      untouched = {
+        tcp = [ 22 ];
+        udp = [ 123 ];
+      };
+    in
+    mkTableCheck "syslog-open-firewall" {
+      "off by default" =
+        opened {
+          udp = slot "0.0.0.0" 514;
+          tcp = slot "0.0.0.0" 514;
+          tls = tlsSlot "0.0.0.0" 6514;
+        } == untouched;
+      "udp slot" =
+        opened { udp = open (slot "0.0.0.0" 514); } == {
+          tcp = [ 22 ];
+          udp = [
+            123
+            514
+          ];
+        };
+      "tcp slot" =
+        opened { tcp = open (slot "0.0.0.0" 514); } == {
+          tcp = [
+            22
+            514
+          ];
+          udp = [ 123 ];
+        };
+      "tls slot opens tcp" =
+        opened { tls = open (tlsSlot "0.0.0.0" 6514); } == {
+          tcp = [
+            22
+            6514
+          ];
+          udp = [ 123 ];
+        };
+      "a custom port is the one opened" =
+        opened { udp = open (slot "0.0.0.0" 5514); } == {
+          tcp = [ 22 ];
+          udp = [
+            123
+            5514
+          ];
+        };
+      "only the slot that asks" =
+        opened {
+          udp = open (slot "0.0.0.0" 514);
+          tcp = slot "0.0.0.0" 514;
+        } == {
+          tcp = [ 22 ];
+          udp = [
+            123
+            514
+          ];
+        };
+      "a disabled slot opens nothing" =
+        opened {
+          udp = (open (slot "0.0.0.0" 514)) // {
+            enable = false;
+          };
+        } == untouched;
+    };
+
   # --- real boot ---
 
   udp-and-tcp-ingest-roundtrip = pkgs.testers.nixosTest {
@@ -960,6 +1094,236 @@ in
       rows(machine, "ROTATEDMARK")
     '';
   };
+
+  # From another host: a plain listener on the wildcard is unreachable behind the
+  # default firewall (the module opens nothing by itself), and reachable on all
+  # three transports once the slots ask for openFirewall.
+  cross-host-needs-open-firewall = pkgs.testers.nixosTest {
+    name = "victoria-stack-syslog-cross-host";
+
+    containers =
+      let
+        server = openFirewall: {
+          virtualisation.vlans = [ 1 ];
+          imports = [
+            module
+            (tlsFilesFrom certHosts)
+          ];
+          environment.systemPackages = tools;
+          services.victoriaStack.logs = {
+            enable = true;
+            syslog = {
+              udp = (slot "0.0.0.0" 514) // {
+                inherit openFirewall;
+                suppressExposureWarning = true;
+              };
+              tcp = (slot "0.0.0.0" 514) // {
+                inherit openFirewall;
+                suppressExposureWarning = true;
+              };
+              tls = (slot "0.0.0.0" 6514) // runtimeCert // { inherit openFirewall; };
+            };
+          };
+        };
+      in
+      {
+        sealed = server false;
+        exposed = server true;
+        client = {
+          virtualisation.vlans = [ 1 ];
+          environment.systemPackages = tools;
+        };
+      };
+
+    testScript = ''
+      ${queryPython}
+      import time
+
+      def send_until_found(sender, server, send, marker):
+          # A datagram sent before the route is up is simply lost; resend.
+          for _ in range(30):
+              sender.succeed(send)
+              if server.execute(f"{query_cmd('_msg:' + marker)} | grep -F {marker}")[0] == 0:
+                  return rows(server, marker)
+              time.sleep(1)
+          raise Exception(f"{marker} never arrived")
+
+      start_all()
+      for m in (sealed, exposed, client):
+          m.systemctl("start network-online.target")
+          m.wait_for_unit("network-online.target")
+      sealed.wait_for_unit("victorialogs.service")
+      exposed.wait_for_unit("victorialogs.service")
+      client.succeed("ping -c 1 sealed && ping -c 1 exposed")
+
+      # With openFirewall: udp, tcp and tls all arrive, labelled.
+      cert = "--cacert ${certHosts}/cert.pem"
+      for proto, extra in (("udp", ""), ("tcp", ""), ("tls", cert)):
+          marker = f"EXPOSED{proto.upper()}MARK"
+          send = f"${send} --proto {proto} --host exposed --port {6514 if proto == 'tls' else 514} {extra} {marker}"
+          r = send_until_found(client, exposed, send, marker)[0]
+          assert r["source"] == "syslog" and r["hostname"] == "testhost", r
+
+      # Without it: nothing gets in, whatever the transport.
+      client.fail("${send} --proto tcp --host sealed --port 514 SEALEDTCPMARK")
+      client.fail(f"${send} --proto tls --host sealed --port 6514 {cert} SEALEDTLSMARK")
+      for _ in range(3):
+          client.succeed("${send} --proto udp --host sealed --port 514 SEALEDUDPMARK")
+      # The listeners themselves are fine: a local sender is ingested right away,
+      # so the absence above is the firewall.
+      sealed.succeed("${send} --proto tcp --port 514 SEALEDLOCALMARK")
+      rows(sealed, "SEALEDLOCALMARK")
+      for marker in ("SEALEDTCPMARK", "SEALEDTLSMARK", "SEALEDUDPMARK"):
+          assert sealed.succeed(query_cmd("_msg:" + marker)).strip() == "", marker
+    '';
+  };
+
+  # Syslog rows sit in the default tenant, so the read tier that serves the
+  # other log queries serves them too, and still wants a token.
+  rows-are-readable-through-the-vmauth-read-tier = pkgs.testers.nixosTest {
+    name = "victoria-stack-syslog-read-tier";
+
+    containers.machine = {
+      imports = [ module ];
+      environment.systemPackages = tools;
+      services.victoriaStack = {
+        logs = {
+          enable = true;
+          syslog.tcp = (slot "127.0.0.1" 514) // {
+            extraFields = {
+              source = "firewall";
+              site = "lab";
+            };
+          };
+        };
+        vmauth.readTokensFile = "${pkgs.writeText "syslog-read-tokens.yaml" ''
+          tokens:
+            - token: syslog-read-token-one # gitleaks:allow
+        ''}";
+      };
+    };
+
+    testScript = ''
+      ${queryPython}
+      start_all()
+      machine.wait_for_unit("victorialogs.service")
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.succeed("${send} --proto tcp --port 514 --format 5424 READTIERMARK")
+      rows(machine, "READTIERMARK")
+
+      url = "http://127.0.0.1:4204/logs/select/logsql/query"
+      auth = "-H 'Authorization: Bearer syslog-read-token-one'"
+      machine.wait_until_succeeds(f"curl -sf {auth} {url} -d 'query=_msg:READTIERMARK' | grep -F READTIERMARK")
+      out = machine.succeed(f"curl -sf {auth} {url} -d 'query=_msg:READTIERMARK'")
+      r = [json.loads(l) for l in out.splitlines() if l.strip()][0]
+      assert r["source"] == "firewall" and r["site"] == "lab" and r["format"] == "rfc5424", r
+
+      code = machine.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {url} -d 'query=_msg:READTIERMARK'").strip()
+      assert code == "401", code
+    '';
+  };
+
+  # End to end, the way a user configures it: a stack with all three slots open
+  # to the network, a sender on another host, real RFC 3164 and 5424 over udp,
+  # tcp and TLS, a restart through systemctl, and every row read back through
+  # vmauth's read tier with a read token.
+  e2e-sender-to-vmauth-read-tier = pkgs.testers.nixosTest {
+    name = "victoria-stack-syslog-e2e";
+
+    containers.stack = scenarioStack true;
+    containers.sender = {
+      virtualisation.vlans = [ 1 ];
+      environment.systemPackages = tools;
+    };
+
+    testScript = ''
+      ${queryPython}
+      import time
+
+      start_all()
+      for m in (stack, sender):
+          m.systemctl("start network-online.target")
+          m.wait_for_unit("network-online.target")
+      stack.wait_for_unit("victorialogs.service")
+      stack.wait_for_unit("vmauth.service")
+      stack.wait_for_open_port(4204)
+      sender.succeed("ping -c 1 stack")
+
+      url = "http://127.0.0.1:4204/logs/select/logsql/query"
+      auth = "-H 'Authorization: Bearer syslog-e2e-read-token'"
+      cert = "--cacert ${certStack}/cert.pem"
+
+      def read_cmd(marker):
+          return f"curl -sf {auth} {url} -d 'query=_msg:{marker}' | grep -F {marker}"
+
+      def deliver(proto, fmt, marker):
+          # Sent from the other host, read back through the real read tier.
+          port = 6514 if proto == "tls" else 514
+          extra = cert if proto == "tls" else ""
+          cmd = f"${send} --proto {proto} --host stack --port {port} --format {fmt} {extra} {marker}"
+          for _ in range(40):
+              sender.succeed(cmd)
+              if stack.execute(read_cmd(marker))[0] == 0:
+                  out = stack.succeed(f"curl -sf {auth} {url} -d 'query=_msg:{marker}'")
+                  return [json.loads(l) for l in out.splitlines() if l.strip()][0]
+              time.sleep(1)
+          raise Exception(f"{marker} never became readable through vmauth")
+
+      def check_all(generation):
+          for proto in ("udp", "tcp", "tls"):
+              for fmt in ("3164", "5424"):
+                  r = deliver(proto, fmt, f"E2E{proto.upper()}{fmt}G{generation}")
+                  assert r["format"] == f"rfc{fmt}" and r["hostname"] == "testhost", r
+                  if fmt == "3164":
+                      assert r["app_name"] == "su" and r["proc_id"] == "1234" and r["level"] == "critical", r
+                  else:
+                      assert r["app_name"] == "evntslog" and r["msg_id"] == "ID47", r
+                      assert r["exampleSDID@32473.iut"] == "3", r
+                  if proto == "tls":
+                      assert r["source"] == "edge" and r["site"] == "lab", r
+                  else:
+                      assert r["source"] == "syslog" and "site" not in r, r
+
+      check_all(1)
+
+      # A restart through systemd: the listeners come back and take new traffic.
+      stack.succeed("systemctl restart victorialogs.service")
+      stack.wait_for_unit("victorialogs.service")
+      stack.wait_for_open_port(514)
+      stack.wait_for_open_port(6514)
+      check_all(2)
+      assert "active" == stack.succeed("systemctl is-active victorialogs.service").strip()
+
+      # The read tier still wants its token.
+      code = stack.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {url} -d 'query=*'").strip()
+      assert code == "401", code
+
+      # The stack's own journal: nothing from the syslog listeners went wrong.
+      stack.fail(
+          "journalctl -u victorialogs.service --no-pager | grep -i syslog | grep -iE 'error|fatal|panic|cannot'"
+      )
+    '';
+  };
+
+  # The same scenario evaluated: the plain udp and tcp slots on the wildcard warn,
+  # the tls slot does not, and the slots' own suppress option silences the
+  # warning.
+  e2e-exposure-warning-emitted-and-suppressible =
+    let
+      warnings =
+        suppress:
+        lib.filter (lib.hasInfix "services.victoriaStack.logs.syslog") (
+          (evalWith { services.victoriaStack = scenarioServices suppress; }).config.warnings
+        );
+      loud = warnings false;
+    in
+    mkTableCheck "syslog-e2e-exposure-warning" {
+      "udp warns" = lib.any (lib.hasInfix "logs.syslog.udp") loud;
+      "tcp warns" = lib.any (lib.hasInfix "logs.syslog.tcp") loud;
+      "tls does not" = !(lib.any (lib.hasInfix "logs.syslog.tls") loud);
+      "suppressed is silent" = warnings true == [ ];
+    };
 
   # Port 514 needs CAP_NET_BIND_SERVICE for the unprivileged DynamicUser, and
   # the kernel's own view of the process must show exactly that and nothing

@@ -84,4 +84,17 @@ a file must restart it: path units watch both files and trigger a `try-restart
 --no-block` helper, the same as vmauth's. A secrets manager that swaps a symlinked
 directory does not trigger the watch and must restart the unit itself.
 
+## Firewall and reads
+
+Each slot has `openFirewall` (default false), which adds its port to
+`networking.firewall.allowedUDPPorts` (udp) or `allowedTCPPorts` (tcp, tls). It is
+the first place the module touches the firewall; the default stays "opens nothing",
+checked from another container (unreachable without it, reachable with it).
+
+Syslog rows live in tenant 0:0, so vmauth's read tier, Grafana and the MCP server
+read them like any other log row. A unix socket is deliberately not a slot: the
+`logs.extraFlags` option text carries the recipe and its caveats (private `/tmp`,
+read-only file system, stale socket after a hard kill, world-writable with
+`UMask = "0000"`), and the module does not test it.
+
 See [0025](0025-vmauth-public-write-doors.md) for the other public door.

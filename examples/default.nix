@@ -25,6 +25,15 @@
     logs = {
       enable = true;
       mcp.enable = true;
+      # Devices that only speak syslog (docs/decisions/0031); no listener
+      # until an address is set, and no authentication on it:
+      # syslog.tls = {
+      #   enable = true;
+      #   ipAddress = "192.0.2.10";
+      #   certFile = "/run/secrets/victoria/syslog-cert.pem";
+      #   keyFile = "/run/secrets/victoria/syslog-key.pem";
+      #   openFirewall = true;
+      # };
     };
     traces = {
       enable = true;
