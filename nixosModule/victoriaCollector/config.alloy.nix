@@ -19,18 +19,13 @@ let
   # goes through systemd-journal-upload instead, which doesn't use Alloy
   # at all (docs/decisions/0005).
   #
-  # "Bearer " + ...: vmauth's bearer_token auth expects the standard
-  # `Authorization: Bearer <token>` header -- VICTORIA_WRITE_TOKEN itself
-  # holds just the raw token (matching its name), unlike
-  # systemd-journal-upload's own rendered Header= drop-in, which already
-  # bakes "Bearer " in at render time (config.nix). Without the prefix every
-  # write got a silent 401 ("Dropping data").
+  # otelcol.auth.bearer, not otelcol.auth.headers: Alloy's web UI shows a
+  # plain-string argument (the evaluated "Bearer <token>") to any local user,
+  # while this component's `token` is secret-typed ("(secret)"). It adds the
+  # "Bearer " prefix itself; VICTORIA_WRITE_TOKEN holds the raw token.
   authBlock = ''
-    otelcol.auth.headers "write_token" {
-      header {
-        key   = "Authorization"
-        value = "Bearer " + sys.env("VICTORIA_WRITE_TOKEN")
-      }
+    otelcol.auth.bearer "write_token" {
+      token = sys.env("VICTORIA_WRITE_TOKEN")
     }
   '';
 
@@ -222,7 +217,7 @@ let
     otelcol.exporter.otlphttp "metrics" {
       client {
         endpoint = ${str "${cfg.writeEndpoint}/opentelemetry"}
-        auth     = otelcol.auth.headers.write_token.handler
+        auth     = otelcol.auth.bearer.write_token.handler
         ${tlsBlock}
       }
       sending_queue {
@@ -239,7 +234,7 @@ let
     otelcol.exporter.otlphttp "traces" {
       client {
         endpoint = ${str "${cfg.writeEndpoint}/insert/opentelemetry"}
-        auth     = otelcol.auth.headers.write_token.handler
+        auth     = otelcol.auth.bearer.write_token.handler
         ${tlsBlock}
       }
       sending_queue {

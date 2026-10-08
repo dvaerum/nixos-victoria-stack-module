@@ -38,6 +38,34 @@ let
   writeTokenAFixture = pkgs.writeText "collector-test-write-token-a" "collector-test-write-token-a";
   writeTokenBFixture = pkgs.writeText "collector-test-write-token-b" "collector-test-write-token-b";
 
+  # A stand-in gateway: records every request's Authorization header, answers
+  # 200 so Alloy's exporter is satisfied.
+  fakeGatewayModule =
+    { pkgs, ... }:
+    {
+      systemd.services.fake-gateway = {
+        wantedBy = [ "multi-user.target" ];
+        before = [ "alloy.service" ];
+        serviceConfig.ExecStart = pkgs.writers.writePython3 "fake-gateway" { } ''
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+
+          class H(BaseHTTPRequestHandler):
+              def do_POST(self):
+                  n = int(self.headers.get("Content-Length", 0))
+                  self.rfile.read(n)
+                  with open("/tmp/auth.log", "a") as f:
+                      f.write(self.headers.get("Authorization", "NONE") + "\n")
+                  self.send_response(200)
+                  self.send_header("Content-Length", "0")
+                  self.end_headers()
+
+
+          HTTPServer(("127.0.0.1", 4210), H).serve_forever()
+        '';
+      };
+    };
+
   # SAN for the container hostname "stack": Alloy verifies the gateway's
   # certificate against this CA, so the name must match what the collector
   # dials (same lesson as tests/nginx.nix's selfSignedCert -- without a
@@ -695,6 +723,80 @@ in
             uploading unauthenticated.
           ''
       );
+
+  # Alloy's web UI shows a component's evaluated arguments to any local user
+  # unless they are secret-typed; otelcol.auth.headers' `value` is a plain
+  # string, otelcol.auth.bearer's `token` is a secret.
+  alloy-write-token-auth-is-secret-typed =
+    pkgs.runCommand "alloy-write-token-auth-is-secret-typed" { }
+      (
+        let
+          evaluated = evalWithCollector {
+            services.victoriaCollector = {
+              metrics.enable = true;
+              traces.enable = true;
+              writeEndpoint = "http://stack:4204";
+              writeTokenFile = "${writeTokenFixture}";
+              hostType = "server";
+            };
+          };
+          text = evaluated.config.environment.etc."alloy/config.alloy".text;
+          handlerUses =
+            lib.length (lib.splitString "auth     = otelcol.auth.bearer.write_token.handler" text) - 1;
+        in
+        if
+          lib.hasInfix ''otelcol.auth.bearer "write_token"'' text
+          && !(lib.hasInfix "otelcol.auth.headers" text)
+          && handlerUses == 2
+        then
+          "echo OK > $out"
+        else
+          throw ''
+            the write token must be handed to Alloy through otelcol.auth.bearer
+            (secret-typed, shown as "(secret)" in the web UI) and BOTH exporters
+            must use it; otelcol.auth.headers prints "Bearer <token>" to any
+            local user. handler uses found: ${toString handlerUses}
+          ''
+      );
+
+  alloy-web-ui-does-not-expose-the-write-token = pkgs.testers.nixosTest {
+    name = "victoria-collector-alloy-ui-hides-token";
+
+    containers.collector = {
+      imports = [
+        collectorModule
+        fakeGatewayModule
+      ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        writeEndpoint = "http://127.0.0.1:4210";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      collector.wait_for_unit("fake-gateway.service")
+      collector.wait_for_unit("alloy.service")
+      collector.wait_until_succeeds("curl -sf http://127.0.0.1:12345/-/ready")
+      # The gateway still receives the credential (the fix must not drop auth).
+      collector.wait_until_succeeds(
+          "grep -qx 'Bearer collector-test-write-token' /tmp/auth.log", timeout=120  # gitleaks:allow
+      )
+      # An unprivileged local user sees every component's evaluated arguments.
+      ui = collector.succeed(
+          "su nobody -s /bin/sh -c 'curl -sf http://127.0.0.1:12345/api/v0/web/components'"
+      )
+      assert "write_token" in ui, ui
+      assert "collector-test-write-token" not in ui, ui  # gitleaks:allow
+      for comp in ["otelcol.auth.bearer.write_token", "otelcol.auth.headers.write_token"]:
+          detail = collector.succeed(
+              f"su nobody -s /bin/sh -c 'curl -s http://127.0.0.1:12345/api/v0/web/components/{comp}'"
+          )
+          assert "collector-test-write-token" not in detail, detail  # gitleaks:allow
+    '';
+  };
 
   queue-option-takes-effect = pkgs.testers.nixosTest {
     name = "victoria-collector-queue-option";
