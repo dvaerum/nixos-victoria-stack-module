@@ -95,7 +95,9 @@ let
           reach the port can write log lines, claim any hostname or program name,
           and create new streams (each distinct hostname/app_name/proc_id
           combination is one). Bind a specific address and restrict who can
-          reach the port with a firewall.
+          reach the port with a firewall. A listener on a non-loopback address
+          without TLS also sends the logs unencrypted, and evaluation warns about
+          it (see `suppressExposureWarning`).
         '';
       };
 
@@ -123,6 +125,19 @@ let
           Fields added to every entry received on this listener
           (`-syslog.extraFields.*`). The default labels everything `source=syslog`;
           override `source` or add fields as needed. `{ }` adds nothing.
+        '';
+      };
+
+      suppressExposureWarning = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Silences the evaluation warning that this listener accepts unencrypted,
+          unauthenticated syslog from the network (an address other than
+          loopback). Set it once you have confirmed that a firewall or a trusted
+          network restricts who can reach the port; same idea as
+          `suppressDynamicUserWarning`
+          (docs/decisions/0009-dynamicuser-warning-not-assertion.md).
         '';
       };
     };
@@ -271,6 +286,16 @@ let
           `-httpAuth.*`) are rejected at build time: the module's readiness
           check and self-push use plain http on the known address and path.
           Put nginx in front of the service instead.
+        ''
+        + lib.optionalString supportsSyslog ''
+
+          The `syslog.udp` / `syslog.tcp` options own the `-syslog.listenAddr.*`
+          and `-syslog.extraFields.*` arrays of their transport (and the
+          `-syslog.tls`, `-syslog.tlsCertFile` and `-syslog.tlsKeyFile` arrays
+          while a tcp slot is enabled): those arrays are positional with the
+          listeners, so a flag of the same array here is rejected at build time.
+          Every other `-syslog.*` flag, and the `unix` transport, can be passed
+          here freely.
         '';
       };
 

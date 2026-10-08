@@ -89,4 +89,14 @@ rec {
       || (isWildcardHost sa.host && covers sa.host sb.host)
       || (isWildcardHost sb.host && covers sb.host sa.host)
     );
+
+  # `overlaps` for listeners of a stated protocol: a udp and a tcp socket may
+  # share an address and port (syslog on 514, or udp on an HTTP port's number).
+  overlapsProto =
+    protoA: a: protoB: b:
+    protoA == protoB && overlaps a b;
+
+  # A bare host (no port) that only this machine can reach, as the user wrote it
+  # in an `ipAddress` option: `::1` with or without brackets, 127.x, localhost.
+  isLoopbackHost = host: isLoopbackAddress host || host == "::1" || host == "localhost";
 }

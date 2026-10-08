@@ -315,6 +315,187 @@ in
         throw "unexpected capability sets: ${builtins.toJSON failed}, only the two keys loosened: ${lib.boolToString onlyTwoKeysLoosened}"
     );
 
+  # --- assertions, collisions, extraFlags ownership, exposure warning ---
+
+  slot-requires-logs-enable-fires = mkAssertionFiresCheck {
+    name = "syslog-slot-requires-logs-enable-fires";
+    expectMessageSubstring = "services.victoriaStack.logs.syslog.tcp.enable requires";
+    module = {
+      services.victoriaStack.logs.syslog.tcp = slot "127.0.0.1" 5514;
+    };
+  };
+
+  # Colliding listeners are named on both sides; udp never collides with a tcp
+  # listener (measured: a udp socket on the HTTP port number binds fine).
+  listener-collisions =
+    let
+      certs = {
+        certFile = "/run/fake-cert.pem";
+        keyFile = "/run/fake-key.pem";
+      };
+      messages =
+        m:
+        lib.filter (lib.hasInfix "same listenAddress") (
+          lib.filter (lib.hasInfix "services.victoriaStack") (
+            map (a: a.message) (
+              builtins.filter (a: !a.assertion)
+                (evalWith {
+                  services.victoriaStack = lib.recursiveUpdate {
+                    metrics.enable = true;
+                    logs.enable = true;
+                  } m;
+                }).config.assertions
+            )
+          )
+        );
+      fires = m: messages m != [ ];
+    in
+    mkTableCheck "syslog-listener-collisions" {
+      "tcp slot on the logs HTTP port" = fires { logs.syslog.tcp = slot "127.0.0.1" 4202; };
+      "tcp slot wildcard over the logs HTTP port" = fires { logs.syslog.tcp = slot "0.0.0.0" 4202; };
+      "tcp slot on an https door port" = fires {
+        vmauth.https = {
+          enable = true;
+          port = 8443;
+        }
+        // certs;
+        logs.syslog.tcp = slot "0.0.0.0" 8443;
+      };
+      "the message names the slot and the other listener" =
+        lib.any
+          (
+            m:
+            lib.hasInfix "services.victoriaStack.logs.syslog.tcp (127.0.0.1:4202)" m
+            && lib.hasInfix "services.victoriaStack.logs.listenAddress" m
+          )
+          (messages {
+            logs.syslog.tcp = slot "127.0.0.1" 4202;
+          });
+      "udp slot on the logs HTTP port does not fire" =
+        !(fires { logs.syslog.udp = slot "127.0.0.1" 4202; });
+      "udp slot on an http door port does not fire" =
+        !(fires {
+          vmauth.http = {
+            enable = true;
+            port = 8080;
+          };
+          logs.syslog.udp = slot "0.0.0.0" 8080;
+        });
+      "udp and tcp slots on one port do not fire" =
+        !(fires {
+          logs.syslog = {
+            udp = slot "0.0.0.0" 514;
+            tcp = slot "0.0.0.0" 514;
+          };
+        });
+      "tcp slot on a free port does not fire" = !(fires { logs.syslog.tcp = slot "0.0.0.0" 5514; });
+    };
+
+  # -syslog.listenAddr/extraFields of a transport (and the tls arrays, which
+  # belong to tcp) are positional with the slots: a flag of the same array in
+  # extraFlags would misalign them. Everything else, and the unix transport,
+  # stays free.
+  extra-flags-ownership =
+    let
+      messages =
+        syslog: flags:
+        lib.filter (lib.hasInfix "extraFlags contains") (
+          lib.filter (lib.hasInfix "services.victoriaStack") (
+            map (a: a.message) (
+              builtins.filter (a: !a.assertion)
+                (evalWith {
+                  services.victoriaStack.logs = {
+                    enable = true;
+                    inherit syslog;
+                    extraFlags = flags;
+                  };
+                }).config.assertions
+            )
+          )
+        );
+      rejected = syslog: flag: lib.any (lib.hasInfix "`${flag}`") (messages syslog [ flag ]);
+      free = syslog: flag: messages syslog [ flag ] == [ ];
+      tcp = {
+        tcp = slot "192.0.2.10" 5514;
+      };
+      udp = {
+        udp = slot "192.0.2.10" 5514;
+      };
+    in
+    mkTableCheck "syslog-extra-flags-ownership" {
+      "tcp listenAddr with a tcp slot" = rejected tcp "-syslog.listenAddr.tcp=:6514";
+      "tcp listenAddr, double dash" = rejected tcp "--syslog.listenAddr.tcp=:6514";
+      "tcp extraFields with a tcp slot" = rejected tcp "-syslog.extraFields.tcp={}";
+      "tls array with a tcp slot" = rejected tcp "-syslog.tls";
+      "tls array with a value" = rejected tcp "-syslog.tls=true";
+      "tls cert file with a tcp slot" = rejected tcp "-syslog.tlsCertFile=/run/fake-cert.pem";
+      "tls key file, double dash" = rejected tcp "--syslog.tlsKeyFile=/run/fake-key.pem";
+      "udp listenAddr with a udp slot" = rejected udp "-syslog.listenAddr.udp=:6514";
+      "udp extraFields with a udp slot" = rejected udp "-syslog.extraFields.udp={}";
+      "tcp listenAddr is free with only a udp slot" = free udp "-syslog.listenAddr.tcp=:6514";
+      "tls array is free with only a udp slot" = free udp "-syslog.tls=true";
+      "udp listenAddr is free with only a tcp slot" = free tcp "-syslog.listenAddr.udp=:6514";
+      "tcp listenAddr is free with no slot" = free { } "-syslog.listenAddr.tcp=:6514";
+      "tls flags are free with no slot" = free { } "-syslog.tlsCertFile=/run/fake-cert.pem";
+      "unix socket listener is free with slots" =
+        free tcp "-syslog.listenAddr.unix=/run/victorialogs/syslog.sock";
+      "unixgram listener is free with slots" =
+        free udp "-syslog.listenAddr.unix=unixgram:/run/victorialogs/syslog.sock";
+      "timezone is free with slots" = free tcp "-syslog.timezone=UTC";
+      "tlsMinVersion is free with slots" = free tcp "-syslog.tlsMinVersion=TLS12";
+      "tlsCipherSuites is free with slots" = free tcp "-syslog.tlsCipherSuites=TLS_AES_128_GCM_SHA256";
+      "streamFields of a slot's transport is free" = free tcp ''-syslog.streamFields.tcp=["hostname"]'';
+      "a plain TLS flag is still rejected" = rejected { } "-tlsCertFile=/run/fake-cert.pem";
+    };
+
+  # The exposure warning: a listener that is reachable from the network and not
+  # encrypted. The suppress option belongs to its own slot only.
+  exposure-warning =
+    let
+      warnings =
+        syslog:
+        lib.filter (lib.hasInfix "services.victoriaStack.logs.syslog") (
+          (evalWith {
+            services.victoriaStack.logs = {
+              enable = true;
+              inherit syslog;
+            };
+          }).config.warnings
+        );
+      warns =
+        syslog: slotName:
+        lib.any (lib.hasInfix "services.victoriaStack.logs.syslog.${slotName}") (warnings syslog);
+      quiet = syslog: warnings syslog == [ ];
+      suppressed =
+        ip:
+        (slot ip 514)
+        // {
+          suppressExposureWarning = true;
+        };
+      mixed = {
+        udp = suppressed "0.0.0.0";
+        tcp = slot "0.0.0.0" 514;
+      };
+    in
+    mkTableCheck "syslog-exposure-warning" {
+      "plain tcp on the wildcard" = warns { tcp = slot "0.0.0.0" 514; } "tcp";
+      "udp on a specific non-loopback address" = warns { udp = slot "192.0.2.10" 514; } "udp";
+      "IPv6 wildcard" = warns { udp = slot "::" 514; } "udp";
+      "udp on loopback" = quiet { udp = slot "127.0.0.1" 514; };
+      "tcp on 127.0.0.2" = quiet { tcp = slot "127.0.0.2" 514; };
+      "tcp on [::1]" = quiet { tcp = slot "[::1]" 514; };
+      "udp on ::1" = quiet { udp = slot "::1" 514; };
+      "tcp on localhost" = quiet { tcp = slot "localhost" 514; };
+      "nothing enabled" = quiet { };
+      "suppress silences its own slot" = quiet { udp = suppressed "0.0.0.0"; };
+      "suppress on udp leaves the tcp warning" = warns mixed "tcp" && !(warns mixed "udp");
+      "the warning names the way to silence it" =
+        lib.any (lib.hasInfix "suppressExposureWarning")
+          (warnings {
+            udp = slot "0.0.0.0" 514;
+          });
+    };
+
   # --- real boot ---
 
   udp-and-tcp-ingest-roundtrip = pkgs.testers.nixosTest {
@@ -386,6 +567,30 @@ in
       custom.succeed("${send} --proto tcp --port 5514 --format 3164 CUSTOMTCPMARK")
       r = rows(custom, "CUSTOMTCPMARK")[0]
       assert r["source"] == "syslog" and "site" not in r, r
+    '';
+  };
+
+  # The protocol-aware collision check allows a udp slot on the number of the HTTP
+  # (tcp) port; this proves the kernel and VictoriaLogs agree.
+  udp-slot-on-the-http-port-number-boots = pkgs.testers.nixosTest {
+    name = "victoria-stack-syslog-udp-on-http-port";
+
+    containers.machine = {
+      imports = [ module ];
+      environment.systemPackages = tools;
+      services.victoriaStack.logs = {
+        enable = true;
+        syslog.udp = slot "127.0.0.1" 4202;
+      };
+    };
+
+    testScript = ''
+      ${queryPython}
+      start_all()
+      machine.wait_for_unit("victorialogs.service")
+      machine.succeed("ss -lntH | grep -F '127.0.0.1:4202'")
+      machine.succeed("ss -lunH | grep -F '127.0.0.1:4202'")
+      resend_until_found(machine, "${send} --proto udp --port 4202 SAMEPORTMARK", "SAMEPORTMARK")
     '';
   };
 

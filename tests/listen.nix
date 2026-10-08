@@ -74,6 +74,24 @@ in
     "[::0] is a wildcard (nginx spells its IPv6 default so)" = listen.isWildcard "[::0]:80";
   };
 
+  # Two listeners can share an address and port when their protocols differ
+  # (syslog udp next to an HTTP listener, or udp and tcp syslog on port 514).
+  protocol-and-loopback-table = mkTableCheck "listen-protocol-and-loopback-table" {
+    "same protocol overlaps" = listen.overlapsProto "tcp" "0.0.0.0:514" "tcp" "127.0.0.1:514";
+    "different protocols never overlap" =
+      !(listen.overlapsProto "udp" "0.0.0.0:514" "tcp" "0.0.0.0:514");
+    "same protocol, other ports" = !(listen.overlapsProto "udp" "0.0.0.0:514" "udp" "0.0.0.0:515");
+    "127.0.0.1 is loopback" = listen.isLoopbackHost "127.0.0.1";
+    "127.0.0.2 is loopback" = listen.isLoopbackHost "127.0.0.2";
+    "bare ::1 is loopback" = listen.isLoopbackHost "::1";
+    "[::1] is loopback" = listen.isLoopbackHost "[::1]";
+    "localhost is loopback" = listen.isLoopbackHost "localhost";
+    "the v4 wildcard is not" = !(listen.isLoopbackHost "0.0.0.0");
+    "the v6 wildcard is not" = !(listen.isLoopbackHost "::");
+    "a documentation address is not" = !(listen.isLoopbackHost "192.0.2.10");
+    "a host that merely starts with 127 is not" = !(listen.isLoopbackHost "1270.0.0.1");
+  };
+
   # A wildcard listenAddress used to be mapped to loopback only for the module's own
   # readiness probes; every URL it BUILT kept the raw address (http://:4201/...).
   wildcard-listen-addresses-reach-every-consumer =

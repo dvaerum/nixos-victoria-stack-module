@@ -7,7 +7,21 @@ let
 
   active = cfg.vmauth.enable && anyBackendEnabled;
   mcp = svc: cfg.${svc}.enable && cfg.${svc}.mcp.enable;
-  at = name: addr: { inherit name addr; };
+  # Listeners are tcp unless stated: a udp and a tcp socket may share a port.
+  at = name: addr: {
+    inherit name addr;
+    proto = "tcp";
+  };
+  syslogLib = import ./syslog.nix { inherit lib; };
+  syslogListeners = lib.optionals cfg.logs.enable (
+    map (
+      s:
+      (at "services.victoriaStack.logs.syslog.${s.name}" (listen.hostPort s.slot.ipAddress s.slot.port))
+      // {
+        proto = s.transport;
+      }
+    ) (syslogLib.active cfg.logs.syslog)
+  );
 
   # nginx's listen lines for the module's own virtualHost, resolved the way
   # nixpkgs' nginx module does (vhost.listen, else defaultListen, else the
@@ -79,6 +93,7 @@ let
     ++ lib.optional (mcp "traces") (
       at "services.victoriaStack.traces.mcp.listenAddress" cfg.traces.mcp.listenAddress
     )
+    ++ syslogListeners
     ++ lib.optionals cfg.nginx.enable nginxListeners
     ++ lib.optional cfg.grafana.enable (
       at "services.grafana.settings.server (http_addr, http_port)" (
@@ -95,7 +110,7 @@ let
       map (b: { inherit a b; }) (
         # Same name = one party's own lines (nginx's 0.0.0.0 and [::0] pair), which it binds
         # together on purpose.
-        lib.filter (b: a.name != b.name && listen.overlaps a.addr b.addr) (
+        lib.filter (b: a.name != b.name && listen.overlapsProto a.proto a.addr b.proto b.addr) (
           lib.drop (i + 1) enabledListeners
         )
       )
@@ -119,20 +134,23 @@ let
       active = cfg.metrics.enable;
       inherit (cfg.metrics) extraFlags;
       ownedPrefixes = [ ];
+      ownedNames = [ ];
       alternative = "put nginx in front of the service";
     }
     {
       name = "logs";
       active = cfg.logs.enable;
       inherit (cfg.logs) extraFlags;
-      ownedPrefixes = [ ];
-      alternative = "put nginx in front of the service";
+      ownedPrefixes = syslogLib.ownedPrefixes cfg.logs.syslog;
+      ownedNames = syslogLib.ownedNames cfg.logs.syslog;
+      alternative = "put nginx in front of the service (for the -syslog.* flags the syslog.udp / syslog.tcp options own, use those)";
     }
     {
       name = "traces";
       active = cfg.traces.enable;
       inherit (cfg.traces) extraFlags;
       ownedPrefixes = [ ];
+      ownedNames = [ ];
       alternative = "put nginx in front of the service";
     }
     {
@@ -144,6 +162,7 @@ let
         "httpListenAddr"
         "httpInternalListenAddr"
       ];
+      ownedNames = [ ];
       alternative = "use vmauth.https / vmauth.http / listenAddress, or put nginx in front";
     }
   ];
@@ -156,6 +175,7 @@ let
           n = flagName f;
         in
         lib.any (p: lib.hasPrefix p n) (addressingOrAuthPrefixes ++ svc.ownedPrefixes)
+        || lib.elem n svc.ownedNames
       ) svc.extraFlags
     );
 
@@ -186,7 +206,34 @@ let
         "tcp"
       ];
 
-  moduleAssertions = extraFlagsAssertions ++ syslogAssertions;
+  syslogRequiresLogs =
+    map
+      (slot: {
+        assertion = !cfg.logs.syslog.${slot}.enable || cfg.logs.enable;
+        message = ''
+          services.victoriaStack.logs.syslog.${slot}.enable requires
+          services.victoriaStack.logs.enable = true -- the listener is part of the
+          VictoriaLogs process, so without it nothing would receive the syslog.
+        '';
+      })
+      [
+        "udp"
+        "tcp"
+      ];
+
+  syslogWarnings = lib.optionals cfg.logs.enable (
+    map (s: ''
+      services.victoriaStack.logs.syslog.${s.name} listens on
+      ${listen.hostPort s.slot.ipAddress s.slot.port} (${s.transport}, unencrypted) and VictoriaLogs' syslog
+      ingestion has no authentication: anyone who can reach that port can write
+      log lines and create streams (docs/decisions/0031). Bind a specific
+      address and restrict the port with a firewall, or set
+      services.victoriaStack.logs.syslog.${s.name}.suppressExposureWarning = true
+      once that is deliberate.
+    '') (syslogLib.exposedPlain cfg.logs.syslog)
+  );
+
+  moduleAssertions = extraFlagsAssertions ++ syslogAssertions ++ syslogRequiresLogs;
 in
 {
   config = {
@@ -240,7 +287,8 @@ in
           svc.active && svc.selfMonitoring.enable && lib.any (lib.hasPrefix "-pushmetrics.") svc.extraFlags
         ) services;
       in
-      map (svc: ''
+      syslogWarnings
+      ++ map (svc: ''
         services.victoriaStack.${svc.name}.extraFlags contains -pushmetrics.*
         flags, but services.victoriaStack.${svc.name}.selfMonitoring.enable is
         also true (it is on by default whenever metrics.enable is) -- the

@@ -45,4 +45,23 @@ both bind; a tcp listener on an HTTP port is a fatal bind error but a udp one is
 (so the collision check needs the protocol); rows become searchable about a second
 after they arrive.
 
+## Assertions, warning and `extraFlags`
+
+- A slot needs `logs.enable` (the listener is part of the VictoriaLogs process) and
+  an `ipAddress`: assertions.
+- Listener collisions are protocol-aware: the check compares host and port only
+  within one protocol, because udp and tcp sockets can share a port (syslog on 514,
+  or udp on the number of an HTTP port). A tcp slot still collides with every other
+  tcp listener the module binds (the HTTP ports, vmauth's doors, nginx, Grafana).
+- A listener on a non-loopback address without TLS gets an evaluation **warning**,
+  never an assertion: a firewall or a trusted network may legitimately restrict it.
+  Each slot has its own `suppressExposureWarning`, like `suppressDynamicUserWarning`
+  ([0009](0009-dynamicuser-warning-not-assertion.md)).
+- `extraFlags` may not carry a flag of an array the module renders for a transport
+  that has an enabled slot (`-syslog.listenAddr.<t>`, `-syslog.extraFields.<t>`, and
+  for tcp the `-syslog.tls`, `-syslog.tlsCertFile`, `-syslog.tlsKeyFile` arrays): the
+  arrays are positional, so a stray entry shifts every slot after it. The unix
+  transport and the scalar flags (`-syslog.timezone`, `-syslog.tlsMinVersion`) stay
+  free; `-syslog.tls` is owned by exact name for that reason.
+
 See [0025](0025-vmauth-public-write-doors.md) for the other public door.
