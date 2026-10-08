@@ -1507,6 +1507,10 @@ in
       assert collector.succeed(
           "stat -c '%a %G' /run/systemd/journal-upload.conf.d/50-write-token.conf"
       ).strip() == "640 systemd-journal"
+      # ...and its directory stays traversable for the uploader's dynamic user.
+      assert collector.succeed(
+          "stat -c '%a %U' /run/systemd/journal-upload.conf.d"
+      ).strip() == "755 root"
 
       collector.succeed("logger --tag tls-test 'victoria_tls_trusted_marker'")
       collector_untrusted.succeed("logger --tag tls-test 'victoria_tls_untrusted_marker'")
@@ -1992,9 +1996,15 @@ in
           throw "systemd-journal-upload has no restart trigger on its config"
       );
 
-  # The write-token drop-in holds a secret: created owner/group-only from the start
-  # (the render script runs under the default umask 022, so it was 644 until the
-  # chmod ran).
+  # The write-token drop-in holds a secret, so it must never be world-readable at
+  # any moment: not between its creation and the chgrp/chmod that follow, and the
+  # directory must stay traversable for the uploader's DynamicUser (755).
+  # Runs the REAL script against a scratch /run/systemd, under umask 022 because the
+  # unit sets no UMask=. The chgrp shim records the file's mode at the moment chgrp
+  # runs, which is the deterministic stand-in for the microsecond window a boot test
+  # cannot observe. The final 640 systemd-journal state is asserted in the real-boot
+  # TLS test (journal-upload-https-verifies-the-gateway), since chgrp to that group
+  # cannot work in a build sandbox.
   journal-upload-token-dropin-is-never-world-readable =
     let
       e = evalWithCollector {
@@ -2004,10 +2014,40 @@ in
           writeTokenFile = "${writeTokenFixture}";
         };
       };
-      script = e.config.systemd.services.victoria-collector-journal-upload-token.serviceConfig.ExecStart;
+      unit = e.config.systemd.services.victoria-collector-journal-upload-token;
+      script = unit.serviceConfig.ExecStart;
     in
-    pkgs.runCommand "journal-upload-token-dropin-umask" { } ''
-      grep -q '^umask 027' ${script} || { echo "the token drop-in script does not set umask 027 before creating the file" >&2; exit 1; }
+    assert !(unit.serviceConfig ? UMask); # the umask 022 simulated below is the real one
+    pkgs.runCommand "journal-upload-token-dropin-modes" { } /* bash */ ''
+      root=$PWD/root
+      mkdir -p "$root/run/systemd" shims creds
+      chmod 755 "$root/run/systemd"
+      printf '%s' 'fixture-write-token' > creds/write-token # gitleaks:allow
+
+      grep -q '/run/systemd/journal-upload.conf.d' ${script} \
+        || { echo "script no longer names the drop-in directory; update this test" >&2; exit 1; }
+      sed "s|/run/systemd|$root/run/systemd|g" ${script} > script.sh
+      chmod +x script.sh
+
+      # chgrp to systemd-journal cannot succeed here; record the mode instead.
+      cat > shims/chgrp <<EOF
+      #!${pkgs.runtimeShell}
+      stat -c %a "\$2" > $PWD/mode-at-chgrp
+      EOF
+      chmod +x shims/chgrp
+
+      umask 022
+      PATH=$PWD/shims:$PATH CREDENTIALS_DIRECTORY=$PWD/creds ./script.sh
+
+      conf=$root/run/systemd/journal-upload.conf.d/50-write-token.conf
+      dir=$root/run/systemd/journal-upload.conf.d
+      fail() { echo "$1" >&2; exit 1; }
+
+      at_chgrp=$(cat mode-at-chgrp)
+      [ "''${at_chgrp: -1}" = 0 ] || fail "drop-in had world bits ($at_chgrp) before chgrp ran"
+      [ "$(stat -c %a "$dir")" = 755 ] || fail "drop-in directory is $(stat -c %a "$dir"), the uploader cannot traverse it"
+      [ "$(stat -c %a "$conf")" = 640 ] || fail "final drop-in mode is $(stat -c %a "$conf"), want 640"
+      grep -qx 'Header=Authorization: Bearer fixture-write-token' "$conf" || fail "drop-in content wrong"
       echo OK > $out
     '';
 }
