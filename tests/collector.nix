@@ -1572,6 +1572,21 @@ in
           throw "unsafe values accepted (or safe ones rejected): ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
+  # Alloy takes a misspelt collector name without complaint; the option text is
+  # the only place the operator is told to check the metrics arrive.
+  extra-collectors-option-warns-that-unknown-names-are-ignored =
+    pkgs.runCommand "extra-collectors-docs-unknown-names" { }
+      (
+        let
+          description =
+            (evalWithCollector { }).options.services.victoriaCollector.metrics.extraCollectors.description;
+        in
+        if lib.hasInfix "without an error" description then
+          "echo OK > $out"
+        else
+          throw "extraCollectors does not say unknown names are ignored silently: ${description}"
+      );
+
   # Real behavior, not rendered text: an extra collector's metric lands at
   # the gateway, and a disabled default collector's does NOT while the
   # others still do.

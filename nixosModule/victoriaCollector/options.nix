@@ -28,6 +28,10 @@ in
         list" table in Alloy's `prometheus.exporter.unix` docs for what
         that is) plus this module's own always-on `systemd` collector.
         `[ ]` (the default) changes nothing.
+
+        Alloy ignores a collector name it does not know without an error, so
+        a misspelt name does nothing: check that the metrics you expect
+        actually appear.
       '';
     };
 
