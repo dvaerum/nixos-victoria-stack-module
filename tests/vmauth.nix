@@ -3157,4 +3157,85 @@ in
         else
           throw "vmauth ExecStart escaping wrong: ${builtins.toJSON (builtins.attrNames failed)}\n${execStart}"
       );
+
+  # `types.int` let a negative limit through (-maxConcurrentRequests=-5), and
+  # `types.port` accepts 0 (the kernel picks a random port, which no client
+  # can be told about).
+  vmauth-limit-and-port-option-types =
+    let
+      o = (evalWith { }).options.services.victoriaStack.vmauth;
+      limits = [
+        "maxConcurrentRequests"
+        "maxConcurrentPerUserRequests"
+      ];
+      limitChecks = lib.concatMap (
+        name:
+        let
+          type = o.${name}.type;
+        in
+        [
+          {
+            name = "${name} accepts 1";
+            ok = type.check 1;
+          }
+          {
+            name = "${name} accepts 1000";
+            ok = type.check 1000;
+          }
+          {
+            name = "${name} accepts null";
+            ok = type.check null;
+          }
+          {
+            name = "${name} rejects 0";
+            ok = !(type.check 0);
+          }
+          {
+            name = "${name} rejects -5";
+            ok = !(type.check (-5));
+          }
+        ]
+      ) limits;
+      portChecks =
+        lib.concatMap
+          (
+            door:
+            let
+              type = o.${door}.port.type;
+            in
+            [
+              {
+                name = "${door}.port accepts 1";
+                ok = type.check 1;
+              }
+              {
+                name = "${door}.port accepts 65535";
+                ok = type.check 65535;
+              }
+              {
+                name = "${door}.port rejects 0";
+                ok = !(type.check 0);
+              }
+              {
+                name = "${door}.port rejects 65536";
+                ok = !(type.check 65536);
+              }
+              {
+                name = "${door}.port rejects -1";
+                ok = !(type.check (-1));
+              }
+            ]
+          )
+          [
+            "https"
+            "http"
+          ];
+      failed = lib.filter (c: !c.ok) (limitChecks ++ portChecks);
+    in
+    pkgs.runCommand "vmauth-limit-and-port-option-types" { } (
+      if failed == [ ] then
+        "echo OK > $out"
+      else
+        throw "vmauth option types wrong for: ${builtins.toJSON (map (c: c.name) failed)}"
+    );
 }

@@ -177,7 +177,10 @@ let
       };
 
       retentionPeriod = mkOption {
-        type = types.nullOr types.str;
+        # The binaries' own grammar: a number with one optional unit (s, h, d,
+        # w, M, y; a bare number is months), or several s/h/d/w parts. A
+        # lower-case `m` (minutes) is refused by them, "30days" dies at start.
+        type = types.nullOr (types.strMatching "[0-9]+(\\.[0-9]+)?[shdwMy]?|([0-9]+(\\.[0-9]+)?[shdw])+");
         default = null;
         example = "30d";
         description = ''
@@ -201,7 +204,9 @@ let
     }
     // lib.optionalAttrs supportsDiskRetention {
       retentionMaxDiskSpaceUsageBytes = mkOption {
-        type = types.nullOr types.str;
+        # A number with an optional KB/MB/GB/TB/KiB/MiB/GiB/TiB suffix, the
+        # binaries' own size grammar (a bare `G` or `B` is refused by them).
+        type = types.nullOr (types.strMatching "[0-9]+(\\.[0-9]+)?([KMGT]i?B)?");
         default = null;
         example = "500GB";
         description = ''
@@ -463,7 +468,7 @@ in
       };
 
       maxConcurrentRequests = mkOption {
-        type = types.nullOr types.int;
+        type = types.nullOr types.ints.positive;
         default = null;
         description = ''
           vmauth's `-maxConcurrentRequests` -- the global limit on
@@ -474,7 +479,7 @@ in
       };
 
       maxConcurrentPerUserRequests = mkOption {
-        type = types.nullOr types.int;
+        type = types.nullOr types.ints.positive;
         default = null;
         description = ''
           vmauth's `-maxConcurrentPerUserRequests` -- the limit on
@@ -500,7 +505,7 @@ in
         };
 
         port = mkOption {
-          type = types.port;
+          type = types.ints.between 1 65535;
           default = 8443;
           description = "Port of the HTTPS listener.";
         };
@@ -550,7 +555,7 @@ in
         };
 
         port = mkOption {
-          type = types.port;
+          type = types.ints.between 1 65535;
           default = 8080;
           description = "Port of the plain-HTTP listener.";
         };

@@ -8,6 +8,59 @@ let
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
   inherit (testLib) mkWarningFiresCheck mkNoWarningsCheck evalWith;
 
+  # Option types vs the real binaries' grammars. retentionPeriod and
+  # retentionMaxDiskSpaceUsageBytes were plain strings, so "30days" evaluated
+  # cleanly and the binary died at start (`cannot parse duration "ays"`). The
+  # lists below feed BOTH the type check and the real-binary check, so the two
+  # cannot drift apart. The types are deliberately narrower than the binaries
+  # (which also take 30D, 1e2, +1, .5, 5., lower-case sizes): only the
+  # documented forms are accepted.
+  retentionAccepted = [
+    "12"
+    "1"
+    "1.5"
+    "30d"
+    "4w"
+    "1M"
+    "1y"
+    "1.5y"
+    "36h"
+    "1d12h"
+  ];
+  # Dies in the binary's flag parsing.
+  retentionRejected = [
+    "30days"
+    "12m"
+    "-1"
+    "abc"
+    "1 "
+  ];
+  # Refused by the type only (the binary fails later, or differently).
+  retentionTypeOnlyRejected = [
+    ""
+    "d"
+  ];
+  sizeAccepted = [
+    "500"
+    "10GB"
+    "10GiB"
+    "1.5GB"
+    "5TiB"
+    "1KB"
+    "2MiB"
+  ];
+  sizeRejected = [
+    "10G"
+    "10 GB"
+    "10GiBB"
+    "1B"
+    "abc"
+  ];
+  sizeTypeOnlyRejected = [
+    "-5"
+    ""
+  ];
+
   # Shared across the hardening/readiness/manageTmpfiles checks below --
   # one evalModules pass per service is enough to introspect all of it.
   mkHardeningCheck =
@@ -1629,4 +1682,172 @@ in
           assert "-envflag.prefix=p%h-''${HOME}" in cmdline.splitlines(), f"{unit}: flag was expanded: {cmdline!r}"
     '';
   };
+
+  retention-and-size-option-types =
+    let
+      opts = svc: (evalWith { }).options.services.victoriaStack.${svc};
+      table =
+        svc: opt: accepted: rejected:
+        let
+          t = (opts svc).${opt}.type;
+        in
+        map (v: {
+          name = "${svc}.${opt} accepts '${v}'";
+          ok = t.check v;
+        }) accepted
+        ++ map (v: {
+          name = "${svc}.${opt} rejects '${v}'";
+          ok = !(t.check v);
+        }) rejected
+        ++ [
+          {
+            name = "${svc}.${opt} still accepts null";
+            ok = t.check null;
+          }
+        ];
+      failed = lib.filter (c: !c.ok) (
+        lib.concatMap
+          (
+            svc: table svc "retentionPeriod" retentionAccepted (retentionRejected ++ retentionTypeOnlyRejected)
+          )
+          [
+            "metrics"
+            "logs"
+            "traces"
+          ]
+        ++
+          lib.concatMap
+            (
+              svc: table svc "retentionMaxDiskSpaceUsageBytes" sizeAccepted (sizeRejected ++ sizeTypeOnlyRejected)
+            )
+            [
+              "logs"
+              "traces"
+            ]
+      );
+    in
+    pkgs.runCommand "retention-and-size-option-types" { } (
+      if failed == [ ] then
+        "echo OK > $out"
+      else
+        throw "option types wrong for: ${builtins.toJSON (map (c: c.name) failed)}"
+    );
+
+  # The binaries themselves: every value the type accepts must start, every
+  # syntactically bad one must die in flag parsing.
+  retention-and-size-grammar-matches-the-real-binaries =
+    let
+      probe =
+        {
+          svc,
+          bin,
+          flag,
+          accepted,
+          rejected,
+        }:
+        let
+          pkg =
+            (evalWith { services.victoriaStack.${svc}.enable = true; })
+            .config.services.victoriaStack.${svc}.package;
+        in
+        ''
+          probe ${pkg}/bin/${bin} ${flag} accept ${lib.escapeShellArgs accepted}
+          probe ${pkg}/bin/${bin} ${flag} reject ${lib.escapeShellArgs rejected}
+        '';
+    in
+    pkgs.runCommand "retention-and-size-grammar-matches-the-real-binaries" { } ''
+      # One background job per value: an accepted value has to be seen
+      # surviving a few seconds, which in series would take minutes.
+      mkdir failures
+      probe() {
+        bin=$1 flag=$2 want=$3
+        shift 3
+        for v in "$@"; do
+          (
+            d=$(mktemp -d)
+            rc=0
+            out=$(timeout 3 "$bin" -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-$flag=$v" 2>&1) || rc=$?
+            # 124 = still running when the timeout hit, i.e. the flag parsed.
+            if [ "$want" = accept ] && [ "$rc" -ne 124 ]; then
+              echo "FAIL: $bin did not start with -$flag=$v (rc=$rc): $out" > "failures/$(mktemp -u XXXXXX)"
+            elif [ "$want" = reject ] && ! echo "$out" | grep -q "invalid value"; then
+              echo "FAIL: $bin parsed -$flag=$v (rc=$rc): $out" > "failures/$(mktemp -u XXXXXX)"
+            fi
+            rm -rf "$d"
+          ) &
+        done
+      }
+      ${lib.concatMapStrings probe [
+        {
+          svc = "metrics";
+          bin = "victoria-metrics";
+          flag = "retentionPeriod";
+          accepted = retentionAccepted;
+          rejected = retentionRejected;
+        }
+        {
+          svc = "logs";
+          bin = "victoria-logs";
+          flag = "retentionPeriod";
+          accepted = retentionAccepted;
+          rejected = retentionRejected;
+        }
+        {
+          svc = "traces";
+          bin = "victoria-traces";
+          flag = "retentionPeriod";
+          accepted = retentionAccepted;
+          rejected = retentionRejected;
+        }
+        {
+          svc = "logs";
+          bin = "victoria-logs";
+          flag = "retention.maxDiskSpaceUsageBytes";
+          accepted = sizeAccepted;
+          rejected = sizeRejected;
+        }
+        {
+          svc = "traces";
+          bin = "victoria-traces";
+          flag = "retention.maxDiskSpaceUsageBytes";
+          accepted = sizeAccepted;
+          rejected = sizeRejected;
+        }
+      ]}
+      wait
+      if [ -n "$(ls failures)" ]; then
+        cat failures/* >&2
+        exit 1
+      fi
+      echo OK > $out
+    '';
+
+  # snapshots.schedule stays a plain string: systemd's calendar grammar is too
+  # large for a regex that would not also reject valid expressions, and an
+  # eval-time type cannot call systemd-analyze. This proves what the module
+  # ships (its default and a few common shapes) is valid, and that it is
+  # systemd, not the type, that rejects a bad one.
+  snapshots-schedule-values-are-valid-oncalendar =
+    pkgs.runCommand "snapshots-schedule-values-are-valid-oncalendar"
+      {
+        nativeBuildInputs = [ pkgs.systemd ];
+      }
+      ''
+        for ok in ${
+          lib.escapeShellArgs [
+            (evalWith { }).options.services.victoriaStack.metrics.snapshots.schedule.default
+            "hourly"
+            "*-*-* 03:00:00"
+            "Mon *-*-* 02:30"
+            "weekly"
+          ]
+        }; do
+          systemd-analyze calendar "$ok" > /dev/null || { echo "systemd rejects '$ok'" >&2; exit 1; }
+        done
+        if systemd-analyze calendar "every day" > /dev/null 2>&1; then
+          echo "expected systemd to reject 'every day'" >&2
+          exit 1
+        fi
+        echo OK > $out
+      '';
 }
