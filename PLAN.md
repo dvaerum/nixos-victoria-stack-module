@@ -724,3 +724,66 @@ weak script-text greps where a runtime property mattered. The doc audit ran
 in three rounds (rounds 1 and 2 each found small errors the previous round
 introduced). A global lychee pre-commit hook (home-manager config) now checks
 Markdown links at commit time.
+
+## Fresh-review fixes, owner decisions, backlog and syslog outcome
+
+A second critical review (security, correctness, collector, and tests/docs by
+mutation: 104 mutations, 43 survived) was fixed; six owner decisions and a
+small backlog followed; then syslog support. Every change was red-first,
+mutation-checked and gated with a full `nix flake check -L` before its commit.
+
+Shipped from the review:
+- Grafana datasources go through vmauth's read tier with a dedicated read
+  token (`grafana.readTokenFile`, ADR 0029): the VictoriaMetrics plugins ship no
+  route RBAC, so a Grafana Viewer could write and delete data through the
+  datasource proxy.
+- Collector: the write token is no longer shown on Alloy's loopback UI
+  (`otelcol.auth.bearer`), and Alloy restarts when its token render oneshot
+  restarts (`Requires`, not `Wants`).
+- `%` and `$` are escaped in `extraFlags` and `dataDir`; the collision check
+  sees `localhost`, nginx and Grafana; option types are checked against what
+  the binaries accept; the journal endpoint scheme is case-insensitive.
+- The vmauth restart helper uses `--no-block`: a secret replaced while a
+  restart was running was lost (the path unit re-arms only when the helper ends).
+- All 43 surviving mutations are now caught; weak and flaky tests fixed; a
+  permanent docs check (`tests/docs-check.sh`) guards ADR references, stale
+  narrative and removed names.
+
+Owner decisions: `extraFlags` that change addressing or auth are rejected by an
+assertion; a vmauth listener below port 1024 gets `CAP_NET_BIND_SERVICE`; a
+sops-style symlink swap is documented (use `restartUnits`); a token or admin
+entry that grants no access warns and is left out of `config.json` instead of
+granting full access or stopping vmauth (ADR 0030); unknown `extraCollectors`
+names are documented as silently ignored.
+
+Backlog: `snapshots.maxAge` has a strict grammar type; a retention below the
+binaries' 1 day minimum warns at build time; a trailing slash on
+`writeEndpoint` is normalised in one helper; the https negative controls pin
+exact status and body.
+
+Syslog (ADR 0031): `services.victoriaStack.logs.syslog.{udp,tcp,tls}` slots
+with separate `ipAddress` (no default) and `port` (514, 514, 6514), a default
+`source=syslog` label via `extraFields`, per-slot `openFirewall` (the module's
+first firewall use), an exposure warning for a non-loopback listener without
+TLS, a protocol-aware collision check, and a certificate watcher for the TLS
+slot. No tenant option, no unix-socket slot (an `extraFlags` recipe is
+documented) and no collector-side syslog.
+
+Measured, and different from what was assumed:
+- A capability alone did not let vmauth bind port 80: with `PrivateUsers=true`
+  a capability held in the user namespace does not count for binding in the
+  host's network namespace. Units that need a low port run with
+  `PrivateUsers=false`, and only those.
+- vmauth rejects a user with an empty `url_map`, so no-access tokens are left
+  out of the rendered config.
+- A double slash in the Alloy endpoint was harmless: the real vmauth routes it.
+  Normalising it is consistency, not a data-loss fix.
+- The binaries refuse a retention shorter than 1 day; a bare number means
+  months (31 days) and `y` is 365 days.
+- VictoriaLogs syslog has no authentication and no client-certificate option;
+  TLS only encrypts, and any sender is accepted.
+- systemd eats backslashes inside quoted `ExecStart` arguments, so the JSON
+  `extraFields` value needed doubled backslashes. The same applies to any
+  `extraFlags` value containing a backslash on every unit (found, not fixed).
+- Closing a TLS 1.3 socket with unread session tickets resets the connection
+  and drops the message; rows also become searchable about a second late.
