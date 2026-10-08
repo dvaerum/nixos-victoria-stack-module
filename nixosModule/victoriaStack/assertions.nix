@@ -169,6 +169,24 @@ let
       address and path, so such a flag breaks them. Instead, ${svc.alternative}.
     '';
   }) flagServices;
+
+  syslogAssertions =
+    map
+      (slot: {
+        assertion = !cfg.logs.syslog.${slot}.enable || cfg.logs.syslog.${slot}.ipAddress != null;
+        message = ''
+          services.victoriaStack.logs.syslog.${slot}.enable is true but
+          services.victoriaStack.logs.syslog.${slot}.ipAddress is not set. There is
+          no default address on purpose: syslog has no authentication, so nothing
+          opens until you name the address to bind.
+        '';
+      })
+      [
+        "udp"
+        "tcp"
+      ];
+
+  moduleAssertions = extraFlagsAssertions ++ syslogAssertions;
 in
 {
   config = {
@@ -231,7 +249,7 @@ in
         services.victoriaStack.${svc.name}.selfMonitoring.enable = false.
       '') conflicts;
 
-    assertions = extraFlagsAssertions ++ [
+    assertions = moduleAssertions ++ [
       {
         assertion = !anyListenersCollide;
         message = ''

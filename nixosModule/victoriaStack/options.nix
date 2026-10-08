@@ -73,6 +73,60 @@ let
     };
   };
 
+  # One syslog listener (docs/decisions/0031). The slots differ only in
+  # transport and default port; the notes below are shared so every slot says the
+  # same thing about exposure.
+  mkSyslogSlot =
+    { proto, defaultPort }:
+    {
+      enable = mkEnableOption "the ${proto} syslog listener of VictoriaLogs";
+
+      ipAddress = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "192.0.2.10";
+        description = ''
+          Address the listener binds; required once the slot is enabled, with no
+          default so that nothing opens by accident. `0.0.0.0` or `::` accept
+          syslog from every network the host is on. An IPv6 address (contains
+          `:`) is bracketed automatically.
+
+          VictoriaLogs' syslog ingestion has NO authentication: anyone who can
+          reach the port can write log lines, claim any hostname or program name,
+          and create new streams (each distinct hostname/app_name/proc_id
+          combination is one). Bind a specific address and restrict who can
+          reach the port with a firewall.
+        '';
+      };
+
+      port = mkOption {
+        type = types.ints.between 1 65535;
+        default = defaultPort;
+        description = ''
+          Port of the listener. A port below 1024 gives the VictoriaLogs unit
+          `CAP_NET_BIND_SERVICE` (and turns off `PrivateUsers`, since a
+          capability inside a user namespace does not count for binding); the
+          unit keeps its empty capability set otherwise.
+        '';
+      };
+
+      extraFields = mkOption {
+        type = types.attrsOf types.str;
+        default = {
+          source = "syslog";
+        };
+        example = {
+          source = "router";
+          site = "lab";
+        };
+        description = ''
+          Fields added to every entry received on this listener
+          (`-syslog.extraFields.*`). The default labels everything `source=syslog`;
+          override `source` or add fields as needed. `{ }` adds nothing.
+        '';
+      };
+    };
+
   # Shared option shape for metrics/logs/traces -- each storage service is an
   # independent systemd unit built directly on the relevant victoria-family
   # binary (see docs/decisions/0001), not a wrapper around nixpkgs' own
@@ -92,6 +146,8 @@ let
       # the binary rejects would render a crash-looping unit, so it is
       # not declared on metrics.
       supportsDiskRetention ? false, # victoria-logs / victoria-traces only
+      # -syslog.* exists on victoria-logs only.
+      supportsSyslog ? false,
     }:
     {
       enable = mkEnableOption name;
@@ -218,6 +274,18 @@ let
         '';
       };
 
+    }
+    // lib.optionalAttrs supportsSyslog {
+      syslog = {
+        udp = mkSyslogSlot {
+          proto = "udp";
+          defaultPort = 514;
+        };
+        tcp = mkSyslogSlot {
+          proto = "tcp";
+          defaultPort = 514;
+        };
+      };
     }
     // lib.optionalAttrs supportsDiskRetention {
       retentionMaxDiskSpaceUsageBytes = mkOption {
@@ -396,6 +464,7 @@ in
       defaultMcpPort = 4206;
       retentionPeriodNullBehavior = "a 7 day default for this binary, NOT unbounded";
       supportsDiskRetention = true;
+      supportsSyslog = true;
     };
 
     traces = mkStorageServiceOptions {

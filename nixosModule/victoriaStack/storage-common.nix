@@ -16,6 +16,8 @@
   # (docs/decisions/0015) -- logs deliberately has none, matched rather
   # than added speculatively.
   limitNOFILE ? null,
+  # -syslog.* exists on victoria-logs only (docs/decisions/0031).
+  supportsSyslog ? false,
 }:
 {
   config,
@@ -30,6 +32,10 @@ let
   selfMonitoring = import ./self-monitoring.nix { inherit lib; };
 
   listen = import ./listen.nix { inherit lib; };
+  syslog = import ./syslog.nix { inherit lib; };
+  # The unit keeps its empty capability set unless a syslog port is below 1024
+  # (the same rule as vmauth, docs/decisions/0015).
+  needsLowPort = supportsSyslog && syslog.needsLowPort cfg.syslog;
   # What the module itself dials (readiness probe, snapshot call, effectiveUrl):
   # loopback for a wildcard listenAddress (:port, 0.0.0.0:port, [::]:port).
   bindAddr = listen.connectAddr cfg.listenAddress;
@@ -183,12 +189,16 @@ in
                   ++ lib.optional (
                     (cfg.retentionMaxDiskUsagePercent or null) != null
                   ) "-retention.maxDiskUsagePercent=${toString cfg.retentionMaxDiskUsagePercent}"
-                  ++ cfg.extraFlags
                 )
+                # Escaped by the helper itself: the TLS flags carry raw %d.
+                ++ lib.optionals supportsSyslog (syslog.mkFlags cfg.syslog)
+                ++ map escapeSystemd cfg.extraFlags
               );
               Restart = "on-failure";
               RestartSec = 5;
               TimeoutStartSec = "6min";
+              # A non-root user keeps no capability across exec unless it is ambient.
+              AmbientCapabilities = lib.mkIf needsLowPort [ "CAP_NET_BIND_SERVICE" ];
 
               # Hardening based on nixpkgs' own services.victoria* modules, but
               # with ProtectSystem=strict and an empty capability set. See
@@ -200,7 +210,9 @@ in
               NoNewPrivileges = true;
               PrivateDevices = true;
               PrivateTmp = true;
-              PrivateUsers = true;
+              # Capabilities held inside a user namespace do not count for
+              # binding a port in the host's network namespace.
+              PrivateUsers = !needsLowPort;
               ProtectClock = true;
               ProtectControlGroups = true;
               ProtectHome = true;
@@ -209,7 +221,7 @@ in
               ProtectKernelModules = true;
               ProtectKernelTunables = true;
               ProtectProc = "invisible";
-              CapabilityBoundingSet = "";
+              CapabilityBoundingSet = if needsLowPort then [ "CAP_NET_BIND_SERVICE" ] else "";
               ProtectSystem = "strict";
               RemoveIPC = true;
               RestrictAddressFamilies = [

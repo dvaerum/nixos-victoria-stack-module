@@ -11,4 +11,5 @@ import ./storage-common.nix {
   snapshotCreatePath = "/internal/partition/snapshot/create";
   defaultDataDir = /var/lib/victorialogs;
   description = "VictoriaLogs log storage";
+  supportsSyslog = true;
 }
