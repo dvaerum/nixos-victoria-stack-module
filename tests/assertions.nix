@@ -8,6 +8,71 @@ let
   # Same throwaway fixture tests/grafana.nix uses -- nixpkgs' grafana
   # module requires a real secret_key file-provider, no silent default.
   secretKeyFixture = pkgs.writeText "grafana-secret-key" "test-fixture-secret-key-not-real";
+
+  # extraFlags that change addressing or auth are rejected (the readiness
+  # check and self-push use plain http on the module's own address/path).
+  # Each service is enabled alone, its flag list set to the one flag under test.
+  flagServices = {
+    metrics = { };
+    logs = { };
+    traces = { };
+    vmauth = {
+      # vmauth only activates with a backend behind it.
+      services.victoriaStack.metrics.enable = true;
+    };
+  };
+  commonBadFlags = [
+    "-http.pathPrefix=/x"
+    "--http.pathPrefix=/x"
+    "-http.pathPrefix"
+    "-tls"
+    "--tls=true"
+    "-tlsCertFile=/run/fake-cert.pem"
+    "-tlsKeyFile=/run/fake-key.pem"
+    "-httpAuth.username=someone"
+    "-httpAuth.password=file:///run/fake-pass"
+  ];
+  badFlagsFor =
+    svc:
+    commonBadFlags
+    ++ lib.optionals (svc == "vmauth") [
+      "-httpListenAddr=127.0.0.1:18080"
+      "--httpListenAddr=127.0.0.1:18080"
+      "-httpInternalListenAddr=127.0.0.1:18081"
+    ];
+  flagModule =
+    svc: flags:
+    lib.recursiveUpdate flagServices.${svc} {
+      services.victoriaStack.${svc} = {
+        enable = true;
+        extraFlags = flags;
+      };
+    };
+  slug = lib.replaceStrings [ "/" "=" "." ":" ] [ "_" "-" "-" "-" ];
+  extraFlagsChecks = lib.concatMapAttrs (
+    svc: _:
+    lib.listToAttrs (
+      map (
+        flag:
+        lib.nameValuePair "${svc}-extraflags-rejects${slug flag}" (mkAssertionFiresCheck {
+          name = "${svc}-extraflags-rejects${slug flag}";
+          expectMessageSubstring = "extraFlags contains `${flag}`";
+          module = flagModule svc [ flag ];
+        })
+      ) (badFlagsFor svc)
+    )
+    // {
+      # Positive control: a flag that merely resembles a banned one
+      # (http.maxGracefulShutdownDuration shares the http. prefix) must pass.
+      "${svc}-extraflags-harmless-flag-is-fine" = mkNoAssertionsFireCheck {
+        name = "${svc}-extraflags-harmless-flag-is-fine";
+        module = flagModule svc [
+          "-http.maxGracefulShutdownDuration=5s"
+          "-maxConcurrentRequests=100"
+        ];
+      };
+    }
+  ) flagServices;
 in
 {
   nginx-requires-vmauth = mkAssertionFiresCheck {
@@ -274,3 +339,4 @@ in
     module = { };
   };
 }
+// extraFlagsChecks

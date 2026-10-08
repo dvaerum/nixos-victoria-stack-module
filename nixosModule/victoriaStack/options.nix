@@ -198,6 +198,11 @@ let
         description = ''
           Extra command-line flags passed straight through to ${binaryName},
           for anything not worth promoting to its own typed option.
+
+          Flags that change addressing or auth (`-http.pathPrefix*`, `-tls*`,
+          `-httpAuth.*`) are rejected at build time: the module's readiness
+          check and self-push use plain http on the known address and path.
+          Put nginx in front of the service instead.
         '';
       };
 
@@ -570,11 +575,14 @@ in
           appended last, for anything not worth promoting to its own
           typed option. Same shape as the storage services' `extraFlags`.
 
-          For TLS use `https` rather than `-tls*` flags (mixing them conflicts
-          with the module's positional listener arrays). Do not set
-          `-httpAuth.*`: it would add Basic Auth on top of the generated
-          tokens and admin user, and the module's own helpers carry no
-          credentials.
+          Flags that change addressing or auth are rejected at build time:
+          `-http.pathPrefix*`, `-tls*`, `-httpAuth.*`, and
+          `-httpListenAddr*` / `-httpInternalListenAddr*` (the module owns the
+          listeners; its `-tls*` arrays are positional with them). The module's
+          readiness check and self-push use plain http on the known address and
+          path. For TLS use `https`, for listeners `listenAddress`,
+          `internalListenAddress`, `https` and `http`, and put nginx in front
+          for a path prefix or extra auth.
         '';
       };
 

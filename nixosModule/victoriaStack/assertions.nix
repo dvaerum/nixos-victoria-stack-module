@@ -102,6 +102,73 @@ let
     ) enabledListeners
   );
   anyListenersCollide = collisions != [ ];
+
+  # extraFlags that change where or how a service is reached. The module's
+  # readiness check and self-push talk plain http to the known address and
+  # path, so these would break them silently. The flag NAME decides, whether
+  # given as `-f`, `--f`, `-f=v` or `--f=v`; Go flags are case-sensitive.
+  flagName = f: lib.head (lib.splitString "=" (lib.removePrefix "-" (lib.removePrefix "-" f)));
+  addressingOrAuthPrefixes = [
+    "http.pathPrefix"
+    "tls"
+    "httpAuth."
+  ];
+  flagServices = [
+    {
+      name = "metrics";
+      active = cfg.metrics.enable;
+      inherit (cfg.metrics) extraFlags;
+      ownedPrefixes = [ ];
+      alternative = "put nginx in front of the service";
+    }
+    {
+      name = "logs";
+      active = cfg.logs.enable;
+      inherit (cfg.logs) extraFlags;
+      ownedPrefixes = [ ];
+      alternative = "put nginx in front of the service";
+    }
+    {
+      name = "traces";
+      active = cfg.traces.enable;
+      inherit (cfg.traces) extraFlags;
+      ownedPrefixes = [ ];
+      alternative = "put nginx in front of the service";
+    }
+    {
+      name = "vmauth";
+      inherit active;
+      inherit (cfg.vmauth) extraFlags;
+      # The module owns the listener arrays (positional with its -tls* arrays).
+      ownedPrefixes = [
+        "httpListenAddr"
+        "httpInternalListenAddr"
+      ];
+      alternative = "use vmauth.https / vmauth.http / listenAddress, or put nginx in front";
+    }
+  ];
+  forbiddenFlags =
+    svc:
+    lib.optionals svc.active (
+      lib.filter (
+        f:
+        let
+          n = flagName f;
+        in
+        lib.any (p: lib.hasPrefix p n) (addressingOrAuthPrefixes ++ svc.ownedPrefixes)
+      ) svc.extraFlags
+    );
+
+  extraFlagsAssertions = map (svc: {
+    assertion = forbiddenFlags svc == [ ];
+    message = ''
+      services.victoriaStack.${svc.name}.extraFlags contains ${
+        lib.concatMapStringsSep ", " (f: "`${f}`") (forbiddenFlags svc)
+      }, which changes how the service is addressed or authenticated. The
+      module's readiness check and its self-push use plain http on the known
+      address and path, so such a flag breaks them. Instead, ${svc.alternative}.
+    '';
+  }) flagServices;
 in
 {
   config = {
@@ -164,7 +231,7 @@ in
         services.victoriaStack.${svc.name}.selfMonitoring.enable = false.
       '') conflicts;
 
-    assertions = [
+    assertions = extraFlagsAssertions ++ [
       {
         assertion = !anyListenersCollide;
         message = ''

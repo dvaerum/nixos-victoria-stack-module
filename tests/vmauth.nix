@@ -1598,15 +1598,18 @@ in
             services.victoriaStack = {
               metrics.enable = true;
               vmauth.extraFlags = [
-                "-tlsCertFile=/foo"
-                "-tlsKeyFile=/bar"
+                "-http.maxGracefulShutdownDuration=5s"
+                "-memory.allowedPercent=50"
               ];
             };
           };
           checks = {
-            "absent by default" = !(lib.hasInfix "-tlsCertFile" unset);
-            "flags present verbatim" = lib.hasInfix "-tlsCertFile=/foo -tlsKeyFile=/bar" (unq set);
-            "flags are last" = lib.hasSuffix "-tlsCertFile=/foo -tlsKeyFile=/bar" (unq set);
+            "absent by default" = !(lib.hasInfix "-memory.allowedPercent" unset);
+            "flags present verbatim" =
+              lib.hasInfix "-http.maxGracefulShutdownDuration=5s -memory.allowedPercent=50" (unq set);
+            "flags are last" = lib.hasSuffix "-http.maxGracefulShutdownDuration=5s -memory.allowedPercent=50" (
+              unq set
+            );
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
@@ -1616,40 +1619,27 @@ in
           throw "vmauth.extraFlags broken: ${builtins.toJSON (builtins.attrNames failed)}\n${set}"
       );
 
-  # extraFlags used for something real: vmauth's own TLS listener, reached
-  # directly (no nginx in front).
-  vmauth-serves-https-via-extra-flags = pkgs.testers.nixosTest {
-    name = "victoria-stack-vmauth-https-via-extra-flags";
+  # extraFlags used for something real: the running vmauth accepts the flag
+  # and reports it on its own /flags page. (TLS, listeners and auth flags are
+  # rejected at build time instead: the https door is the supported route.)
+  vmauth-extra-flag-reaches-the-running-process = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-extra-flag-live";
 
     containers.machine = {
       imports = [ module ];
       services.victoriaStack = {
         metrics.enable = true;
-        vmauth = {
-          adminPasswordFile = "${adminPasswordFixture}";
-          extraFlags = [
-            "-tls"
-            "-tlsCertFile=${selfSignedCert}/cert.pem"
-            "-tlsKeyFile=${selfSignedCert}/key.pem"
-          ];
-        };
+        vmauth.extraFlags = [ "-http.maxGracefulShutdownDuration=7s" ];
       };
     };
 
     testScript = ''
       start_all()
       machine.wait_for_unit("vmauth.service")
-      machine.wait_for_open_port(4204)
-      machine.wait_for_open_port(4201)
-
-      url = "https://127.0.0.1:4204/metrics/api/v1/labels"
-      machine.succeed(
-          "curl -sf --cacert ${selfSignedCert}/cert.pem -u admin:admin-password-value '" + url + "'"  # gitleaks:allow
-      )
-      # Plain HTTP on the TLS listener must not work, and verification
-      # must fail closed without the CA.
-      machine.fail("curl -sf --max-time 5 -u admin:admin-password-value 'http://127.0.0.1:4204/metrics/api/v1/labels'")  # gitleaks:allow
-      machine.fail("curl -sf --max-time 5 -u admin:admin-password-value '" + url + "'")  # gitleaks:allow
+      machine.wait_for_open_port(4208)
+      flags = machine.succeed("curl -sf http://127.0.0.1:4208/flags")
+      # /flags prints values quoted: -http.maxGracefulShutdownDuration="7s"
+      assert '-http.maxGracefulShutdownDuration="7s"' in flags, flags
     '';
   };
 
