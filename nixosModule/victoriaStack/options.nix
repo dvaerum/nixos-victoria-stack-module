@@ -7,6 +7,12 @@ let
     types
     ;
 
+  # The binaries' own duration grammar: a number with one optional unit (s, h,
+  # d, w, M, y; a bare number is months), or several s/h/d/w parts. A
+  # lower-case `m` (minutes) is refused by them, "30days" dies at start.
+  # Shared by -retentionPeriod and -snapshotsMaxAge, which parse alike.
+  durationRegex = "[0-9]+(\\.[0-9]+)?[shdwMy]?|([0-9]+(\\.[0-9]+)?[shdw])+";
+
   # The one place the restart-on-replacement rule and its watched-file list are
   # written; interpolated into every option that names a watched secret file
   # (the list mirrors `watchedSecrets` in vmauth.nix).
@@ -182,10 +188,7 @@ let
       };
 
       retentionPeriod = mkOption {
-        # The binaries' own grammar: a number with one optional unit (s, h, d,
-        # w, M, y; a bare number is months), or several s/h/d/w parts. A
-        # lower-case `m` (minutes) is refused by them, "30days" dies at start.
-        type = types.nullOr (types.strMatching "[0-9]+(\\.[0-9]+)?[shdwMy]?|([0-9]+(\\.[0-9]+)?[shdw])+");
+        type = types.nullOr (types.strMatching durationRegex);
         default = null;
         example = "30d";
         description = ''
@@ -256,11 +259,15 @@ let
         };
 
         maxAge = mkOption {
-          type = types.nullOr types.str;
+          type = types.nullOr (types.strMatching durationRegex);
           default = "30d";
           description = ''
             `-snapshotsMaxAge` -- the binary itself prunes snapshots older
             than this (not the `schedule` timer, which only creates them).
+            Same format as `retentionPeriod`: a number with one optional
+            unit (`s`, `h`, `d`, `w`, `M`, `y`; a bare number is months),
+            or several `s`/`h`/`d`/`w` parts such as `1d12h`; `0` disables
+            pruning.
             `null` disables automatic pruning (it passes
             `-snapshotsMaxAge=0`; leaving the flag out would keep each
             binary's own 3d default): snapshots then accumulate under `dataDir` until deleted

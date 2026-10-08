@@ -40,6 +40,18 @@ let
     ""
     "d"
   ];
+  # snapshots.maxAge takes the same grammar, and additionally "0" (disables
+  # pruning); the binaries also accept "1h", "10s" and "1ms" there.
+  snapshotMaxAgeAccepted = retentionAccepted ++ [
+    "0"
+    "1h"
+    "10s"
+  ];
+  snapshotMaxAgeRejected = retentionRejected ++ [
+    "1 week"
+    "5m"
+    "1h30m"
+  ];
   sizeAccepted = [
     "500"
     "10GB"
@@ -1744,7 +1756,7 @@ in
       table =
         svc: opt: accepted: rejected:
         let
-          t = (opts svc).${opt}.type;
+          t = (lib.attrByPath (lib.splitString "." opt) null (opts svc)).type;
         in
         map (v: {
           name = "${svc}.${opt} accepts '${v}'";
@@ -1770,6 +1782,19 @@ in
             "logs"
             "traces"
           ]
+        ++
+          lib.concatMap
+            (
+              svc:
+              table svc "snapshots.maxAge" snapshotMaxAgeAccepted (
+                snapshotMaxAgeRejected ++ retentionTypeOnlyRejected
+              )
+            )
+            [
+              "metrics"
+              "logs"
+              "traces"
+            ]
         ++
           lib.concatMap
             (
@@ -1853,6 +1878,27 @@ in
           flag = "retentionPeriod";
           accepted = retentionAccepted;
           rejected = retentionRejected;
+        }
+        {
+          svc = "metrics";
+          bin = "victoria-metrics";
+          flag = "snapshotsMaxAge";
+          accepted = snapshotMaxAgeAccepted;
+          rejected = snapshotMaxAgeRejected;
+        }
+        {
+          svc = "logs";
+          bin = "victoria-logs";
+          flag = "snapshotsMaxAge";
+          accepted = snapshotMaxAgeAccepted;
+          rejected = snapshotMaxAgeRejected;
+        }
+        {
+          svc = "traces";
+          bin = "victoria-traces";
+          flag = "snapshotsMaxAge";
+          accepted = snapshotMaxAgeAccepted;
+          rejected = snapshotMaxAgeRejected;
         }
         {
           svc = "logs";
