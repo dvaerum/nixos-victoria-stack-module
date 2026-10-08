@@ -674,12 +674,14 @@ in
 
     # try-restart: a rotation while vmauth is stopped must not start it. A bad
     # file written mid-rotation restarts vmauth into the render script's error,
-    # i.e. it fails closed.
+    # i.e. it fails closed. --no-block: the path unit only re-arms once this
+    # helper finishes, so waiting for vmauth to come back would lose a file
+    # replaced in the meantime.
     systemd.services.vmauth-secret-restart = lib.mkIf (watchedSecrets != { }) {
       description = "Restart vmauth after one of its secret files changed";
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = "${config.systemd.package}/bin/systemctl try-restart vmauth.service";
+        ExecStart = "${config.systemd.package}/bin/systemctl try-restart --no-block vmauth.service";
         CapabilityBoundingSet = "";
       };
     };

@@ -738,6 +738,63 @@ in
   # (verified: old token kept working after an in-place write and after a rename).
   # The module therefore watches each secret file and restarts vmauth. Covers an
   # in-place write and the write-new-then-rename that sops-nix does.
+  # A secret replaced while the restart helper is still running must not be
+  # lost: the path unit only re-arms once the helper it triggered has finished, so
+  # a helper that waits for vmauth to come back leaves a window in which a second
+  # replacement is never noticed and vmauth keeps serving a stale copy. vmauth is
+  # made slow to start here so the second replacement lands inside that window.
+  token-file-replaced-during-a-restart-is-not-lost = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-token-replaced-during-restart";
+
+    containers.machine = {
+      imports = [ module ];
+      systemd.tmpfiles.rules = [
+        "d /var/lib/rotation 0700 root root -"
+        "f /var/lib/rotation/read.yaml 0600 root root - tokens:\\n  - token: token-generation-one\\n"
+      ];
+      # Widens the window in which the first restart is still in progress.
+      systemd.services.vmauth.serviceConfig.ExecStartPre = lib.mkAfter [
+        "${pkgs.coreutils}/bin/sleep 8"
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.readTokensFile = "/var/lib/rotation/read.yaml";
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_unit("vmauth-secret-watch-read-tokens.path")
+
+      def status(token):
+          return machine.succeed(
+              "curl -s -o /dev/null -w '%{http_code}' "
+              f"-H 'Authorization: Bearer {token}' "
+              "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+          ).strip()
+
+      assert status("token-generation-one") == "200"
+
+      machine.succeed("printf 'tokens:\\n  - token: token-generation-two\\n' > /var/lib/rotation/read.yaml")
+      # The first restart is now in progress (vmauth is held in its slow start).
+      machine.wait_until_succeeds(
+          "systemctl show -p ActiveState --value vmauth.service | grep -qx activating", timeout=60
+      )
+      machine.succeed("printf 'tokens:\\n  - token: token-generation-three\\n' > /var/lib/rotation/read.yaml")
+
+      # The last file written is the one vmauth must end up serving.
+      machine.wait_until_succeeds(
+          "curl -s -o /dev/null -w '%{http_code}' "
+          "-H 'Authorization: Bearer token-generation-three' "
+          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up' | grep -qx 200",
+          timeout=120,
+      )
+      assert status("token-generation-two") == "401"
+    '';
+  };
+
   token-file-replacement-restarts-vmauth = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-token-rotation-restarts";
 
