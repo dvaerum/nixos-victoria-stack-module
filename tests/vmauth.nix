@@ -773,6 +773,68 @@ in
     '';
   };
 
+  # The backend TLS files are staged by LoadCredential= like the tokens, so the
+  # same restart-on-replacement applies. Each file is replaced in turn and vmauth
+  # must come back as a NEW invocation: replacing the CA in place and the cert and
+  # key by write-then-rename (what a secrets manager does).
+  backend-tls-file-replacement-restarts-vmauth = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-backend-tls-rotation-restarts";
+
+    containers.machine = {
+      imports = [ module ];
+      # Runtime paths (not store paths) so the test can replace them.
+      systemd.tmpfiles.rules = [
+        "d /var/lib/rotation 0700 root root -"
+        "C /var/lib/rotation/ca.pem 0600 root root - ${selfSignedCert}/cert.pem"
+        "C /var/lib/rotation/client.pem 0600 root root - ${selfSignedCert}/cert.pem"
+        "C /var/lib/rotation/client.key 0600 root root - ${selfSignedCert}/key.pem"
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.backendTls = {
+          caFile = "/var/lib/rotation/ca.pem";
+          certFile = "/var/lib/rotation/client.pem";
+          keyFile = "/var/lib/rotation/client.key";
+        };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      machine.wait_for_unit("vmauth.service")
+      machine.wait_for_open_port(4204)
+      for name in ("ca", "cert", "key"):
+          machine.wait_for_unit(f"vmauth-secret-watch-backend-tls-{name}.path")
+
+      def invocation():
+          return machine.succeed("systemctl show -p InvocationID --value vmauth.service").strip()
+
+      def restarts_after(replace):
+          before = invocation()
+          machine.succeed(replace)
+          machine.wait_until_succeeds(
+              f"test \"$(systemctl show -p InvocationID --value vmauth.service)\" != {before}",
+              timeout=60,
+          )
+          machine.wait_for_unit("vmauth.service")
+          machine.wait_for_open_port(4204)
+
+      # In-place write to the CA bundle.
+      restarts_after("echo >> /var/lib/rotation/ca.pem")
+      # Write-then-rename for the client cert and key.
+      restarts_after(
+          "cp /var/lib/rotation/client.pem /var/lib/rotation/client.pem.new"
+          " && echo >> /var/lib/rotation/client.pem.new"
+          " && mv /var/lib/rotation/client.pem.new /var/lib/rotation/client.pem"
+      )
+      restarts_after(
+          "cp /var/lib/rotation/client.key /var/lib/rotation/client.key.new"
+          " && echo >> /var/lib/rotation/client.key.new"
+          " && mv /var/lib/rotation/client.key.new /var/lib/rotation/client.key"
+      )
+    '';
+  };
+
   # Reverse of write_token_cannot_read above, and the admin-password
   # equivalent of both -- renderConfig only ever gives the admin user
   # READ_URL_MAP_FILE (nixosModule/victoriaStack/vmauth.nix), so neither
@@ -901,8 +963,8 @@ in
   # would require fabricating an HTTPS-speaking stand-in backend that
   # doesn't otherwise exist in this stack, which wouldn't verify anything
   # the module actually does in production -- it stays covered by its own
-  # eval-only test (vmauth.nix's backendTls-options-reach-ExecStart,
-  # addressed elsewhere in this file).
+  # eval-only test (backend-tls-options-are-inert-unless-configured
+  # in this file).
   full-combination-all-tiers-plus-extra-routes-plus-headers = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-full-combination";
 
@@ -2307,8 +2369,6 @@ in
     '';
   };
 
-  # acmeCertName is the one door option with no boot test (a real ACME issuance
-  # is impossible in the sandbox): pin its wiring instead.
   secret-watchers-cover-exactly-the-configured-secret-files =
     pkgs.runCommand "vmauth-secret-watchers" { }
       (
@@ -2335,6 +2395,11 @@ in
                 certFile = "/run/s/cert";
                 keyFile = "/run/s/key";
               };
+              backendTls = {
+                caFile = "/run/s/ca";
+                certFile = "/run/s/bcert";
+                keyFile = "/run/s/bkey";
+              };
             };
           };
           checks = {
@@ -2342,6 +2407,9 @@ in
             "every operator secret is watched" =
               names all == [
                 "vmauth-secret-watch-admin-password"
+                "vmauth-secret-watch-backend-tls-ca"
+                "vmauth-secret-watch-backend-tls-cert"
+                "vmauth-secret-watch-backend-tls-key"
                 "vmauth-secret-watch-https-cert"
                 "vmauth-secret-watch-https-key"
                 "vmauth-secret-watch-read-tokens"
@@ -2349,7 +2417,24 @@ in
               ];
             "each watcher points at its own file" =
               pathOf all "vmauth-secret-watch-read-tokens" == "/run/s/read"
-              && pathOf all "vmauth-secret-watch-https-key" == "/run/s/key";
+              && pathOf all "vmauth-secret-watch-https-key" == "/run/s/key"
+              && pathOf all "vmauth-secret-watch-backend-tls-ca" == "/run/s/ca"
+              && pathOf all "vmauth-secret-watch-backend-tls-cert" == "/run/s/bcert"
+              && pathOf all "vmauth-secret-watch-backend-tls-key" == "/run/s/bkey";
+            # Backend TLS is independent of the public https door.
+            "backendTls files are watched with the https door off" =
+              names {
+                vmauth.backendTls = {
+                  certFile = "/run/s/bcert";
+                  keyFile = "/run/s/bkey";
+                };
+              } == [
+                "vmauth-secret-watch-backend-tls-cert"
+                "vmauth-secret-watch-backend-tls-key"
+              ];
+            # A store path never changes in place, and a rebuild already
+            # restarts vmauth through the changed unit.
+            "a store-path CA is not watched" = names { vmauth.backendTls.caFile = ./lib.nix; } == [ ];
             "cert files of a disabled https door are not watched" =
               names {
                 vmauth.https = {
@@ -2367,6 +2452,8 @@ in
           throw "secret watchers wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
+  # acmeCertName is the one door option with no boot test (a real ACME issuance
+  # is impossible in the sandbox): pin its wiring instead.
   acme-cert-name-is-wired-into-the-unit = pkgs.runCommand "vmauth-acme-cert-name-wiring" { } (
     let
       eval =

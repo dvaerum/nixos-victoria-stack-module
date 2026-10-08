@@ -582,7 +582,9 @@ in
             the credential options below): a CA bundle is public by
             nature, not a runtime-staged secret. It is still staged through
             systemd `LoadCredential=` like every other TLS file, so the file's
-            owner and mode don't matter to vmauth's dynamic user.
+            owner and mode don't matter to vmauth's dynamic user. Replacing
+            the file restarts vmauth, except for a store path, which cannot
+            change in place.
           '';
         };
 
@@ -592,7 +594,8 @@ in
           description = ''
             vmauth's `-backend.TLSCertFile` -- client certificate for
             mTLS to HTTPS backends. Plain string; see `writeTokensFile`.
-            Staged via `LoadCredential=` at runtime.
+            Staged via `LoadCredential=` at runtime; replacing the file
+            restarts vmauth.
           '';
         };
 
@@ -603,7 +606,8 @@ in
             vmauth's `-backend.TLSKeyFile` -- the client private key
             paired with `certFile`, for mTLS to HTTPS backends. Plain string;
             see `writeTokensFile` (a private key must not reach the Nix
-            store). Staged via `LoadCredential=` at runtime.
+            store). Staged via `LoadCredential=` at runtime; replacing the
+            file restarts vmauth.
           '';
         };
       };
@@ -682,11 +686,12 @@ in
           actually attempted).
 
           Replacing this file (or `readTokensFile`, `adminPasswordFile`,
-          `https.certFile`, `https.keyFile`) restarts vmauth automatically,
-          since vmauth reads them only at start. The `backendTls.*` files are
-          NOT watched: restart vmauth yourself after replacing them. A file
-          that is invalid after the replacement makes vmauth fail at start
-          with the validation message (it fails closed).
+          `https.certFile`, `https.keyFile`, `backendTls.certFile`,
+          `backendTls.keyFile`, or `backendTls.caFile` unless it is a Nix
+          store path) restarts vmauth automatically, since vmauth reads them
+          only at start. A file that is invalid after the replacement makes
+          vmauth fail at start with the validation message (it fails
+          closed).
         '';
       };
 

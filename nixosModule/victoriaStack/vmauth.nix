@@ -22,8 +22,10 @@ let
     if cfg.https.acmeCertName != null then "${acmeDir}/fullchain.pem" else cfg.https.certFile;
   httpsKeySource = if cfg.https.acmeCertName != null then "${acmeDir}/key.pem" else cfg.https.keyFile;
 
-  # Secret files vmauth only reads at start (LoadCredential= copies them, the
-  # render script runs once). ACME certs are excluded: reloadServices covers them.
+  # Files vmauth only reads at start (LoadCredential= copies them, the render
+  # script runs once). ACME certs are excluded: reloadServices covers them. A
+  # store-path CA is excluded: it cannot change in place, and a rebuild already
+  # restarts vmauth through the changed unit.
   watchedSecrets = lib.filterAttrs (_: path: path != null) {
     admin-password = cfg.adminPasswordFile;
     read-tokens = cfg.readTokensFile;
@@ -31,6 +33,16 @@ let
     https-cert =
       if cfg.https.enable && cfg.https.acmeCertName == null then cfg.https.certFile else null;
     https-key = if cfg.https.enable && cfg.https.acmeCertName == null then cfg.https.keyFile else null;
+    backend-tls-ca =
+      if
+        cfg.backendTls.caFile != null
+        && !lib.hasPrefix "${builtins.storeDir}/" (toString cfg.backendTls.caFile)
+      then
+        toString cfg.backendTls.caFile
+      else
+        null;
+    backend-tls-cert = cfg.backendTls.certFile;
+    backend-tls-key = cfg.backendTls.keyFile;
   };
 
   # Every listener in positional order: the -tls/-tlsCertFile/-tlsKeyFile
