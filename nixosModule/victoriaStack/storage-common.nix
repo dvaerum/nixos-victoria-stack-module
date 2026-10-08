@@ -34,6 +34,37 @@ let
   # loopback for a wildcard listenAddress (:port, 0.0.0.0:port, [::]:port).
   bindAddr = listen.connectAddr cfg.listenAddress;
 
+  # -retentionPeriod in seconds, per the binaries' grammar (options.nix
+  # durationRegex). A bare number and `M` are months of 31 days, `y` is 365
+  # days -- the lengths the binaries' own minimum check uses (measured).
+  retentionSeconds =
+    let
+      number =
+        s:
+        let
+          parts = lib.splitString "." s;
+          frac = if builtins.length parts > 1 then builtins.elemAt parts 1 else "0";
+        in
+        lib.toIntBase10 (builtins.head parts)
+        + lib.toIntBase10 frac / builtins.foldl' (a: _: a * 10.0) 1.0 (lib.stringToCharacters frac);
+      unitSeconds = {
+        "" = 31 * 86400;
+        s = 1;
+        h = 3600;
+        d = 86400;
+        w = 7 * 86400;
+        M = 31 * 86400;
+        y = 365 * 86400;
+      };
+      parts = builtins.filter builtins.isList (
+        builtins.split "([0-9]+(\\.[0-9]+)?)([shdwMy]?)" cfg.retentionPeriod
+      );
+    in
+    lib.foldl' (
+      acc: m: acc + number (builtins.elemAt m 0) * unitSeconds.${builtins.elemAt m 2}
+    ) 0 parts;
+  minRetentionSeconds = 86400;
+
   # systemd expands specifiers (%h) and ${VAR} in Exec* lines even inside
   # quotes; user-supplied text must reach the process literally.
   escapeSystemd = lib.replaceStrings [ "%" "$" ] [ "%%" "$$" ];
@@ -82,7 +113,12 @@ in
               services.victoriaStack.${name}.dynamicUser = false, or set
               services.victoriaStack.${name}.suppressDynamicUserWarning = true
               once you've confirmed this is deliberate.
-            '';
+            ''
+          ++ lib.optional (cfg.retentionPeriod != null && retentionSeconds < minRetentionSeconds) ''
+            services.victoriaStack.${name}.retentionPeriod ("${cfg.retentionPeriod}") is
+            shorter than the minimum of 1 day; ${binaryName} refuses to start with
+            "-retentionPeriod cannot be smaller than a day". A bare number means months.
+          '';
       }
 
       (lib.mkIf (!cfg.dynamicUser) {

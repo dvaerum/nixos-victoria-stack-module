@@ -253,6 +253,82 @@ let
         description: ${description}
       '';
 
+  # Real minimum of -retentionPeriod, measured on all three binaries: one day
+  # (86400s). A bare number and `M` are months of ~31 days, `y` is ~365 days
+  # (0.032 refused / 0.033 starts; 0.00273y refused / 0.00274y starts).
+  retentionBelowMinimum = [
+    "0"
+    "0h"
+    "1h"
+    "23h"
+    "86399s"
+    "1h1s"
+    "0.5d"
+    "0.032"
+    "0.032M"
+    "0.00273y"
+    "0.14w"
+  ];
+  retentionAtOrAboveMinimum = [
+    "24h"
+    "1d"
+    "86400s"
+    "1d1s"
+    "30d"
+    "1w"
+    "12"
+    "1"
+    "1M"
+    "0.033"
+    "0.033M"
+    "0.00274y"
+    "0.15w"
+  ];
+
+  mkShortRetentionWarningCheck =
+    svc:
+    pkgs.runCommand "${svc}-short-retention-warning" { } (
+      let
+        optionName = "services.victoriaStack.${svc}.retentionPeriod";
+        warningsFor =
+          retentionPeriod:
+          lib.filter (lib.hasInfix optionName) (
+            (evalWith {
+              services.victoriaStack.${svc} = {
+                enable = true;
+              }
+              // lib.optionalAttrs (retentionPeriod != null) { inherit retentionPeriod; };
+            }).config.warnings
+          );
+        problems =
+          lib.concatMap (
+            v:
+            let
+              w = warningsFor v;
+            in
+            lib.optional
+              (
+                !(
+                  builtins.length w == 1
+                  && lib.hasInfix ''"${v}"'' (builtins.head w)
+                  && lib.hasInfix "minimum" (builtins.head w)
+                  && lib.hasInfix "1 day" (builtins.head w)
+                )
+              )
+              "${v}: expected one warning naming ${optionName}, the value and the 1 day minimum, got ${builtins.toJSON w}"
+          ) retentionBelowMinimum
+          ++ lib.concatMap (
+            v: lib.optional (warningsFor v != [ ]) "${v}: must not warn, got ${builtins.toJSON (warningsFor v)}"
+          ) (retentionAtOrAboveMinimum ++ [ null ])
+          ++ lib.optional (
+            !lib.hasInfix "1 day" (
+              (evalWith { }).options.services.victoriaStack.${svc}.retentionPeriod.description
+            )
+          ) "option description does not state the 1 day minimum";
+      in
+      if problems == [ ] then "echo OK > $out" else throw (lib.concatStringsSep "\n" problems)
+    );
+
 in
 {
   # --- eval-only: dynamicUser/dataDir warning behavior (fast, no container boot) ---
@@ -1951,4 +2027,58 @@ in
         fi
         echo OK > $out
       '';
+
+  # A warning, not an assertion: below one day the binary refuses to start,
+  # but an evaluation that only builds a closure should not be blocked.
+  metrics-short-retention-warns = mkShortRetentionWarningCheck "metrics";
+  logs-short-retention-warns = mkShortRetentionWarningCheck "logs";
+  traces-short-retention-warns = mkShortRetentionWarningCheck "traces";
+
+  # The minimum the warning states is what the binaries enforce, edges included.
+  retention-minimum-matches-the-real-binaries =
+    let
+      bins = {
+        metrics = "victoria-metrics";
+        logs = "victoria-logs";
+        traces = "victoria-traces";
+      };
+      pkgOf =
+        svc:
+        (evalWith { services.victoriaStack.${svc}.enable = true; })
+        .config.services.victoriaStack.${svc}.package;
+    in
+    pkgs.runCommand "retention-minimum-matches-the-real-binaries" { } ''
+      mkdir failures
+      probe() {
+        bin=$1 v=$2 want=$3
+        (
+          d=$(mktemp -d)
+          rc=0
+          out=$(timeout 3 "$bin" -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-retentionPeriod=$v" 2>&1) || rc=$?
+          if [ "$want" = start ] && [ "$rc" -ne 124 ]; then
+            echo "FAIL: $bin refused -retentionPeriod=$v: $out" > "failures/$(mktemp -u XXXXXX)"
+          elif [ "$want" = refuse ] && ! echo "$out" | grep -q "cannot be smaller than a day"; then
+            echo "FAIL: $bin did not refuse -retentionPeriod=$v as below a day (rc=$rc): $out" > "failures/$(mktemp -u XXXXXX)"
+          fi
+          rm -rf "$d"
+        ) &
+      }
+      ${lib.concatStrings (
+        lib.mapAttrsToList (
+          svc: bin:
+          lib.concatMapStrings (
+            v: "probe ${pkgOf svc}/bin/${bin} ${lib.escapeShellArg v} refuse\n"
+          ) retentionBelowMinimum
+          + lib.concatMapStrings (
+            v: "probe ${pkgOf svc}/bin/${bin} ${lib.escapeShellArg v} start\n"
+          ) retentionAtOrAboveMinimum
+        ) bins
+      )}
+      wait
+      if [ -n "$(ls failures)" ]; then
+        cat failures/* >&2
+        exit 1
+      fi
+      echo OK > $out
+    '';
 }

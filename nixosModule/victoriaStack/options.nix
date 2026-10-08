@@ -196,6 +196,10 @@ let
           whatever ${binaryName} itself does when the flag is omitted
           entirely (${retentionPeriodNullBehavior}) -- matching
           upstream's own default rather than imposing an opinionated one.
+
+          The minimum is 1 day: a shorter value (`1h`, `23h`, `0`) makes
+          ${binaryName} refuse to start, and evaluation warns about it. A bare
+          number means months, so `1` is one month, not one day.
         '';
       };
 
