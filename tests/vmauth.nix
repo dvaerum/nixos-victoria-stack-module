@@ -1063,6 +1063,7 @@ in
 
     testScript = ''
       ${otlpTestPython}
+      ${httpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
@@ -1103,10 +1104,13 @@ in
       # it must stay owner-only (UMask 0177).
       mode = machine.succeed("stat -c %a /run/vmauth/config.json").strip()
       assert mode == "600", f"config.json mode is {mode}, expected 600"
-      machine.fail(
-          "curl -sf -H 'Authorization: Bearer write-token-one' "  # gitleaks:allow
-          "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+      # A valid write credential has no read route: vmauth's own "missing route".
+      code, body = http(
+          machine,
+          "http://127.0.0.1:4204/metrics/api/v1/query?query=up",
+          "-H 'Authorization: Bearer write-token-one'",  # gitleaks:allow
       )
+      assert code == "400" and "missing route" in body, (code, body)
     '';
   };
 
@@ -1148,6 +1152,7 @@ in
     };
 
     testScript = ''
+      ${httpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
@@ -1184,7 +1189,8 @@ in
           "curl -sf -u admin:admin-password-value "  # gitleaks:allow
           "'http://127.0.0.1:4204/custom-escape-hatch?query=up'"
       )
-      machine.fail("curl -sf 'http://127.0.0.1:4204/custom-escape-hatch?query=up'")  # gitleaks:allow
+      code, body = http(machine, "http://127.0.0.1:4204/custom-escape-hatch?query=up")
+      assert code == "401" and "missing 'Authorization'" in body, (code, body)
       machine.succeed(
           "curl -sfD - -u admin:admin-password-value "
           "'http://127.0.0.1:4204/custom-escape-hatch?query=up' "
@@ -1205,7 +1211,9 @@ in
           f"curl -sfD - -o /dev/null -u admin:admin-password-value {mcp_init} "  # gitleaks:allow
           "| grep -qi '^X-Full-Combo-Response: yes'"
       )
-      machine.fail(f"curl -sf {mcp_init}")
+      out = machine.succeed(f"curl -s -w '\\n%{{http_code}}' {mcp_init}")
+      body, code = out.rsplit("\n", 1)
+      assert code.strip() == "401" and "missing 'Authorization'" in body, (code, body)
 
       # extraRequestHeaders reaching the real outbound backend request
       # (not just the generated config) isn't independently observable
@@ -1447,6 +1455,7 @@ in
     };
 
     testScript = ''
+      ${httpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_unit("victoriametrics.service")
@@ -1471,6 +1480,11 @@ in
           "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
           "'http://127.0.0.1:4202/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
       )
+
+      # vmauth's own refusal, not a backend 4xx or a connection error.
+      def no_route(cred, extra, url):
+          code, body = http(machine, url, cred, extra)
+          assert code == "400" and "missing route" in body, (url, cred, code, body)
 
       for cred in ["-u admin:admin-password-value", "-H 'Authorization: Bearer read-token-one'"]:
           # --- metrics: real read endpoints still work ---
@@ -1497,16 +1511,17 @@ in
               "| grep -q victoria_stack_readonly_probe_metric"
           )
           # --- metrics: real write/destructive endpoints are rejected ---
-          machine.fail(
-              f"curl -sf {cred} -X POST --data-binary "
+          no_route(
+              cred,
+              "-X POST --data-binary "
               "'{\"metric\":{\"__name__\":\"victoria_stack_should_never_land\"},"
-              "\"values\":[1],\"timestamps\":[0]}' "
-              "'http://127.0.0.1:4204/metrics/api/v1/import'"
+              "\"values\":[1],\"timestamps\":[0]}'",
+              "http://127.0.0.1:4204/metrics/api/v1/import",
           )
-          machine.fail(
-              f"curl -sf {cred} -X POST --data-binary "
-              "'match[]=victoria_stack_readonly_probe_metric' "
-              "'http://127.0.0.1:4204/metrics/api/v1/admin/tsdb/delete_series'"
+          no_route(
+              cred,
+              "-X POST --data-binary 'match[]=victoria_stack_readonly_probe_metric'",
+              "http://127.0.0.1:4204/metrics/api/v1/admin/tsdb/delete_series",
           )
 
           # --- logs: real read endpoint still works ---
@@ -1516,12 +1531,13 @@ in
               "| grep -q victoria_stack_readonly_probe_log"
           )
           # --- logs: real write endpoint is rejected ---
-          machine.fail(
-              f"curl -sf {cred} -X POST -H 'Content-Type: application/stream+json' "
+          no_route(
+              cred,
+              "-X POST -H 'Content-Type: application/stream+json' "
               "--data-binary '{\"log\":{\"level\":\"info\",\"message\":\"x\"},"
-              "\"date\":\"0\",\"stream\":\"x\"}' "
-              "'http://127.0.0.1:4204/logs/insert/jsonline"
-              "?_stream_fields=stream&_time_field=date&_msg_field=log.message'"
+              "\"date\":\"0\",\"stream\":\"x\"}'",
+              "http://127.0.0.1:4204/logs/insert/jsonline"
+              "?_stream_fields=stream&_time_field=date&_msg_field=log.message",
           )
 
           # --- traces: real read endpoint still works ---
@@ -1529,10 +1545,10 @@ in
               f"curl -sf {cred} 'http://127.0.0.1:4204/traces/select/jaeger/api/services'"
           )
           # --- traces: real write endpoint is rejected ---
-          machine.fail(
-              f"curl -sf {cred} -X POST -H 'Content-Type: application/json' "
-              "--data-binary '{{}}' "
-              "'http://127.0.0.1:4204/traces/insert/opentelemetry/v1/traces'"
+          no_route(
+              cred,
+              "-X POST -H 'Content-Type: application/json' --data-binary '{}'",
+              "http://127.0.0.1:4204/traces/insert/opentelemetry/v1/traces",
           )
     '';
   };
@@ -2470,6 +2486,7 @@ in
 
     testScript = ''
       ${otlpTestPython}
+      ${httpTestPython}
       start_all()
       machine.wait_for_unit("vmauth.service")
       machine.wait_for_open_port(4204)
@@ -2492,13 +2509,31 @@ in
           machine, "https://127.0.0.1:8443" + path, "--cacert ${selfSignedCert}/cert.pem"
       )
       assert code == "401" and "missing 'Authorization'" in body, (code, body)
-      machine.fail(post + "--max-time 5 'https://127.0.0.1:8443" + path + "'")  # no CA -> verification fails
+      # With the CA the refusals below are vmauth's own, not a certificate error.
+      cacert = "--cacert ${selfSignedCert}/cert.pem"
+      code, body = otlp_status(
+          machine, "https://127.0.0.1:8443" + path, cacert + " -H 'Authorization: Bearer wrong-token'"  # gitleaks:allow
+      )
+      assert code == "401" and "Unauthorized" in body, (code, body)
+      # A valid write credential on a path the write tier does not serve.
+      code, body = http(
+          machine,
+          "https://127.0.0.1:8443/metrics/api/v1/query?query=up",
+          "-H 'Authorization: Bearer write-token-one'",  # gitleaks:allow
+          cacert,
+      )
+      assert code == "400" and "missing route" in body, (code, body)
+      # Without the CA the handshake itself fails (curl exit 60), before any
+      # credential is looked at.
+      rc, _ = machine.execute(post + "--max-time 5 'https://127.0.0.1:8443" + path + "'")
+      assert rc == 60, f"no-CA https must fail certificate verification (curl 60), got {rc}"
 
       # Plain loopback HTTP door and the unchanged internal listener.
       machine.succeed(post + "'http://127.0.0.1:8080" + path + "'")
       machine.succeed(post + "'http://127.0.0.1:4204" + path + "'")
       # TLS is per listener: the internal one must NOT speak TLS.
-      machine.fail("curl -sf --max-time 5 --cacert ${selfSignedCert}/cert.pem 'https://127.0.0.1:4204/'")
+      rc, _ = machine.execute("curl -s --max-time 5 --cacert ${selfSignedCert}/cert.pem 'https://127.0.0.1:4204/'")
+      assert rc == 35, f"TLS to the plain internal listener must fail the handshake (curl 35), got {rc}"
 
       # Reachability matches the config: 8443 on every interface, 8080 only on loopback.
       listeners = machine.succeed("ss -Hltn")

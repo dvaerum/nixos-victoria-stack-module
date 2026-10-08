@@ -5,7 +5,7 @@ let
   example = import ../examples { };
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) otlpMetricGenerator grafanaReadToken;
+  inherit (testLib) otlpMetricGenerator grafanaReadToken httpTestPython;
   otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
 
   # Same throwaway-fixture pattern as every other test group -- these
@@ -304,6 +304,7 @@ in
     };
 
     testScript = ''
+      ${httpTestPython}
       start_all()
 
       for unit in [
@@ -365,15 +366,16 @@ in
       # The 3 credential tiers over TLS: admin Basic reads, anonymous is
       # refused, a write token cannot read.
       stack.succeed(f"curl -sf {tls} -u admin:full-test-admin-password '{base}/metrics/api/v1/labels'")  # gitleaks:allow
-      anon = stack.succeed(f"curl -s {tls} -o /dev/null -w '%{{http_code}}' '{base}/metrics/api/v1/labels'")
-      assert anon == "401", f"anonymous read over TLS should be 401, got {anon}"
-      wrong_tier = stack.succeed(
-          f"curl -s {tls} -o /dev/null -w '%{{http_code}}' "
-          f"-H 'Authorization: Bearer full-test-write-token' '{base}/metrics/api/v1/labels'"  # gitleaks:allow
+      code, body = http(stack, f"{base}/metrics/api/v1/labels", extra=tls)
+      assert code == "401" and "missing 'Authorization'" in body, (code, body)
+      # The write tier has no read routes: vmauth answers 400 "missing route".
+      code, body = http(
+          stack,
+          f"{base}/metrics/api/v1/labels",
+          "-H 'Authorization: Bearer full-test-write-token'",  # gitleaks:allow
+          tls,
       )
-      # vmauth answers an authenticated user with no matching route (the
-      # write tier has no read routes) with 400, not 401.
-      assert wrong_tier in ("400", "401", "403"), f"write token must not read, got {wrong_tier}"
+      assert code == "400" and "missing route" in body, (code, body)
 
       # All 3 MCP servers reachable over TLS with the read-tier token.
       for svc in ("metrics", "logs", "traces"):

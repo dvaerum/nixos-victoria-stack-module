@@ -706,7 +706,8 @@ in
       machine.wait_for_unit("victoriametrics.service")
       machine.wait_for_open_port(4201)
 
-      machine.fail("curl -sf --max-time 3 'http://127.0.0.1:4204/'")
+      rc, _ = machine.execute("curl -s --max-time 3 'http://127.0.0.1:4204/'")
+      assert rc == 7, f"vmauth must no longer listen on 4204 (curl 7, connection refused), got {rc}"
       machine.succeed(
           "curl -sf -u admin:nginx-admin-password "  # gitleaks:allow
           "'http://127.0.0.1:80/victoria/metrics/api/v1/labels'"
