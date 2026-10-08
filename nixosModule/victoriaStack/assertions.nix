@@ -190,36 +190,43 @@ let
     '';
   }) flagServices;
 
-  syslogAssertions =
-    map
-      (slot: {
-        assertion = !cfg.logs.syslog.${slot}.enable || cfg.logs.syslog.${slot}.ipAddress != null;
-        message = ''
-          services.victoriaStack.logs.syslog.${slot}.enable is true but
-          services.victoriaStack.logs.syslog.${slot}.ipAddress is not set. There is
-          no default address on purpose: syslog has no authentication, so nothing
-          opens until you name the address to bind.
-        '';
-      })
-      [
-        "udp"
-        "tcp"
-      ];
+  syslogSlotNames = [
+    "udp"
+    "tcp"
+    "tls"
+  ];
 
-  syslogRequiresLogs =
-    map
-      (slot: {
-        assertion = !cfg.logs.syslog.${slot}.enable || cfg.logs.enable;
-        message = ''
-          services.victoriaStack.logs.syslog.${slot}.enable requires
-          services.victoriaStack.logs.enable = true -- the listener is part of the
-          VictoriaLogs process, so without it nothing would receive the syslog.
-        '';
-      })
-      [
-        "udp"
-        "tcp"
-      ];
+  syslogAssertions = map (slot: {
+    assertion = !cfg.logs.syslog.${slot}.enable || cfg.logs.syslog.${slot}.ipAddress != null;
+    message = ''
+      services.victoriaStack.logs.syslog.${slot}.enable is true but
+      services.victoriaStack.logs.syslog.${slot}.ipAddress is not set. There is
+      no default address on purpose: syslog has no authentication, so nothing
+      opens until you name the address to bind.
+    '';
+  }) syslogSlotNames;
+
+  syslogTlsFiles = [
+    {
+      assertion =
+        (cfg.logs.syslog.tls.certFile == null) == (cfg.logs.syslog.tls.keyFile == null)
+        && (!cfg.logs.syslog.tls.enable || cfg.logs.syslog.tls.certFile != null);
+      message = ''
+        services.victoriaStack.logs.syslog.tls needs a certificate: set BOTH
+        services.victoriaStack.logs.syslog.tls.certFile and .keyFile, and set them
+        whenever the slot is enabled; one file alone is not a usable pair.
+      '';
+    }
+  ];
+
+  syslogRequiresLogs = map (slot: {
+    assertion = !cfg.logs.syslog.${slot}.enable || cfg.logs.enable;
+    message = ''
+      services.victoriaStack.logs.syslog.${slot}.enable requires
+      services.victoriaStack.logs.enable = true -- the listener is part of the
+      VictoriaLogs process, so without it nothing would receive the syslog.
+    '';
+  }) syslogSlotNames;
 
   syslogWarnings = lib.optionals cfg.logs.enable (
     map (s: ''
@@ -233,7 +240,7 @@ let
     '') (syslogLib.exposedPlain cfg.logs.syslog)
   );
 
-  moduleAssertions = extraFlagsAssertions ++ syslogAssertions ++ syslogRequiresLogs;
+  moduleAssertions = extraFlagsAssertions ++ syslogAssertions ++ syslogTlsFiles ++ syslogRequiresLogs;
 in
 {
   config = {

@@ -36,6 +36,7 @@ let
   # The unit keeps its empty capability set unless a syslog port is below 1024
   # (the same rule as vmauth, docs/decisions/0015).
   needsLowPort = supportsSyslog && syslog.needsLowPort cfg.syslog;
+  tlsFiles = lib.optionalAttrs supportsSyslog (syslog.tlsFiles cfg.syslog);
   # What the module itself dials (readiness probe, snapshot call, effectiveUrl):
   # loopback for a wildcard listenAddress (:port, 0.0.0.0:port, [::]:port).
   bindAddr = listen.connectAddr cfg.listenAddress;
@@ -240,6 +241,10 @@ in
               ];
             }
 
+            (lib.optionalAttrs (tlsFiles != { }) {
+              LoadCredential = lib.mapAttrsToList (n: path: "${n}:${path}") tlsFiles;
+            })
+
             (lib.optionalAttrs (limitNOFILE != null) {
               # Avoids 'too many open files' when merging small parts /
               # handling many spans (same rationale nixpkgs' own modules
@@ -267,6 +272,34 @@ in
           ];
         };
       }
+
+      # The unit reads a copy of each file (LoadCredential=), so a replaced file
+      # must restart it. try-restart: a rotation while the service is stopped must
+      # not start it. --no-block: the path unit only re-arms once this helper
+      # finishes, so waiting for the service to come back would lose a file
+      # replaced in the meantime.
+      (lib.mkIf (tlsFiles != { }) {
+        systemd.services."${unitName}-secret-restart" = {
+          description = "Restart ${unitName} after one of its secret files changed";
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = "${config.systemd.package}/bin/systemctl try-restart --no-block ${unitName}.service";
+            CapabilityBoundingSet = "";
+          };
+        };
+
+        systemd.paths = lib.mapAttrs' (
+          n: path:
+          lib.nameValuePair "${unitName}-secret-watch-${n}" {
+            description = "Watch ${unitName}'s ${n} file for replacement";
+            wantedBy = [ "multi-user.target" ];
+            pathConfig = {
+              PathChanged = path;
+              Unit = "${unitName}-secret-restart.service";
+            };
+          }
+        ) tlsFiles;
+      })
 
       # Periodic snapshot creation: a oneshot that POSTs to the binary's
       # own snapshot API over loopback (the same trust boundary as every

@@ -2,10 +2,10 @@
 
 ## Decision
 
-`services.victoriaStack.logs.syslog` has the fixed slots `udp` and `tcp`
+`services.victoriaStack.logs.syslog` has the fixed slots `udp`, `tcp` and `tls`
 (like `vmauth.https` / `vmauth.http`), each rendering one VictoriaLogs
 `-syslog.listenAddr.*` listener. A slot has `enable`, `ipAddress`, `port` (separate
-options, never one `ip:port` string; default 514) and `extraFields`.
+options, never one `ip:port` string; defaults 514, 514 and 6514) and `extraFields`.
 Anything beyond a slot (a second listener of one transport, a unix socket, tenants,
 stream fields, compression, `-syslog.timezone`) goes through `logs.extraFlags`.
 
@@ -63,5 +63,25 @@ after they arrive.
   arrays are positional, so a stray entry shifts every slot after it. The unix
   transport and the scalar flags (`-syslog.timezone`, `-syslog.tlsMinVersion`) stay
   free; `-syslog.tls` is owned by exact name for that reason.
+
+## TLS
+
+The `tls` slot is TCP with TLS (default 6514) and takes `certFile` and `keyFile`
+as plain-string paths (like `vmauth.https`; [0008](0008-agnostic-secrets-file-options.md)),
+staged by `LoadCredential=` as `%d/syslog-tls-cert` / `%d/syslog-tls-key`, so the
+files never enter the store and the unit's dynamic user needs no access to them.
+There is no ACME-name option. The `-syslog.tls*` arrays are positional with the tcp
+listeners, so a plain `tcp` slot sitting before the `tls` slot gets blank entries.
+
+TLS only encrypts. VictoriaLogs has no client-certificate option for syslog (a
+client with no certificate is accepted, measured), so the `tls` slot does not warn
+about exposure but is just as unauthenticated as the others. The minimum version is
+TLS 1.3; older devices need `-syslog.tlsMinVersion=TLS12` in `logs.extraFlags`
+(a scalar flag, deliberately not owned by the module).
+
+VictoriaLogs rereads the files itself, but the unit only sees a copy, so replacing
+a file must restart it: path units watch both files and trigger a `try-restart
+--no-block` helper, the same as vmauth's. A secrets manager that swaps a symlinked
+directory does not trigger the watch and must restart the unit itself.
 
 See [0025](0025-vmauth-public-write-doors.md) for the other public door.

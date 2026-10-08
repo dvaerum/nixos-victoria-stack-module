@@ -73,11 +73,24 @@ let
     };
   };
 
+  syslogSecretReplacementNote = ''
+    Writing this file, or renaming a new file over it, restarts VictoriaLogs
+    automatically, since the unit reads a copy made at start. A secrets manager
+    that instead swaps a symlinked directory (sops-nix) does not trigger that
+    watch, so it must restart `victorialogs.service` itself: with sops-nix, list
+    it in the secret's `restartUnits`.
+  '';
+
   # One syslog listener (docs/decisions/0031). The slots differ only in
   # transport and default port; the notes below are shared so every slot says the
   # same thing about exposure.
   mkSyslogSlot =
-    { proto, defaultPort }:
+    {
+      proto,
+      defaultPort,
+      # The tls slot is encrypted, so it has nothing to warn about.
+      warnsWhenExposed ? true,
+    }:
     {
       enable = mkEnableOption "the ${proto} syslog listener of VictoriaLogs";
 
@@ -128,6 +141,8 @@ let
         '';
       };
 
+    }
+    // lib.optionalAttrs warnsWhenExposed {
       suppressExposureWarning = mkOption {
         type = types.bool;
         default = false;
@@ -310,6 +325,44 @@ let
           proto = "tcp";
           defaultPort = 514;
         };
+        # TCP with TLS (RFC 5425 syslog over TLS). It shares VictoriaLogs' tcp
+        # arrays with the `tcp` slot, after it.
+        tls =
+          mkSyslogSlot {
+            proto = "TLS";
+            defaultPort = 6514;
+            warnsWhenExposed = false;
+          }
+          // {
+            certFile = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = ''
+                Path (plain string; see `vmauth.writeTokensFile`) to the PEM
+                certificate chain of the `tls` listener. Set together with `keyFile`;
+                required while the slot is enabled. Staged through systemd
+                `LoadCredential=`, so it never enters the Nix store and the unit's
+                dynamic user needs no access to the file.
+
+                TLS only encrypts: VictoriaLogs has no client-certificate option for
+                syslog, so a client with no certificate is accepted, and the
+                minimum version is TLS 1.3 (`-syslog.tlsMinVersion=TLS12` in
+                `extraFlags` allows older devices).
+
+                ${syslogSecretReplacementNote}
+              '';
+            };
+
+            keyFile = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+              description = ''
+                Path (plain string) to the PEM private key matching `certFile`.
+
+                ${syslogSecretReplacementNote}
+              '';
+            };
+          };
       };
     }
     // lib.optionalAttrs supportsDiskRetention {

@@ -6,7 +6,11 @@ let
   module = nixosModule.nixosModules.victoriaStack;
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) evalWith mkAssertionFiresCheck;
+  inherit (testLib)
+    evalWith
+    mkAssertionFiresCheck
+    mkNoWarningsCheck
+    ;
 
   mkTableCheck =
     name: checks:
@@ -96,7 +100,22 @@ let
                 if a.client_cert:
                     ctx.load_cert_chain(a.client_cert, a.client_key)
                 s = ctx.wrap_socket(s, server_hostname=a.host)
+                print(s.version())
             s.sendall(data)
+            # Close the way a well-behaved sender does. Closing a TLS 1.3 socket
+            # with unread session tickets resets the connection, and the reset
+            # discards the message the server had not read yet.
+            if a.proto == "tls":
+                s = s.unwrap()
+            s.shutdown(socket.SHUT_WR)
+            s.settimeout(3)
+            try:
+                while s.recv(4096):
+                    pass
+            except OSError:
+                # The data is already sent; a peer that resets while draining
+                # (it refused the stream) changes nothing for the sender.
+                pass
         s.close()
       '';
 
@@ -133,7 +152,42 @@ let
   tools = [
     syslogSend
     pkgs.iproute2
+    pkgs.openssl
   ];
+
+  # Throwaway server certificates (the SAN must cover the address the client
+  # dials); generated at build time, never committed.
+  mkCert =
+    cn:
+    pkgs.runCommand "syslog-test-cert-${cn}" { nativeBuildInputs = [ pkgs.openssl ]; } ''
+      mkdir -p $out
+      openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
+        -subj "/CN=${cn}" -addext "subjectAltName=IP:127.0.0.1" \
+        -keyout $out/key.pem -out $out/cert.pem
+    '';
+  certOne = mkCert "syslog-test-one";
+  certTwo = mkCert "syslog-test-two";
+
+  # The files sit at a runtime path, root-only like a secrets manager leaves
+  # them, so the unit can only read them through LoadCredential=.
+  tlsFilesFrom = cert: {
+    systemd.tmpfiles.rules = [
+      "d /var/lib/syslog-tls 0700 root root -"
+      "C /var/lib/syslog-tls/cert.pem 0600 root root - ${cert}/cert.pem"
+      "C /var/lib/syslog-tls/key.pem 0600 root root - ${cert}/key.pem"
+    ];
+  };
+  runtimeCert = {
+    certFile = "/var/lib/syslog-tls/cert.pem";
+    keyFile = "/var/lib/syslog-tls/key.pem";
+  };
+  tlsSlot =
+    ip: port:
+    (slot ip port)
+    // {
+      certFile = "/run/fake-cert.pem";
+      keyFile = "/run/fake-key.pem";
+    };
 
   slot = ip: port: {
     enable = true;
@@ -279,6 +333,10 @@ in
           got = caps { udp = slot "::1" 514; };
           want = bind;
         };
+        "tls 514" = {
+          got = caps { tls = tlsSlot "192.0.2.10" 514; };
+          want = bind;
+        };
         "tcp 1024 is not privileged" = {
           got = caps { tcp = slot "192.0.2.10" 1024; };
           want = none;
@@ -421,6 +479,9 @@ in
       udp = {
         udp = slot "192.0.2.10" 5514;
       };
+      tlsOnly = {
+        tls = tlsSlot "192.0.2.10" 6514;
+      };
     in
     mkTableCheck "syslog-extra-flags-ownership" {
       "tcp listenAddr with a tcp slot" = rejected tcp "-syslog.listenAddr.tcp=:6514";
@@ -430,6 +491,9 @@ in
       "tls array with a value" = rejected tcp "-syslog.tls=true";
       "tls cert file with a tcp slot" = rejected tcp "-syslog.tlsCertFile=/run/fake-cert.pem";
       "tls key file, double dash" = rejected tcp "--syslog.tlsKeyFile=/run/fake-key.pem";
+      "tls array with only a tls slot" = rejected tlsOnly "-syslog.tls=true";
+      "tcp listenAddr with only a tls slot" = rejected tlsOnly "-syslog.listenAddr.tcp=:7514";
+      "tlsMinVersion is free with a tls slot" = free tlsOnly "-syslog.tlsMinVersion=TLS12";
       "udp listenAddr with a udp slot" = rejected udp "-syslog.listenAddr.udp=:6514";
       "udp extraFields with a udp slot" = rejected udp "-syslog.extraFields.udp={}";
       "tcp listenAddr is free with only a udp slot" = free udp "-syslog.listenAddr.tcp=:6514";
@@ -494,6 +558,194 @@ in
           (warnings {
             udp = slot "0.0.0.0" 514;
           });
+    };
+
+  # --- tls slot ---
+
+  # The tls arrays are positional with the tcp listeners: a plain tcp slot gets
+  # blanks, the tls slot the credential paths (never the file's own path, which
+  # the unit may not be able to read).
+  tls-flags-use-credentials-and-blank-for-plain-listeners =
+    let
+      two = {
+        tcp = (slot "192.0.2.10" 5514) // {
+          extraFields = { };
+        };
+        tls = tlsSlot "192.0.2.10" 6514;
+      };
+      only = {
+        tls = tlsSlot "192.0.2.10" 6514;
+      };
+      sc = syslog: (logsUnit syslog).serviceConfig;
+    in
+    mkTableCheck "syslog-tls-flags" {
+      "plain tcp then tls, every array positional" =
+        syslogFlags two == [
+          "-syslog.listenAddr.tcp=192.0.2.10:5514"
+          "-syslog.listenAddr.tcp=192.0.2.10:6514"
+          "-syslog.extraFields.tcp="
+          ''-syslog.extraFields.tcp={"source":"syslog"}''
+          "-syslog.tls=false"
+          "-syslog.tls=true"
+          "-syslog.tlsCertFile="
+          "-syslog.tlsCertFile=%d/syslog-tls-cert"
+          "-syslog.tlsKeyFile="
+          "-syslog.tlsKeyFile=%d/syslog-tls-key"
+        ];
+      "tls alone" =
+        lib.filter (lib.hasPrefix "-syslog.tls") (syslogFlags only) == [
+          "-syslog.tls=true"
+          "-syslog.tlsCertFile=%d/syslog-tls-cert"
+          "-syslog.tlsKeyFile=%d/syslog-tls-key"
+        ];
+      "no tls flag without a tls slot" =
+        lib.filter (lib.hasPrefix "-syslog.tls") (syslogFlags {
+          tcp = slot "192.0.2.10" 5514;
+        }) == [ ];
+      "credentials are staged by LoadCredential" =
+        (sc only).LoadCredential == [
+          "syslog-tls-cert:/run/fake-cert.pem"
+          "syslog-tls-key:/run/fake-key.pem"
+        ];
+      "no credential without a tls slot" = !((sc { tcp = slot "192.0.2.10" 5514; }) ? LoadCredential);
+      "the files' own paths are not in ExecStart" = !(lib.hasInfix "/run/fake-" (sc only).ExecStart);
+      "the tls slot listens on 6514 by default" = lib.hasInfix ":6514" (sc only).ExecStart;
+    };
+
+  tls-slot-assertions =
+    let
+      failed =
+        syslog:
+        lib.filter (lib.hasInfix "services.victoriaStack.logs.syslog.tls") (
+          lib.filter (lib.hasInfix "services.victoriaStack") (
+            map (a: a.message) (
+              builtins.filter (a: !a.assertion)
+                (evalWith {
+                  services.victoriaStack.logs = {
+                    enable = true;
+                    inherit syslog;
+                  };
+                }).config.assertions
+            )
+          )
+        );
+      files = {
+        certFile = "/run/fake-cert.pem";
+        keyFile = "/run/fake-key.pem";
+      };
+    in
+    mkTableCheck "syslog-tls-slot-assertions" {
+      "enabled without files fires" = failed { tls = slot "192.0.2.10" 6514; } != [ ];
+      "enabled with only a cert fires" =
+        failed {
+          tls = (slot "192.0.2.10" 6514) // {
+            certFile = "/run/fake-cert.pem";
+          };
+        } != [ ];
+      "enabled with only a key fires" =
+        failed {
+          tls = (slot "192.0.2.10" 6514) // {
+            keyFile = "/run/fake-key.pem";
+          };
+        } != [ ];
+      "files without an enabled slot are fine" = failed { tls = files; } == [ ];
+      "one file without an enabled slot fires" =
+        failed {
+          tls = {
+            certFile = "/run/fake-cert.pem";
+          };
+        } != [ ];
+      "enabled without an address fires" =
+        failed {
+          tls = files // {
+            enable = true;
+          };
+        } != [ ];
+      "enabled with both files is fine" = failed { tls = tlsSlot "192.0.2.10" 6514; } == [ ];
+    };
+
+  # A TLS listener is encrypted, so it does not trigger the exposure warning
+  # (it still has no authentication: that lives in the option text and the ADR).
+  tls-slot-does-not-warn-on-the-wildcard = mkNoWarningsCheck {
+    name = "syslog-tls-slot-does-not-warn-on-the-wildcard";
+    module = {
+      services.victoriaStack.logs = {
+        enable = true;
+        syslog.tls = tlsSlot "0.0.0.0" 6514;
+      };
+    };
+  };
+
+  tls-slot-collides-with-tcp-slot-on-one-port =
+    let
+      fires =
+        syslog:
+        lib.any (lib.hasInfix "same listenAddress") (
+          map (a: a.message) (
+            builtins.filter (a: !a.assertion)
+              (evalWith {
+                services.victoriaStack.logs = {
+                  enable = true;
+                  inherit syslog;
+                };
+              }).config.assertions
+          )
+        );
+    in
+    mkTableCheck "syslog-tls-collides-with-tcp" {
+      "same port" = fires {
+        tcp = slot "0.0.0.0" 6514;
+        tls = tlsSlot "127.0.0.1" 6514;
+      };
+      "default ports differ" =
+        !(fires {
+          tcp = slot "0.0.0.0" 514;
+          tls = tlsSlot "0.0.0.0" 6514;
+        });
+      "udp next to tls on one port" =
+        !(fires {
+          udp = slot "0.0.0.0" 6514;
+          tls = tlsSlot "0.0.0.0" 6514;
+        });
+    };
+
+  # The unit only sees a copy of the files (LoadCredential=), so a replaced
+  # file must restart it; like vmauth's watchers, and only while a tls slot exists.
+  tls-secret-watchers-exist-only-with-a-tls-slot =
+    let
+      eval =
+        syslog:
+        (evalWith {
+          services.victoriaStack.logs = {
+            enable = true;
+            inherit syslog;
+          };
+        }).config;
+      watchers =
+        syslog:
+        lib.filterAttrs (n: _: lib.hasPrefix "victorialogs-secret-watch-" n) (eval syslog).systemd.paths;
+      withTls = watchers { tls = tlsSlot "192.0.2.10" 6514; };
+      restart = (eval { tls = tlsSlot "192.0.2.10" 6514; }).systemd.services.victorialogs-secret-restart;
+    in
+    mkTableCheck "syslog-tls-secret-watchers" {
+      "one watcher per file" =
+        lib.attrNames withTls == [
+          "victorialogs-secret-watch-syslog-tls-cert"
+          "victorialogs-secret-watch-syslog-tls-key"
+        ];
+      "cert watcher watches the cert" =
+        withTls.victorialogs-secret-watch-syslog-tls-cert.pathConfig.PathChanged == "/run/fake-cert.pem";
+      "key watcher watches the key" =
+        withTls.victorialogs-secret-watch-syslog-tls-key.pathConfig.PathChanged == "/run/fake-key.pem";
+      "both trigger the restart helper" = lib.all (
+        w: w.pathConfig.Unit == "victorialogs-secret-restart.service"
+      ) (lib.attrValues withTls);
+      "the helper try-restarts without blocking" =
+        restart.serviceConfig.ExecStart
+        == "${(eval { }).systemd.package}/bin/systemctl try-restart --no-block victorialogs.service";
+      "no watcher without a tls slot" = watchers { tcp = slot "192.0.2.10" 5514; } == { };
+      "no helper without a tls slot" =
+        !((eval { tcp = slot "192.0.2.10" 5514; }).systemd.services ? victorialogs-secret-restart);
     };
 
   # --- real boot ---
@@ -591,6 +843,121 @@ in
       machine.succeed("ss -lntH | grep -F '127.0.0.1:4202'")
       machine.succeed("ss -lunH | grep -F '127.0.0.1:4202'")
       resend_until_found(machine, "${send} --proto udp --port 4202 SAMEPORTMARK", "SAMEPORTMARK")
+    '';
+  };
+
+  # TLS only encrypts: a client with no certificate is accepted, plaintext to
+  # the TLS port is refused, and the plain tcp slot next to it stays plain
+  # (the positional arrays line up). TLS 1.3 is the default minimum; an
+  # `extraFlags` -syslog.tlsMinVersion opens it to 1.2.
+  tls-listener-encrypts-and-has-no-client-auth = pkgs.testers.nixosTest {
+    name = "victoria-stack-syslog-tls";
+
+    containers.main = {
+      imports = [
+        module
+        (tlsFilesFrom certOne)
+      ];
+      environment.systemPackages = tools;
+      services.victoriaStack.logs = {
+        enable = true;
+        syslog = {
+          tcp = slot "127.0.0.1" 5514;
+          tls = (slot "127.0.0.1" 6514) // runtimeCert;
+        };
+      };
+    };
+    containers.old = {
+      imports = [
+        module
+        (tlsFilesFrom certOne)
+      ];
+      environment.systemPackages = tools;
+      services.victoriaStack.logs = {
+        enable = true;
+        syslog.tls = (slot "127.0.0.1" 6514) // runtimeCert;
+        extraFlags = [ "-syslog.tlsMinVersion=TLS12" ];
+      };
+    };
+
+    testScript = ''
+      ${queryPython}
+      start_all()
+      main.wait_for_unit("victorialogs.service")
+      old.wait_for_unit("victorialogs.service")
+      main.wait_for_open_port(5514)
+      main.wait_for_open_port(6514)
+
+      # The plain slot is still plain.
+      main.succeed("${send} --proto tcp --port 5514 PLAINSLOTMARK")
+      assert rows(main, "PLAINSLOTMARK")[0]["source"] == "syslog"
+
+      # TLS with no client certificate is accepted and negotiates TLS 1.3.
+      out = main.succeed("${send} --proto tls --port 6514 --cacert ${certOne}/cert.pem --format 5424 TLSOKMARK")
+      assert "TLSv1.3" in out, out
+      r = rows(main, "TLSOKMARK")[0]
+      assert r["format"] == "rfc5424" and r["source"] == "syslog", r
+
+      # Plaintext to the TLS port is not ingested; TLS to the plain port fails.
+      main.succeed("${send} --proto tcp --port 6514 PLAINTOTLSMARK")
+      main.wait_until_succeeds("journalctl -u victorialogs.service --no-pager | grep -F 'does not look like a TLS handshake'")
+      main.fail("${send} --proto tls --port 5514 --cacert ${certOne}/cert.pem TLSTOPLAINMARK")
+      # A later message proves the earlier ones had time to be stored.
+      main.succeed("${send} --proto tls --port 6514 --cacert ${certOne}/cert.pem TLSAFTERMARK")
+      rows(main, "TLSAFTERMARK")
+      for marker in ("PLAINTOTLSMARK", "TLSTOPLAINMARK"):
+          assert main.succeed(query_cmd("_msg:" + marker)).strip() == "", marker
+
+      # TLS 1.2 is refused by default, accepted with -syslog.tlsMinVersion=TLS12.
+      main.fail("${send} --proto tls --tls-max 1.2 --port 6514 --cacert ${certOne}/cert.pem TLS12REFUSEDMARK")
+      old.wait_for_open_port(6514)
+      out = old.succeed("${send} --proto tls --tls-max 1.2 --port 6514 --cacert ${certOne}/cert.pem TLS12MARK")
+      assert "TLSv1.2" in out, out
+      rows(old, "TLS12MARK")
+    '';
+  };
+
+  # The unit reads a copy of the files, so replacing them must restart it:
+  # the served certificate changes without anyone touching the unit.
+  tls-cert-replacement-restarts-victorialogs = pkgs.testers.nixosTest {
+    name = "victoria-stack-syslog-tls-rotation";
+
+    containers.machine = {
+      imports = [
+        module
+        (tlsFilesFrom certOne)
+      ];
+      environment.systemPackages = tools;
+      services.victoriaStack.logs = {
+        enable = true;
+        syslog.tls = (slot "127.0.0.1" 6514) // runtimeCert;
+      };
+    };
+
+    testScript = ''
+      ${queryPython}
+      start_all()
+      machine.wait_for_unit("victorialogs.service")
+      machine.wait_for_open_port(6514)
+      machine.wait_for_unit("victorialogs-secret-watch-syslog-tls-cert.path")
+      machine.wait_for_unit("victorialogs-secret-watch-syslog-tls-key.path")
+
+      def subject():
+          return machine.succeed("echo | openssl s_client -connect 127.0.0.1:6514 2>/dev/null | openssl x509 -noout -subject")
+
+      assert "syslog-test-one" in subject(), subject()
+      was = machine.succeed("systemctl show -p InvocationID --value victorialogs.service").strip()
+
+      # The helper has to be idle and the path units armed, or the change is not noticed.
+      machine.wait_until_succeeds("systemctl show -p SubState --value victorialogs-secret-watch-syslog-tls-cert.path | grep -qx waiting")
+      machine.succeed("cp ${certTwo}/key.pem /var/lib/syslog-tls/key.pem && cp ${certTwo}/cert.pem /var/lib/syslog-tls/cert.pem")
+
+      machine.wait_until_succeeds("echo | openssl s_client -connect 127.0.0.1:6514 2>/dev/null | openssl x509 -noout -subject | grep -F syslog-test-two", timeout=180)
+      now = machine.succeed("systemctl show -p InvocationID --value victorialogs.service").strip()
+      assert now != was, "VictoriaLogs was not restarted"
+      machine.wait_for_unit("victorialogs.service")
+      machine.succeed("${send} --proto tls --port 6514 --cacert ${certTwo}/cert.pem ROTATEDMARK")
+      rows(machine, "ROTATEDMARK")
     '';
   };
 

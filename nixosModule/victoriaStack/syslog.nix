@@ -32,6 +32,12 @@ rec {
       transport = "tcp";
       slot = syslog.tcp;
     }
+    # After the tcp slot: the order of the tcp arrays.
+    {
+      name = "tls";
+      transport = "tcp";
+      slot = syslog.tls;
+    }
   ];
 
   # A slot with no address is reported by an assertion, not rendered.
@@ -67,9 +73,20 @@ rec {
   # A listener reachable from the network that does not encrypt.
   exposedPlain =
     syslog:
-    lib.filter (s: !listen.isLoopbackHost s.slot.ipAddress && !s.slot.suppressExposureWarning) (
-      active syslog
-    );
+    lib.filter (
+      s: s.name != "tls" && !listen.isLoopbackHost s.slot.ipAddress && !s.slot.suppressExposureWarning
+    ) (active syslog);
+
+  tlsActive = syslog: lib.any (s: s.name == "tls") (active syslog);
+
+  # The tls slot's files, by credential name. LoadCredential= hands the unit a
+  # copy, which is why they are also what the restart watchers observe.
+  tlsFiles =
+    syslog:
+    lib.optionalAttrs (tlsActive syslog && syslog.tls.certFile != null && syslog.tls.keyFile != null) {
+      syslog-tls-cert = syslog.tls.certFile;
+      syslog-tls-key = syslog.tls.keyFile;
+    };
 
   # Flags are returned already escaped for systemd.
   mkFlags =
@@ -77,12 +94,23 @@ rec {
     lib.concatMap (
       transport:
       let
-        slots = map (s: s.slot) (onTransport syslog transport);
+        entries = onTransport syslog transport;
+        slots = map (s: s.slot) entries;
+        # The credential flags keep their raw %d: it is systemd's own
+        # credentials-directory specifier, not user text.
+        tlsFlags = lib.optionals (transport == "tcp" && tlsActive syslog) (
+          map (s: "-syslog.tls=${lib.boolToString (s.name == "tls")}") entries
+          ++ map (
+            s: "-syslog.tlsCertFile=${lib.optionalString (s.name == "tls") "%d/syslog-tls-cert"}"
+          ) entries
+          ++ map (s: "-syslog.tlsKeyFile=${lib.optionalString (s.name == "tls") "%d/syslog-tls-key"}") entries
+        );
         fields = map (s: if s.extraFields == { } then "" else builtins.toJSON s.extraFields) slots;
       in
       map (s: "-syslog.listenAddr.${transport}=${listen.hostPort s.ipAddress s.port}") slots
       ++ lib.optionals (lib.any (f: f != "") fields) (
         map (f: "-syslog.extraFields.${transport}=${esc f}") fields
       )
+      ++ tlsFlags
     ) transports;
 }
