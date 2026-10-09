@@ -254,6 +254,19 @@ let
     ];
   };
 
+  # Seconds of the wait4x probe and of TimeoutStartSec for one eval'd unit; each
+  # is null when absent or not in whole seconds. Callers pin both the values and
+  # the gap between them.
+  probeAndStartSeconds =
+    unit:
+    let
+      seconds = m: if m == null then null else lib.toIntBase10 (builtins.head m);
+    in
+    {
+      probe = seconds (builtins.match ".*--timeout ([0-9]+)s.*" unit.postStart);
+      start = seconds (builtins.match "([0-9]+)s" (unit.serviceConfig.TimeoutStartSec or ""));
+    };
+
   # Names of the profile's keys that a serviceConfig lacks or sets differently.
   hardeningDiff = sc: lib.attrNames (lib.filterAttrs (k: v: (sc.${k} or null) != v) hardeningProfile);
 
@@ -344,6 +357,7 @@ in
     mkNoWarningsCheck
     hardeningProfile
     hardeningDiff
+    probeAndStartSeconds
     otlpMetricGenerator
     otlpTestPython
     httpTestPython

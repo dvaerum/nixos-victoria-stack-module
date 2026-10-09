@@ -11,6 +11,7 @@ let
     mkWarningFiresCheck
     mkNoWarningsCheck
     evalWith
+    probeAndStartSeconds
     otlpMetricGenerator
     otlpTestPython
     httpTestPython
@@ -174,6 +175,29 @@ in
           "echo OK > $out"
         else
           throw "vmauth wildcard readiness substitution broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # The readiness probe (wait4x, 90s) used to wait exactly as long as systemd's
+  # default start timeout, so the two expired together; TimeoutStartSec sits a
+  # minute above it, as for the storage services.
+  vmauth-start-timeout-leaves-a-minute-above-the-readiness-probe =
+    pkgs.runCommand "vmauth-start-timeout-margin" { }
+      (
+        let
+          t = probeAndStartSeconds (
+            (evalWith { services.victoriaStack.metrics.enable = true; }).config.systemd.services.vmauth
+          );
+          checks = {
+            "readiness waits up to 90s" = t.probe == 90;
+            "TimeoutStartSec is set, in whole seconds" = t.start != null;
+            "TimeoutStartSec is the probe plus 60s" = t.start == t.probe + 60;
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "vmauth start timeout wrong for: ${builtins.toJSON (builtins.attrNames failed)} (${builtins.toJSON t})"
       );
 
   write-tier-tokens-use-auto-derived-ingest-map-regardless-of-override =

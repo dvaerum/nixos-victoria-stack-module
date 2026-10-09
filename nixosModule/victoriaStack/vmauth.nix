@@ -17,6 +17,10 @@ let
   inherit (import ./exec-escape.nix { inherit lib; }) escape;
   listen = import ./listen.nix { inherit lib; };
 
+  # One value for the readiness probe and, a minute above it, TimeoutStartSec.
+  readinessTimeout = "90s";
+  startTimeout = (import ./startup-timeout.nix { inherit lib; }).unitTimeout readinessTimeout;
+
   # `ip:port`, bracketing a bare IPv6 literal.
   inherit (listen) hostPort;
 
@@ -543,7 +547,7 @@ in
       # on the data listener. Lets units ordered after vmauth (nginx) rely on it
       # listening, not just having forked.
       path = [ pkgs.wait4x ];
-      postStart = "wait4x tcp ${listen.connectAddr cfg.listenAddress} --timeout 90s";
+      postStart = "wait4x tcp ${listen.connectAddr cfg.listenAddress} --timeout ${readinessTimeout}";
 
       serviceConfig = {
         LoadCredential =
@@ -630,6 +634,7 @@ in
         DynamicUser = true;
         Restart = "on-failure";
         RestartSec = 5;
+        TimeoutStartSec = startTimeout;
 
         # Same hardening profile as the storage services (docs/decisions/0015),
         # minus LimitNOFILE, which has no confirmed basis for vmauth.

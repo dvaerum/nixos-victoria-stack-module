@@ -10,6 +10,10 @@ let
   listen = import ./listen.nix { inherit lib; };
   inherit (import ./exec-escape.nix { inherit lib; }) escapeEnvironment;
 
+  # One value for the readiness probe and, a minute above it, TimeoutStartSec.
+  readinessTimeout = "90s";
+  startTimeout = (import ./startup-timeout.nix { inherit lib; }).unitTimeout readinessTimeout;
+
   # Each MCP server talks directly to its own backend over loopback, not
   # through vmauth -- by the time a request reaches the MCP server it's
   # already been authenticated (if at all) by vmauth's own /mcp/* routing,
@@ -76,13 +80,14 @@ let
             let
               bindAddr = listen.connectAddr serviceCfg.mcp.listenAddress;
             in
-            "wait4x http http://${bindAddr}/health/readiness --timeout 90s";
+            "wait4x http http://${bindAddr}/health/readiness --timeout ${readinessTimeout}";
 
           serviceConfig = {
             ExecStart = "${serviceCfg.mcp.package}/bin/${binaryName}";
             DynamicUser = true;
             Restart = "on-failure";
             RestartSec = 5;
+            TimeoutStartSec = startTimeout;
 
             # Hardening -- same general-purpose systemd profile applied
             # across this module (docs/decisions/0015). Readiness is

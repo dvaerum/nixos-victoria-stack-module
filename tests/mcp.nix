@@ -5,7 +5,7 @@ let
   module = nixosModule.nixosModules.victoriaStack;
 
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
-  inherit (testLib) evalWith;
+  inherit (testLib) evalWith probeAndStartSeconds;
 
   # Same shape as storage.nix's mkHardeningCheck, minus LimitNOFILE --
   # no nixpkgs module to confirm a LimitNOFILE value against here. The
@@ -512,6 +512,48 @@ in
           "echo OK > $out"
         else
           throw "mcp wildcard readiness substitution broken: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # Same margin as vmauth and the storage services: the 90s readiness probe must
+  # not expire together with systemd's start timeout.
+  mcp-start-timeout-leaves-a-minute-above-the-readiness-probe =
+    pkgs.runCommand "mcp-start-timeout-margin" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics = {
+                enable = true;
+                mcp.enable = true;
+              };
+              logs = {
+                enable = true;
+                mcp.enable = true;
+              };
+              traces = {
+                enable = true;
+                mcp.enable = true;
+              };
+            };
+          };
+          perUnit =
+            unit:
+            let
+              t = probeAndStartSeconds evaluated.config.systemd.services.${unit};
+            in
+            {
+              "${unit}: readiness waits up to 90s" = t.probe == 90;
+              "${unit}: TimeoutStartSec is set, in whole seconds" = t.start != null;
+              "${unit}: TimeoutStartSec is the probe plus 60s" = t.start == t.probe + 60;
+            };
+          checks =
+            perUnit "mcp-victoriametrics" // perUnit "mcp-victorialogs" // perUnit "mcp-victoriatraces";
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "mcp start timeouts wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
   # vmauth off + MCP's listenAddress left at its loopback default: the
