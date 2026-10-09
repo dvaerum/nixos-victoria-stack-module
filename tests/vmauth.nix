@@ -553,8 +553,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(4201)
 
@@ -605,9 +606,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${otlpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
 
       code, body = otlp_status(machine, "http://127.0.0.1:4204/opentelemetry/v1/metrics")
@@ -633,9 +635,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${otlpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(4201)
 
@@ -673,9 +676,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${httpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
 
       # A write-tier token must NOT grant read access -- the whole point
@@ -708,9 +712,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${httpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
 
       # No credential at all: vmauth's own 401, before any backend is asked.
@@ -763,8 +768,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_unit("vmauth-secret-watch-read-tokens.path")
 
@@ -812,8 +818,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_unit("vmauth-secret-watch-read-tokens.path")
 
@@ -847,7 +854,7 @@ in
           machine.wait_until_succeeds(
               f"test \"$(systemctl show -p InvocationID --value vmauth.service)\" != {was}", timeout=180
           )
-          machine.wait_for_unit("vmauth.service")
+          wait_active(machine, "vmauth.service")
           machine.wait_until_succeeds(
               "curl -s -o /dev/null -w '%{http_code}' "
               f"-H 'Authorization: Bearer {token}' "
@@ -957,8 +964,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       for name in ("ca", "cert", "key"):
           machine.wait_for_unit(f"vmauth-secret-watch-backend-tls-{name}.path")
@@ -973,7 +981,7 @@ in
               f"test \"$(systemctl show -p InvocationID --value vmauth.service)\" != {before}",
               timeout=60,
           )
-          machine.wait_for_unit("vmauth.service")
+          wait_active(machine, "vmauth.service")
           machine.wait_for_open_port(4204)
 
       # In-place write to the CA bundle.
@@ -1013,9 +1021,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${otlpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
 
       # A valid credential of the wrong tier has no write route at all: vmauth
@@ -1062,10 +1071,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${otlpTestPython}
       ${httpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(4201)
 
@@ -1152,9 +1162,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${httpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(4201)
 
@@ -1250,9 +1261,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${otlpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
 
       code, body = otlp_status(machine, "http://127.0.0.1:4204/opentelemetry/v1/metrics")
@@ -1294,11 +1306,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
-      machine.wait_for_unit("victoriametrics.service")
-      machine.wait_for_unit("victorialogs.service")
-      machine.wait_for_unit("victoriatraces.service")
+      wait_active(machine, "vmauth.service")
+      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "victorialogs.service")
+      wait_active(machine, "victoriatraces.service")
       machine.wait_for_open_port(4204)
 
       # Metrics: write via the auto-open ingest door, read via the
@@ -1455,12 +1468,13 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${httpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
-      machine.wait_for_unit("victoriametrics.service")
-      machine.wait_for_unit("victorialogs.service")
-      machine.wait_for_unit("victoriatraces.service")
+      wait_active(machine, "vmauth.service")
+      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "victorialogs.service")
+      wait_active(machine, "victoriatraces.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(4201)
       machine.wait_for_open_port(4202)
@@ -1774,8 +1788,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(4201)
 
@@ -1851,8 +1866,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4208)
       flags = machine.succeed("curl -sf http://127.0.0.1:4208/flags")
       # /flags prints values quoted: -http.maxGracefulShutdownDuration="7s"
@@ -1993,8 +2009,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(4201)
 
@@ -2049,12 +2066,13 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       import json
 
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       for unit in ["mcp-victoriametrics", "mcp-victorialogs", "mcp-victoriatraces"]:
-          machine.wait_for_unit(f"{unit}.service")
+          wait_active(machine, f"{unit}.service")
       machine.wait_for_open_port(4204)
 
       scoped = "-H 'Authorization: Bearer scoped-read-traces-only'"  # gitleaks:allow
@@ -2120,8 +2138,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(4201)
 
@@ -2214,9 +2233,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${otlpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
 
       journal = machine.succeed("journalctl --no-pager")
@@ -2485,10 +2505,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${otlpTestPython}
       ${httpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(8443)
       machine.wait_for_open_port(8080)
@@ -2562,9 +2583,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${otlpTestPython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(8080)
       listeners = machine.succeed("ss -Hltn")
       assert "0.0.0.0:8080" in listeners or "*:8080" in listeners, listeners
@@ -2712,6 +2734,7 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${otlpTestPython}
       start_all()
 
@@ -2723,7 +2746,7 @@ in
               for k, v in (l.split(":", 1) for l in status.splitlines() if l.startswith("Cap"))
           }
 
-      low.wait_for_unit("vmauth.service")
+      wait_active(low, "vmauth.service")
       low.wait_for_open_port(80)
       low.wait_for_open_port(443)
       code, body = otlp_status(low, "http://127.0.0.1:80/opentelemetry/v1/metrics")
@@ -2736,7 +2759,7 @@ in
       for k in ("CapBnd", "CapEff", "CapAmb"):
           assert c[k] == "0000000000000400", (k, c)
 
-      high.wait_for_unit("vmauth.service")
+      wait_active(high, "vmauth.service")
       c = caps(high)
       for k in ("CapBnd", "CapEff", "CapAmb"):
           assert c[k] == "0000000000000000", (k, c)
@@ -2761,10 +2784,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       import json
 
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       users = json.loads(machine.succeed("cat /run/vmauth/config.json"))["users"]
       assert users and all("access_log" not in u for u in users), users
@@ -2796,10 +2820,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       import json
 
       start_all()
-      stack.wait_for_unit("vmauth.service")
+      wait_active(stack, "vmauth.service")
       stack.wait_for_open_port(8080)
       stack.wait_for_open_port(4201)
       for m in (stack, client):
@@ -2844,11 +2869,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${otlpTestPython}
       import json
 
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(8080)
       machine.wait_for_open_port(4201)
@@ -3073,11 +3099,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       for port in (4204, 8443, 8080, 4208):
           machine.wait_for_open_port(port)
-      machine.wait_for_unit("nginx.service")
+      wait_active(machine, "nginx.service")
       machine.wait_for_open_port(80)
 
       pages = ["/health", "/metrics", "/flags", "/debug/pprof/", "/-/reload"]
@@ -3237,8 +3264,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.succeed(
           "journalctl -u vmauth.service --no-pager | grep -qF 'adminPasswordFile is empty or only whitespace'"
@@ -3340,10 +3368,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       import json
 
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
 
       users = {u["bearer_token"]: u["url_map"] for u in json.loads(machine.succeed("cat /run/vmauth/config.json"))["users"]}
@@ -3408,10 +3437,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       import json
 
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       users = json.loads(machine.succeed("cat /run/vmauth/config.json"))["users"]
       assert len(users) == 1 and all("src_paths" in e for e in users[0]["url_map"]), users
     '';
@@ -3518,10 +3548,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       import json
 
       start_all()
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_unit("echo-headers.service")
       machine.wait_for_open_port(4299)
       machine.wait_for_open_port(4204)

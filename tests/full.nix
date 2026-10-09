@@ -62,20 +62,21 @@ in
       };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
 
       # Every real unit this configuration stands up.
-      machine.wait_for_unit("victoriametrics.service")
-      machine.wait_for_unit("victorialogs.service")
-      machine.wait_for_unit("victoriatraces.service")
-      machine.wait_for_unit("vmauth.service")
-      machine.wait_for_unit("grafana.service")
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("mcp-victoriametrics.service")
-      machine.wait_for_unit("mcp-victorialogs.service")
-      machine.wait_for_unit("mcp-victoriatraces.service")
-      machine.wait_for_unit("alloy.service")
-      machine.wait_for_unit("systemd-journal-upload.service")
+      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "victorialogs.service")
+      wait_active(machine, "victoriatraces.service")
+      wait_active(machine, "vmauth.service")
+      wait_active(machine, "grafana.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "mcp-victoriametrics.service")
+      wait_active(machine, "mcp-victorialogs.service")
+      wait_active(machine, "mcp-victoriatraces.service")
+      wait_active(machine, "alloy.service")
+      wait_active(machine, "systemd-journal-upload.service")
 
       machine.wait_for_open_port(80)
       machine.wait_for_open_port(3000)
@@ -304,6 +305,7 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${httpTestPython}
       start_all()
 
@@ -312,10 +314,10 @@ in
           "nginx", "mcp-victoriametrics", "mcp-victorialogs", "mcp-victoriatraces",
           "alloy", "systemd-journal-upload",
       ]:
-          stack.wait_for_unit(f"{unit}.service")
+          wait_active(stack, f"{unit}.service")
       stack.wait_for_open_port(443)
-      collector.wait_for_unit("alloy.service")
-      collector.wait_for_unit("systemd-journal-upload.service")
+      wait_active(collector, "alloy.service")
+      wait_active(collector, "systemd-journal-upload.service")
       collector.wait_for_open_port(4318)
       for m in (stack, collector):
           m.systemctl("start network-online.target")

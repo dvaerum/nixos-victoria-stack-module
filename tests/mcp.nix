@@ -287,11 +287,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("mcp-victoriametrics.service")
-      machine.wait_for_unit("mcp-victorialogs.service")
-      machine.wait_for_unit("mcp-victoriatraces.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "mcp-victoriametrics.service")
+      wait_active(machine, "mcp-victorialogs.service")
+      wait_active(machine, "mcp-victoriatraces.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
 
       # /mcp/* routes sit behind the read tier (vmauth.nix's readUrlMap),
@@ -461,8 +462,9 @@ in
       };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("mcp-victoriametrics.service")
+      wait_active(machine, "mcp-victoriametrics.service")
       # vmauth must not even exist/start -- confirmed separately in the
       # vmauth test group's own no-op check; here the point is that mcp
       # itself works fine standalone.
@@ -524,8 +526,9 @@ in
       };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("mcp-victoriametrics.service")
+      wait_active(machine, "mcp-victoriametrics.service")
       machine.wait_for_open_port(4205)
 
       restarts = machine.succeed(

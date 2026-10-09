@@ -530,8 +530,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       # Prometheus exposition-format ingest -- the simplest real write path
@@ -571,8 +572,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       # Confirm it's genuinely running as the static user, not DynamicUser,
@@ -628,8 +630,9 @@ in
       };
 
       testScript = ''
+        ${testLib.waitActivePython}
         start_all()
-        machine.wait_for_unit("victoriametrics.service")
+        wait_active(machine, "victoriametrics.service")
         exec_start = machine.succeed(
             "systemctl show victoriametrics.service --property=ExecStart --value"
         )
@@ -700,8 +703,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("victorialogs.service")
+      wait_active(machine, "victorialogs.service")
       machine.wait_for_open_port(4202)
 
       # JSON stream (ndjson) ingest -- VictoriaLogs' own HTTP API
@@ -734,8 +738,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("victorialogs.service")
+      wait_active(machine, "victorialogs.service")
       machine.wait_for_open_port(4202)
 
       user = machine.succeed(
@@ -780,8 +785,9 @@ in
       };
 
       testScript = ''
+        ${testLib.waitActivePython}
         start_all()
-        machine.wait_for_unit("victorialogs.service")
+        wait_active(machine, "victorialogs.service")
         exec_start = machine.succeed(
             "systemctl show victorialogs.service --property=ExecStart --value"
         )
@@ -881,8 +887,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("victoriatraces.service")
+      wait_active(machine, "victoriatraces.service")
       machine.wait_for_open_port(4203)
 
       # Minimal valid OTLP/HTTP JSON ExportTraceServiceRequest -- confirmed
@@ -927,8 +934,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("victoriatraces.service")
+      wait_active(machine, "victoriatraces.service")
       machine.wait_for_open_port(4203)
 
       user = machine.succeed(
@@ -983,8 +991,9 @@ in
       };
 
       testScript = ''
+        ${testLib.waitActivePython}
         start_all()
-        machine.wait_for_unit("victoriatraces.service")
+        wait_active(machine, "victoriatraces.service")
         exec_start = machine.succeed(
             "systemctl show victoriatraces.service --property=ExecStart --value"
         )
@@ -1238,8 +1247,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
       import json
 
@@ -1281,8 +1291,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("victorialogs.service")
+      wait_active(machine, "victorialogs.service")
       machine.wait_for_open_port(4202)
       # A partition only exists once there is data in it.
       machine.succeed(
@@ -1315,8 +1326,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("victoriatraces.service")
+      wait_active(machine, "victoriatraces.service")
       machine.wait_for_open_port(4203)
       machine.succeed(
           "now=$(date +%s%N); "
@@ -1487,9 +1499,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
       for unit in ["victoriametrics", "victorialogs", "victoriatraces", "vmauth"]:
-          machine.wait_for_unit(f"{unit}.service")
+          wait_active(machine, f"{unit}.service")
       machine.wait_for_open_port(4201)
 
       for job in ["victoriametrics", "victorialogs", "victoriatraces", "vmauth"]:
@@ -1716,14 +1729,15 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
       services = [
           "victoriametrics", "victorialogs", "victoriatraces", "vmauth",
           "mcp-victoriametrics", "mcp-victorialogs", "mcp-victoriatraces",
       ]
       for unit in services:
-          dyn.wait_for_unit(f"{unit}.service")
-      static.wait_for_unit("victoriametrics.service")
+          wait_active(dyn, f"{unit}.service")
+      wait_active(static, "victoriametrics.service")
 
       problems = []
 
@@ -1816,9 +1830,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("victoriametrics.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmauth.service")
       for unit in ["victoriametrics", "vmauth"]:
           pid = machine.succeed(f"systemctl show -p MainPID --value {unit}.service").strip()
           cmdline = machine.succeed(f"tr '\\0' '\\n' < /proc/{pid}/cmdline")

@@ -162,10 +162,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("vmauth.service")
-      stack.wait_for_unit("victoriametrics.service")
-      collector.wait_for_unit("alloy.service")
+      wait_active(stack, "vmauth.service")
+      wait_active(stack, "victoriametrics.service")
+      wait_active(collector, "alloy.service")
 
       stack.systemctl("start network-online.target")
       collector.systemctl("start network-online.target")
@@ -224,9 +225,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("victorialogs.service")
-      collector.wait_for_unit("systemd-journal-upload.service")
+      wait_active(stack, "victorialogs.service")
+      wait_active(collector, "systemd-journal-upload.service")
 
       stack.systemctl("start network-online.target")
       collector.systemctl("start network-online.target")
@@ -282,9 +284,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("victoriatraces.service")
-      collector.wait_for_unit("alloy.service")
+      wait_active(stack, "victoriatraces.service")
+      wait_active(collector, "alloy.service")
       collector.wait_for_open_port(4318)
 
       stack.systemctl("start network-online.target")
@@ -348,11 +351,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("vmauth.service")
-      stack.wait_for_unit("victoriametrics.service")
-      stack.wait_for_unit("victoriatraces.service")
-      collector.wait_for_unit("alloy.service")
+      wait_active(stack, "vmauth.service")
+      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "victoriatraces.service")
+      wait_active(collector, "alloy.service")
       collector.wait_for_open_port(4318)
       for m in (stack, collector):
           m.systemctl("start network-online.target")
@@ -454,8 +458,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      collector.wait_for_unit("systemd-journal-upload.service")
+      wait_active(collector, "systemd-journal-upload.service")
       # Alloy itself must not even be enabled when only logs is on --
       # confirmed via needsAlloyOtlp = metrics.enable || traces.enable in
       # config.nix.
@@ -481,8 +486,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      collector.wait_for_unit("alloy.service")
+      wait_active(collector, "alloy.service")
       config_text = collector.succeed("cat /etc/alloy/config.alloy")
       assert "otlp" in config_text
       assert "traces" in config_text
@@ -922,9 +928,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
       collector.wait_for_unit("fake-gateway.service")
-      collector.wait_for_unit("alloy.service")
+      wait_active(collector, "alloy.service")
       collector.wait_until_succeeds("curl -sf http://127.0.0.1:12345/-/ready")
       # The gateway still receives the credential (the fix must not drop auth).
       collector.wait_until_succeeds(
@@ -963,9 +970,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
       collector.wait_for_unit("fake-gateway.service")
-      collector.wait_for_unit("alloy.service")
+      wait_active(collector, "alloy.service")
       collector.wait_until_succeeds(
           "grep -qx 'Bearer rotation-old-token' /tmp/auth.log", timeout=120  # gitleaks:allow
       )
@@ -1004,8 +1012,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      collector.wait_for_unit("alloy.service")
+      wait_active(collector, "alloy.service")
       config_text = collector.succeed("cat /etc/alloy/config.alloy")
       assert "123456789" in config_text
       assert "/var/lib/alloy/custom-queue" in config_text
@@ -1033,8 +1042,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      collector.wait_for_unit("alloy.service")
+      wait_active(collector, "alloy.service")
       config_text = collector.succeed("cat /etc/alloy/config.alloy")
       assert "999999999" in config_text
       assert "/var/lib/alloy/queue" in config_text, (
@@ -1059,8 +1069,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      collector.wait_for_unit("alloy.service")
+      wait_active(collector, "alloy.service")
       config_text = collector.succeed("cat /etc/alloy/config.alloy")
       assert "/var/lib/alloy/directory-only-queue" in config_text
       assert "1073741824" in config_text, (
@@ -1084,8 +1095,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      collector.wait_for_unit("alloy.service")
+      wait_active(collector, "alloy.service")
       config_text = collector.succeed("cat /etc/alloy/config.alloy")
       # Both exporters render their own sending_queue block from the same
       # cfg.queue.maxSizeBytes -- with only traces enabled, this confirms
@@ -1186,8 +1198,9 @@ in
       };
 
     testScript = ''
+      ${testLib.waitActivePython}
       machine.start()
-      machine.wait_for_unit("alloy.service")
+      wait_active(machine, "alloy.service")
       # "active" only means systemd forked the process: a SIGHUP (the
       # reload) before Alloy has installed its handler kills it outright,
       # which is what made this test flake under load. Wait until Alloy
@@ -1249,11 +1262,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("nginx.service")
-      stack.wait_for_unit("vmauth.service")
-      stack.wait_for_unit("victoriametrics.service")
-      collector.wait_for_unit("alloy.service")
+      wait_active(stack, "nginx.service")
+      wait_active(stack, "vmauth.service")
+      wait_active(stack, "victoriametrics.service")
+      wait_active(collector, "alloy.service")
       stack.systemctl("start network-online.target")
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
@@ -1297,10 +1311,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("vmauth.service")
-      stack.wait_for_unit("victoriametrics.service")
-      collector.wait_for_unit("alloy.service")
+      wait_active(stack, "vmauth.service")
+      wait_active(stack, "victoriametrics.service")
+      wait_active(collector, "alloy.service")
       stack.systemctl("start network-online.target")
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
@@ -1357,13 +1372,14 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("vmauth.service")
-      stack.wait_for_unit("victoriametrics.service")
-      stack.wait_for_unit("victorialogs.service")
-      stack.wait_for_unit("victoriatraces.service")
-      collector.wait_for_unit("alloy.service")
-      collector.wait_for_unit("systemd-journal-upload.service")
+      wait_active(stack, "vmauth.service")
+      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "victorialogs.service")
+      wait_active(stack, "victoriatraces.service")
+      wait_active(collector, "alloy.service")
+      wait_active(collector, "systemd-journal-upload.service")
       collector.succeed("systemctl start --no-block test-activating.service")
       collector.wait_for_open_port(4318)
       stack.systemctl("start network-online.target")
@@ -1524,11 +1540,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("vmauth.service")
-      stack.wait_for_unit("victoriametrics.service")
+      wait_active(stack, "vmauth.service")
+      wait_active(stack, "victoriametrics.service")
       for c in (collector_a, collector_b):
-          c.wait_for_unit("alloy.service")
+          wait_active(c, "alloy.service")
       for m in (stack, collector_a, collector_b):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")
@@ -1733,10 +1750,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("vmauth.service")
-      stack.wait_for_unit("victoriametrics.service")
-      collector.wait_for_unit("alloy.service")
+      wait_active(stack, "vmauth.service")
+      wait_active(stack, "victoriametrics.service")
+      wait_active(collector, "alloy.service")
       stack.systemctl("start network-online.target")
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
@@ -1821,8 +1839,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      collector.wait_for_unit("alloy.service")
+      wait_active(collector, "alloy.service")
       collector.wait_until_succeeds("curl -sf http://127.0.0.1:12345/-/ready")
       pid = collector.succeed("systemctl show -p MainPID --value alloy.service").strip()
       cmdline = collector.succeed(f"tr '\\0' ' ' < /proc/{pid}/cmdline")
@@ -1884,13 +1903,14 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("nginx.service")
-      stack.wait_for_unit("vmauth.service")
-      stack.wait_for_unit("victorialogs.service")
+      wait_active(stack, "nginx.service")
+      wait_active(stack, "vmauth.service")
+      wait_active(stack, "victorialogs.service")
       # Only the trusted uploader is awaited: the untrusted one is SUPPOSED to
       # fail verification and restart-loop, so it never settles as "active".
-      collector.wait_for_unit("systemd-journal-upload.service")
+      wait_active(collector, "systemd-journal-upload.service")
       for m in (stack, collector, collector_untrusted):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")
@@ -2093,8 +2113,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      collector.wait_for_unit("alloy.service")
+      wait_active(collector, "alloy.service")
       collector.wait_until_succeeds("curl -sf http://127.0.0.1:12345/-/ready")
       collector.sleep(12)
       collector.succeed("systemctl is-active alloy.service")
@@ -2298,8 +2319,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      collector.wait_for_unit("alloy.service")
+      wait_active(collector, "alloy.service")
       collector.wait_for_open_port(14317)
       collector.wait_for_open_port(14318)
       listeners = collector.succeed("ss -Hltn")
@@ -2672,11 +2694,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      stack.wait_for_unit("nginx.service")
-      stack.wait_for_unit("vmauth.service")
-      stack.wait_for_unit("victorialogs.service")
-      collector.wait_for_unit("systemd-journal-upload.service")
+      wait_active(stack, "nginx.service")
+      wait_active(stack, "vmauth.service")
+      wait_active(stack, "victorialogs.service")
+      wait_active(collector, "systemd-journal-upload.service")
       for m in (stack, collector):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")

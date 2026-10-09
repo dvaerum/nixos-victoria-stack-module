@@ -919,10 +919,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${queryPython}
       start_all()
-      main.wait_for_unit("victorialogs.service")
-      custom.wait_for_unit("victorialogs.service")
+      wait_active(main, "victorialogs.service")
+      wait_active(custom, "victorialogs.service")
 
       # udp and tcp on one port: both bound.
       main.succeed("ss -lntH | grep -F ':5514'")
@@ -971,9 +972,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${queryPython}
       start_all()
-      machine.wait_for_unit("victorialogs.service")
+      wait_active(machine, "victorialogs.service")
       machine.succeed("ss -lntH | grep -F '127.0.0.1:4202'")
       machine.succeed("ss -lunH | grep -F '127.0.0.1:4202'")
       resend_until_found(machine, "${send} --proto udp --port 4202 SAMEPORTMARK", "SAMEPORTMARK")
@@ -1015,10 +1017,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${queryPython}
       start_all()
-      main.wait_for_unit("victorialogs.service")
-      old.wait_for_unit("victorialogs.service")
+      wait_active(main, "victorialogs.service")
+      wait_active(old, "victorialogs.service")
       main.wait_for_open_port(5514)
       main.wait_for_open_port(6514)
 
@@ -1069,9 +1072,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${queryPython}
       start_all()
-      machine.wait_for_unit("victorialogs.service")
+      wait_active(machine, "victorialogs.service")
       machine.wait_for_open_port(6514)
       machine.wait_for_unit("victorialogs-secret-watch-syslog-tls-cert.path")
       machine.wait_for_unit("victorialogs-secret-watch-syslog-tls-key.path")
@@ -1089,7 +1093,7 @@ in
       machine.wait_until_succeeds("echo | openssl s_client -connect 127.0.0.1:6514 2>/dev/null | openssl x509 -noout -subject | grep -F syslog-test-two", timeout=180)
       now = machine.succeed("systemctl show -p InvocationID --value victorialogs.service").strip()
       assert now != was, "VictoriaLogs was not restarted"
-      machine.wait_for_unit("victorialogs.service")
+      wait_active(machine, "victorialogs.service")
       machine.succeed("${send} --proto tls --port 6514 --cacert ${certTwo}/cert.pem ROTATEDMARK")
       rows(machine, "ROTATEDMARK")
     '';
@@ -1136,6 +1140,7 @@ in
       };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${queryPython}
       import time
 
@@ -1152,8 +1157,8 @@ in
       for m in (sealed, exposed, client):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")
-      sealed.wait_for_unit("victorialogs.service")
-      exposed.wait_for_unit("victorialogs.service")
+      wait_active(sealed, "victorialogs.service")
+      wait_active(exposed, "victorialogs.service")
       client.succeed("ping -c 1 sealed && ping -c 1 exposed")
 
       # With openFirewall: udp, tcp and tls all arrive, labelled.
@@ -1204,10 +1209,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${queryPython}
       start_all()
-      machine.wait_for_unit("victorialogs.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "victorialogs.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.succeed("${send} --proto tcp --port 514 --format 5424 READTIERMARK")
       rows(machine, "READTIERMARK")
@@ -1238,6 +1244,7 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${queryPython}
       import time
 
@@ -1245,8 +1252,8 @@ in
       for m in (stack, sender):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")
-      stack.wait_for_unit("victorialogs.service")
-      stack.wait_for_unit("vmauth.service")
+      wait_active(stack, "victorialogs.service")
+      wait_active(stack, "vmauth.service")
       stack.wait_for_open_port(4204)
       sender.succeed("ping -c 1 stack")
 
@@ -1289,7 +1296,7 @@ in
 
       # A restart through systemd: the listeners come back and take new traffic.
       stack.succeed("systemctl restart victorialogs.service")
-      stack.wait_for_unit("victorialogs.service")
+      wait_active(stack, "victorialogs.service")
       stack.wait_for_open_port(514)
       stack.wait_for_open_port(6514)
       check_all(2)
@@ -1351,9 +1358,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       ${queryPython}
       start_all()
-      low.wait_for_unit("victorialogs.service")
+      wait_active(low, "victorialogs.service")
       low.wait_for_open_port(514)
       low.succeed("ss -lunH | grep -F ':514'")
       resend_until_found(low, "${send} --proto udp --port 514 LOWUDPMARK", "LOWUDPMARK")
@@ -1363,7 +1371,7 @@ in
       for k in ("CapBnd", "CapEff", "CapAmb"):
           assert c[k] == "0000000000000400", (k, c)
 
-      high.wait_for_unit("victorialogs.service")
+      wait_active(high, "victorialogs.service")
       c = caps(high)
       for k in ("CapBnd", "CapEff", "CapAmb"):
           assert c[k] == "0000000000000000", (k, c)

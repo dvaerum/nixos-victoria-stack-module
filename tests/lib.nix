@@ -268,9 +268,58 @@ let
         body, code = out.rsplit("\n", 1)
         return code.strip(), body
   '';
+
+  # Test-script snippet replacing `machine.wait_for_unit` for MODULE units.
+  # They carry Restart=on-failure/always, so a unit that cannot start never
+  # reaches "failed": systemd cycles it as `activating (auto-restart)` and
+  # wait_for_unit burns its whole 900s timeout. The storage units are worse:
+  # their postStart readiness probe (up to 5m) keeps the unit in
+  # `activating (start-post)` after the main process already died, so even the
+  # first restart is 5m away. This fails as soon as the unit is failed, has
+  # auto-restarted `max_restarts` times, or sits in start-post with no main
+  # process left; the message carries the unit's journal. `timeout` only
+  # bounds a healthy-but-slow start (a live main process and no restarts).
+  waitActivePython = ''
+    def wait_active(machine, unit, timeout=900, max_restarts=2):
+        import time
+        deadline = time.monotonic() + timeout
+        while True:
+            props = dict(
+                line.split("=", 1)
+                for line in machine.succeed(
+                    f"systemctl show -p ActiveState,SubState,NRestarts,Result,Type,MainPID {unit}"
+                ).splitlines()
+            )
+            if props["ActiveState"] == "active":
+                return
+            main_gone = (
+                props["SubState"] == "start-post"
+                and props["MainPID"] == "0"
+                and props["Type"] in ("simple", "exec", "notify", "idle")
+            )
+            broken = (
+                props["ActiveState"] == "failed"
+                or int(props["NRestarts"]) >= max_restarts
+                or main_gone
+            )
+            if broken or time.monotonic() > deadline:
+                _, journal = machine.execute(f"journalctl -u {unit} -n 30 --no-pager")
+                # The probe's retry spam can fill the tail and bury the main
+                # process's own error.
+                _, main_log = machine.execute(
+                    f"journalctl -u {unit} --no-pager | grep -v 'post-start\\[' | tail -n 15"
+                )
+                why = "failed or restart-looping" if broken else f"not active after {timeout}s"
+                assert False, (
+                    f"{unit} {why} ({props}); journal:\n{journal}\n"
+                    f"without post-start probe lines:\n{main_log}"
+                )
+            time.sleep(1)
+  '';
 in
 {
   inherit
+    waitActivePython
     grafanaReadToken
     grafanaReadTokenFile
     vmauthReadTokensWithGrafana

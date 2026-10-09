@@ -302,10 +302,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("grafana.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "grafana.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
       # grafana.service being "active" doesn't mean Grafana's own HTTP
@@ -316,7 +317,7 @@ in
       # Same race for vmauth's own backend -- caught by the sibling test
       # with grafana disabled (nothing else gave it enough of a head
       # start), but latent here too without this.
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       # /grafana/ reaches Grafana through nginx. wait_until_succeeds, not
@@ -381,8 +382,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
+      wait_active(machine, "nginx.service")
       machine.wait_for_open_port(80)
 
       # "-T" with no "-c" silently dumps the nginx *binary's own
@@ -431,17 +433,18 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("grafana.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "grafana.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
       # grafana.service being "active" doesn't mean Grafana's own HTTP
       # server is listening yet -- see nginx-proxies-victoria-and-grafana-
       # subpaths' own comment above (the same race, found here too).
       machine.wait_for_open_port(3000)
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       config_dump = machine.succeed("${pkgs.nginx}/bin/nginx -T -c /etc/nginx/nginx.conf 2>&1")
@@ -483,15 +486,16 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
       # Before nginx was ordered after vmauth (whose postStart now waits for
       # its port), proxy_pass raced it and got "502 Bad Gateway" often enough
       # to fail this check; the explicit port waits are kept as a guard.
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       # /victoria/ must still work on its own (no grafana.nix location
@@ -534,12 +538,13 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       machine.succeed(
@@ -617,13 +622,14 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
       machine.wait_for_open_port(443)
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
 
@@ -698,12 +704,13 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(19999)
       machine.wait_for_open_port(80)
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       rc, _ = machine.execute("curl -s --max-time 3 'http://127.0.0.1:4204/'")
@@ -733,11 +740,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(80)
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       url = "http://127.0.0.1:80/victoria/metrics/api/v1/labels"
@@ -817,12 +825,13 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(80)
       machine.wait_for_open_port(4204)
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       machine.succeed(
@@ -889,11 +898,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(80)
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       auth = "-u admin:nginx-admin-password"  # gitleaks:allow
@@ -1049,11 +1059,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("nginx.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "nginx.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(80)
-      machine.wait_for_unit("victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
       machine.wait_for_open_port(4201)
 
       machine.succeed("head -c 3000000 /dev/zero > /tmp/big.bin")

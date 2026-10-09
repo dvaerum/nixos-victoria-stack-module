@@ -69,8 +69,9 @@ let
       };
 
       testScript = ''
+        ${testLib.waitActivePython}
         start_all()
-        machine.wait_for_unit("grafana.service")
+        wait_active(machine, "grafana.service")
         machine.wait_for_open_port(3000)
 
         datasources = machine.succeed(
@@ -102,8 +103,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("grafana.service")
+      wait_active(machine, "grafana.service")
       machine.wait_for_open_port(3000)
 
       # Default Grafana admin credentials (admin/admin) since this test
@@ -145,10 +147,11 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       import json
 
       start_all()
-      machine.wait_for_unit("grafana.service")
+      wait_active(machine, "grafana.service")
       machine.wait_for_open_port(3000)
 
       datasources = json.loads(machine.succeed(
@@ -185,11 +188,12 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       import json
 
       start_all()
-      machine.wait_for_unit("grafana.service")
-      machine.wait_for_unit("vmauth.service")
+      wait_active(machine, "grafana.service")
+      wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(3000)
       machine.wait_for_open_port(4204)
 
@@ -292,8 +296,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("grafana.service")
+      wait_active(machine, "grafana.service")
       machine.wait_for_open_port(3000)
 
       datasources = machine.succeed(
@@ -331,8 +336,9 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
-      machine.wait_for_unit("grafana.service")
+      wait_active(machine, "grafana.service")
       machine.wait_for_open_port(3000)
 
       datasources = machine.succeed(

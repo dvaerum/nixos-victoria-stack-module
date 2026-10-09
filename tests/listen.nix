@@ -350,9 +350,10 @@ in
     };
 
     testScript = ''
+      ${testLib.waitActivePython}
       start_all()
       for unit in ["victoriametrics", "mcp-victoriametrics", "vmauth", "nginx"]:
-          machine.wait_for_unit(f"{unit}.service")
+          wait_active(machine, f"{unit}.service")
       machine.wait_for_open_port(4201)
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
