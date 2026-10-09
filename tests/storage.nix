@@ -1691,6 +1691,235 @@ in
       throw "storage start timeouts wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
   );
 
+  # startupTimeout is the one value behind both the probe's --timeout and
+  # TimeoutStartSec, which stays a minute above it so systemd never kills a
+  # unit before its own probe has given up.
+  storage-startup-timeout-drives-probe-and-unit-timeout =
+    pkgs.runCommand "storage-startup-timeout" { }
+      (
+        let
+          perUnit =
+            attr: unit: timeout: expectedStart:
+            let
+              sc =
+                (evalWith {
+                  services.victoriaStack.${attr} = {
+                    enable = true;
+                    startupTimeout = timeout;
+                  };
+                }).config.systemd.services.${unit};
+            in
+            {
+              "${unit} ${timeout}: probe --timeout" = lib.hasSuffix "--timeout ${timeout}" sc.postStart;
+              "${unit} ${timeout}: TimeoutStartSec ${expectedStart}" =
+                sc.serviceConfig.TimeoutStartSec == expectedStart;
+            };
+          forEveryService =
+            timeout: expectedStart:
+            perUnit "metrics" "victoriametrics" timeout expectedStart
+            // perUnit "logs" "victorialogs" timeout expectedStart
+            // perUnit "traces" "victoriatraces" timeout expectedStart;
+          checks =
+            forEveryService "90s" "150s"
+            // forEveryService "20m" "21min"
+            // forEveryService "1h30m" "91min"
+            // forEveryService "1m30s" "150s"
+            // forEveryService "1s" "61s";
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "startupTimeout does not reach the unit for: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # The default is the previous hard-coded behaviour, rendered identically.
+  storage-startup-timeout-default-is-5m = pkgs.runCommand "storage-startup-timeout-default" { } (
+    let
+      checks =
+        lib.concatMapAttrs
+          (attr: unit: {
+            "${attr}: default option value" =
+              (evalWith { services.victoriaStack.${attr}.enable = true; })
+              .config.services.victoriaStack.${attr}.startupTimeout == "5m";
+            "${attr}: probe line unchanged" =
+              (evalWith { services.victoriaStack.${attr}.enable = true; })
+              .config.systemd.services.${unit}.postStart == "wait4x http http://127.0.0.1:${
+                {
+                  metrics = "4201";
+                  logs = "4202";
+                  traces = "4203";
+                }
+                .${attr}
+              }/ping --timeout 5m";
+          })
+          {
+            metrics = "victoriametrics";
+            logs = "victorialogs";
+            traces = "victoriatraces";
+          };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "startupTimeout default changed: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # Both wait4x (Go durations) and systemd read these; wait4x takes `0s` as "no
+  # timeout" (measured), which would make a broken unit hang until systemd's
+  # TimeoutStartSec, and rejects `5min`.
+  storage-startup-timeout-type = pkgs.runCommand "storage-startup-timeout-type" { } (
+    let
+      accepted = [
+        "1s"
+        "90s"
+        "5m"
+        "20m"
+        "1h"
+        "1h30m"
+        "1m30s"
+        "01m"
+      ];
+      rejected = [
+        ""
+        "0s"
+        "0m"
+        "0h0m"
+        "90"
+        "5min"
+        "1.5m"
+        "-5m"
+        "1d"
+        "300ms"
+        " 5m"
+        "5m "
+        "m"
+        "5 m"
+        "1h 30m"
+      ];
+      table =
+        svc:
+        let
+          t = (evalWith { }).options.services.victoriaStack.${svc}.startupTimeout.type;
+        in
+        map (v: lib.optional (!t.check v) "${svc}: ${builtins.toJSON v} should be accepted") accepted
+        ++ map (v: lib.optional (t.check v) "${svc}: ${builtins.toJSON v} should be rejected") rejected;
+      problems = lib.concatLists (
+        lib.concatMap table [
+          "metrics"
+          "logs"
+          "traces"
+        ]
+      );
+    in
+    if problems == [ ] then "echo OK > $out" else throw (lib.concatStringsSep "\n" problems)
+  );
+
+  # A broken unit used to take the whole probe (5 minutes) to be declared failed.
+  # The flag is harmless but unknown to the binary, so it exits at once while the
+  # probe keeps polling a port nobody listens on.
+  startup-timeout-bounds-how-long-a-broken-unit-takes-to-fail = pkgs.testers.nixosTest {
+    name = "victoria-stack-startup-timeout-broken-unit";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack.metrics = {
+        enable = true;
+        startupTimeout = "20s";
+        extraFlags = [ "-noSuchFlag=1" ];
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      import re
+      start_all()
+      try:
+          wait_active(machine, "victoriametrics.service", timeout=120)
+      except AssertionError as e:
+          message = str(e)
+      else:
+          raise Exception("a unit with an unknown flag became active")
+      assert "noSuchFlag" in message, message
+
+      # systemd itself must have given up on the start, not only the helper's
+      # heuristic: the probe's own 20s bound is what ends the start. Timed on
+      # the guest's monotonic journal stamps so a loaded host cannot skew it.
+      machine.wait_until_succeeds(
+          "systemctl show -p NRestarts,ActiveState victoriametrics.service "
+          "| grep -qE 'NRestarts=[1-9]|ActiveState=failed'",
+          timeout=120,
+      )
+      journal = machine.succeed("journalctl -u victoriametrics.service -o short-monotonic --no-pager")
+
+      def stamp(marker):
+          line = next(l for l in journal.splitlines() if marker in l)
+          m = re.match(r"\[\s*([0-9.]+)\]", line)
+          assert m is not None, line
+          return float(m.group(1))
+
+      took = stamp("Control process exited") - stamp("Starting ")
+      print(f"broken unit declared failed {took:.1f}s after its start with startupTimeout=20s")
+      assert 15 < took < 40, f"startupTimeout=20s should end a broken start after about 20s, took {took:.1f}s"
+    '';
+  };
+
+  # A slow-but-healthy start must survive a generous startupTimeout and be cut
+  # off by a short one -- the option controls the real behaviour. The package
+  # override makes the main process listen only after 10s, the way a large data
+  # directory delays it.
+  startup-timeout-decides-whether-a-slow-start-survives =
+    let
+      # No child process: a grandchild left in the cgroup when systemd stops
+      # the unit makes the stop hang until TimeoutStopSec in these containers.
+      slowLogs = pkgs.writers.writePython3Bin "victoria-logs" { flakeIgnore = [ "E501" ]; } ''
+        import os
+        import sys
+        import time
+
+        time.sleep(10)
+        real = "${pkgs.victorialogs}/bin/victoria-logs"
+        os.execv(real, [real] + sys.argv[1:])
+      '';
+      node = timeout: {
+        imports = [ module ];
+        services.victoriaStack.logs = {
+          enable = true;
+          package = slowLogs;
+          startupTimeout = timeout;
+        };
+      };
+    in
+    pkgs.testers.nixosTest {
+      name = "victoria-stack-startup-timeout-slow-start";
+
+      containers.generous = node "60s";
+      # A restart loop keeps the boot's start job pending forever and the
+      # container never reports ready, so this one is started by the script.
+      containers.short = {
+        imports = [ (node "5s") ];
+        systemd.services.victorialogs.wantedBy = lib.mkForce [ ];
+      };
+
+      testScript = ''
+        ${testLib.waitActivePython}
+        start_all()
+        wait_active(generous, "victorialogs.service")
+        generous.succeed("curl -sf http://127.0.0.1:4202/ping")
+
+        # 5s of probe against a 10s start: every attempt is cut off, so the
+        # unit loops through restarts and never becomes active.
+        short.succeed("systemctl start --no-block victorialogs.service")
+        short.wait_until_succeeds(
+            "systemctl show -p NRestarts victorialogs.service | grep -qE 'NRestarts=[2-9]'",
+            timeout=120,
+        )
+        state = short.succeed("systemctl show -p ActiveState --value victorialogs.service").strip()
+        assert state != "active", state
+      '';
+    };
+
   # Effective ProtectSystem and capabilities (CapBnd, from the kernel) are read
   # from the running unit, not the rendered text: measured, DynamicUser units were strict even with an explicit "full";
   # only static users ran with "full".

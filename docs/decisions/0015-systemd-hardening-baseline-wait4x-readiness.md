@@ -21,7 +21,9 @@ ran with `full`.
 
 Readiness on the storage services is a `wait4x http <url>/ping --timeout 5m`
 call (the probe outlasts a slow open of a large data directory;
-`TimeoutStartSec` is 6 minutes so the two never expire together) instead of a
+`TimeoutStartSec` is 6 minutes so the two never expire together; both derive from
+the `startupTimeout` option, `5m` by default, with `TimeoutStartSec` always a
+minute above it) instead of a
 hand-rolled `until curl ...; do sleep 1; done` loop. `wait4x` is already
 packaged in nixpkgs (`pkgs.wait4x`), purpose-built for exactly this
 (multi-protocol service/port/HTTP readiness polling with built-in

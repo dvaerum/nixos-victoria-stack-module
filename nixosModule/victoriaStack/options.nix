@@ -13,6 +13,8 @@ let
   # Shared by -retentionPeriod and -snapshotsMaxAge, which parse alike.
   durationRegex = "[0-9]+(\\.[0-9]+)?[shdwMy]?|([0-9]+(\\.[0-9]+)?[shdw])+";
 
+  startupTimeout = import ./startup-timeout.nix { inherit lib; };
+
   # The one place the restart-on-replacement rule and its watched-file list are
   # written; interpolated into every option that names a watched secret file
   # (the list mirrors `watchedSecrets` in vmauth.nix).
@@ -301,6 +303,26 @@ let
           The minimum is 1 day: a shorter value (`1h`, `23h`, `0`) makes
           ${binaryName} refuse to start, and evaluation warns about it. A bare
           number means months, so `1` is one month, not one day.
+        '';
+      };
+
+      startupTimeout = mkOption {
+        type = startupTimeout.type;
+        default = "5m";
+        example = "20m";
+        description = ''
+          How long the unit's readiness probe waits for ${binaryName} to answer
+          before the start counts as failed. systemd's `TimeoutStartSec` is
+          derived from it, always one minute longer, so systemd never kills the
+          unit before its own probe gives up.
+
+          Raise it when opening the data directory is slow (a slow disk, a very
+          large data directory): a value too low kills a slow but healthy start
+          and the unit restart-loops. It also bounds how long a broken unit
+          takes to be declared failed.
+
+          Format: one or more whole numbers with a unit of `s`, `m` or `h`
+          (`90s`, `5m`, `1h30m`); zero is not allowed.
         '';
       };
 

@@ -30,6 +30,7 @@ let
   topCfg = config.services.victoriaStack;
   cfg = topCfg.${name};
   selfMonitoring = import ./self-monitoring.nix { inherit lib; };
+  startupTimeout = import ./startup-timeout.nix { inherit lib; };
 
   listen = import ./listen.nix { inherit lib; };
   syslog = import ./syslog.nix { inherit lib; };
@@ -153,11 +154,10 @@ in
           # activation apply: these binaries implement neither sd_notify()
           # nor sd_listen_fds(). See docs/decisions/0015.
           path = [ pkgs.wait4x ];
-          # The probe waits up to 5 minutes (a large data directory can take that
-          # long to open) and TimeoutStartSec sits just above it: with both at
-          # 90s (systemd's own default) they expired together and
+          # TimeoutStartSec sits a minute above the probe (startup-timeout.nix):
+          # with both at 90s (systemd's own default) they expired together and
           # Restart=on-failure looped a slow start.
-          postStart = "wait4x http http://${bindAddr}/ping --timeout 5m";
+          postStart = "wait4x http http://${bindAddr}/ping --timeout ${cfg.startupTimeout}";
 
           serviceConfig = lib.mkMerge [
             {
@@ -195,7 +195,7 @@ in
               );
               Restart = "on-failure";
               RestartSec = 5;
-              TimeoutStartSec = "6min";
+              TimeoutStartSec = startupTimeout.unitTimeout cfg.startupTimeout;
               # A non-root user keeps no capability across exec unless it is ambient.
               AmbientCapabilities = lib.mkIf needsLowPort [ "CAP_NET_BIND_SERVICE" ];
 
