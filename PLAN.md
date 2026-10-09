@@ -783,7 +783,33 @@ Measured, and different from what was assumed:
 - VictoriaLogs syslog has no authentication and no client-certificate option;
   TLS only encrypts, and any sender is accepted.
 - systemd eats backslashes inside quoted `ExecStart` arguments, so the JSON
-  `extraFields` value needed doubled backslashes. The same applies to any
-  `extraFlags` value containing a backslash on every unit (found, not fixed).
+  `extraFields` value needed doubled backslashes. The same applied to any
+  `extraFlags` value containing a backslash on every unit; fixed afterwards
+  with one shared escape helper (see the follow-ups below).
 - Closing a TLS 1.3 socket with unread session tickets resets the connection
   and drops the message; rows also become searchable about a second late.
+
+Follow-ups after syslog:
+- One shared escape helper (`exec-escape.nix`) now escapes backslash, `%` and
+  `$` in every user string rendered into an `ExecStart`, and `%` in MCP
+  `Environment=` values (where NixOS does not escape it, so `%h` was expanded).
+  nixpkgs' own helper was not used: it double-quotes every argument, which
+  would change the rendered units that many tests and ADR 0028 pin.
+- Boot tests fail fast: a shared `wait_active` helper replaces
+  `wait_for_unit`, because a module unit that fails to start never reaches
+  "failed" (it cycles in `activating (auto-restart)`), so a broken unit cost a
+  900-second timeout per red test. Measured: the floor is the module's own
+  readiness probe, because the test driver cannot run commands until boot
+  completes. A unit that retries by design (the collector's
+  `systemd-journal-upload` against a gateway that is not up yet) is exempt from
+  the restart-count rule; the first version flagged it as broken and made
+  `full-maximal-cross-product` fail in 4 of 8 runs, which the exemption fixed
+  (8 of 8 pass). Trade-off: a genuinely broken collector uploader now takes the
+  full timeout to fail.
+- The storage services' readiness timeout is an option
+  (`<service>.startupTimeout`, default `5m`): the probe takes the value and
+  `TimeoutStartSec` is derived as one minute more. With `20s` a broken unit
+  fails after about 21 seconds instead of about 300. vmauth and the MCP units
+  keep a fixed 90-second probe, now with an explicit `TimeoutStartSec` of
+  150 seconds (before it, systemd's 90-second default expired together with the
+  probe).
