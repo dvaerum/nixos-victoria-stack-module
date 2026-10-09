@@ -237,7 +237,7 @@ in
       ${testLib.waitActivePython}
       start_all()
       wait_active(stack, "victorialogs.service")
-      wait_active(collector, "systemd-journal-upload.service")
+      wait_active(collector, "systemd-journal-upload.service", max_restarts=None)
 
       stack.systemctl("start network-online.target")
       collector.systemctl("start network-online.target")
@@ -259,6 +259,61 @@ in
           "| grep -q victoria_stack_collector_logs_roundtrip_marker",
           timeout=120,
       )
+    '';
+  };
+
+  # systemd-journal-upload retries by design while the gateway is unreachable
+  # (startLimitIntervalSec = 0), so a slow gateway must not look "broken" to
+  # wait_active. The script starts vmauth only after the uploader has restarted
+  # three times, which makes the flaky timing of the boot tests deterministic.
+  logs-uploader-retries-until-gateway-is-up = pkgs.testers.nixosTest {
+    name = "victoria-collector-logs-uploader-retries-until-gateway-is-up";
+
+    containers.stack =
+      { lib, ... }:
+      {
+        virtualisation.vlans = [ 1 ];
+        imports = [
+          stackModule
+          testLib.testStartupTimeouts
+        ];
+        services.victoriaStack = {
+          logs.enable = true;
+          vmauth.writeTokensFile = "${writeTokensFixture}";
+          vmauth.listenAddress = "0.0.0.0:4204";
+        };
+        networking.firewall.allowedTCPPorts = [ 4204 ];
+        systemd.services.vmauth.wantedBy = lib.mkForce [ ]; # started by the test script, late
+      };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        logs.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${writeTokenFixture}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+
+      # Hold the gateway down until the uploader sits between two retries,
+      # three restarts in -- the state the boot tests meet when they wait on
+      # the stack first and the uploader has been retrying meanwhile.
+      uploader = "systemd-journal-upload.service"
+      collector.wait_until_succeeds(
+          f"test \"$(systemctl show -p NRestarts --value {uploader})\" -ge 3 "
+          f"&& test \"$(systemctl show -p SubState --value {uploader})\" = auto-restart",
+          timeout=120,
+      )
+      stack.succeed("systemctl start --no-block vmauth.service")
+
+      wait_active(collector, uploader, max_restarts=None)
+      wait_active(stack, "vmauth.service")
     '';
   };
 
@@ -475,7 +530,7 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       start_all()
-      wait_active(collector, "systemd-journal-upload.service")
+      wait_active(collector, "systemd-journal-upload.service", max_restarts=None)
       # Alloy itself must not even be enabled when only logs is on --
       # confirmed via needsAlloyOtlp = metrics.enable || traces.enable in
       # config.nix.
@@ -1397,7 +1452,7 @@ in
       wait_active(stack, "victorialogs.service")
       wait_active(stack, "victoriatraces.service")
       wait_active(collector, "alloy.service")
-      wait_active(collector, "systemd-journal-upload.service")
+      wait_active(collector, "systemd-journal-upload.service", max_restarts=None)
       collector.succeed("systemctl start --no-block test-activating.service")
       collector.wait_for_open_port(4318)
       stack.systemctl("start network-online.target")
@@ -1931,7 +1986,7 @@ in
       wait_active(stack, "victorialogs.service")
       # Only the trusted uploader is awaited: the untrusted one is SUPPOSED to
       # fail verification and restart-loop, so it never settles as "active".
-      wait_active(collector, "systemd-journal-upload.service")
+      wait_active(collector, "systemd-journal-upload.service", max_restarts=None)
       for m in (stack, collector, collector_untrusted):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")
@@ -2723,7 +2778,7 @@ in
       wait_active(stack, "nginx.service")
       wait_active(stack, "vmauth.service")
       wait_active(stack, "victorialogs.service")
-      wait_active(collector, "systemd-journal-upload.service")
+      wait_active(collector, "systemd-journal-upload.service", max_restarts=None)
       for m in (stack, collector):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")

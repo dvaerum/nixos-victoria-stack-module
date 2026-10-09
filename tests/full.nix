@@ -317,7 +317,7 @@ in
           wait_active(stack, f"{unit}.service")
       stack.wait_for_open_port(443)
       wait_active(collector, "alloy.service")
-      wait_active(collector, "systemd-journal-upload.service")
+      wait_active(collector, "systemd-journal-upload.service", max_restarts=None)
       collector.wait_for_open_port(4318)
       for m in (stack, collector):
           m.systemctl("start network-online.target")

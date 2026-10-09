@@ -292,6 +292,14 @@ let
   # auto-restarted `max_restarts` times, or sits in start-post with no main
   # process left; the message carries the unit's journal. `timeout` only
   # bounds a healthy-but-slow start (a live main process and no restarts).
+  #
+  # `max_restarts=None` is for a unit that retries BY DESIGN while its peer is
+  # down (systemd-journal-upload: it exits on every refused connection and
+  # startLimitIntervalSec = 0 keeps it cycling). Its restart count says nothing
+  # about health, and it sits `activating (auto-restart)` between attempts, so
+  # any count trips on a unit that is merely early; only `failed` and `timeout`
+  # remain. Alloy and the module's own units do not exit while waiting, so they
+  # keep the default.
   waitActivePython = ''
     def wait_active(machine, unit, timeout=900, max_restarts=2):
         import time
@@ -312,7 +320,7 @@ let
             )
             broken = (
                 props["ActiveState"] == "failed"
-                or int(props["NRestarts"]) >= max_restarts
+                or (max_restarts is not None and int(props["NRestarts"]) >= max_restarts)
                 or main_gone
             )
             if broken or time.monotonic() > deadline:
