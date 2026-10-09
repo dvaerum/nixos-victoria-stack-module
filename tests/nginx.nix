@@ -284,7 +284,10 @@ in
     name = "victoria-stack-nginx-subpath-routing";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         grafana = {
@@ -371,7 +374,10 @@ in
     name = "victoria-stack-nginx-domain-option";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         nginx = {
@@ -412,7 +418,10 @@ in
     name = "victoria-stack-nginx-custom-domain-with-grafana";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         grafana = {
@@ -476,7 +485,10 @@ in
     name = "victoria-stack-nginx-grafana-disabled-no-location";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         nginx.enable = true;
@@ -525,7 +537,10 @@ in
     name = "victoria-stack-nginx-custom-domain-grafana-disabled";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         nginx = {
@@ -606,7 +621,10 @@ in
     name = "victoria-stack-nginx-http-and-https-coexist";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         nginx.enable = true;
@@ -692,7 +710,10 @@ in
     name = "victoria-stack-nginx-follows-vmauth-listen-address";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -728,7 +749,10 @@ in
     name = "victoria-stack-nginx-custom-domain-credentials";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.adminPasswordFile = "${adminPasswordFixture}";
@@ -813,7 +837,10 @@ in
     name = "victoria-stack-nginx-reads-only";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         nginx.enable = true;
@@ -877,7 +904,10 @@ in
     name = "victoria-stack-nginx-extra-read-paths";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         nginx = {
@@ -1047,7 +1077,10 @@ in
     name = "victoria-stack-nginx-body-limit";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         nginx = {

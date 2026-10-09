@@ -153,7 +153,10 @@ in
     name = "victoria-stack-exec-escaping";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       inherit (allEnabled) services;
     };
 

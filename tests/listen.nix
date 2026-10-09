@@ -330,7 +330,10 @@ in
     name = "victoria-stack-wildcard-listen-end-to-end";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics = {
           enable = true;

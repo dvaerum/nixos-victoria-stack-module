@@ -525,7 +525,10 @@ in
     name = "victoria-stack-metrics-ingest-query-roundtrip";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.metrics.enable = true;
     };
 
@@ -563,7 +566,10 @@ in
     name = "victoria-stack-metrics-static-user-custom-data-dir";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.metrics = {
         enable = true;
         dataDir = "/data/victoria/metrics";
@@ -622,7 +628,10 @@ in
       name = "victoria-stack-metrics-package-override-takes-effect";
 
       containers.machine = {
-        imports = [ module ];
+        imports = [
+          module
+          testLib.testStartupTimeouts
+        ];
         services.victoriaStack.metrics = {
           enable = true;
           package = overridePackage;
@@ -698,7 +707,10 @@ in
     name = "victoria-stack-logs-ingest-query-roundtrip";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.logs.enable = true;
     };
 
@@ -729,7 +741,10 @@ in
     name = "victoria-stack-logs-static-user-custom-data-dir";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.logs = {
         enable = true;
         dataDir = "/data/victoria/logs";
@@ -777,7 +792,10 @@ in
       name = "victoria-stack-logs-package-override-takes-effect";
 
       containers.machine = {
-        imports = [ module ];
+        imports = [
+          module
+          testLib.testStartupTimeouts
+        ];
         services.victoriaStack.logs = {
           enable = true;
           package = overridePackage;
@@ -882,7 +900,10 @@ in
     name = "victoria-stack-traces-ingest-query-roundtrip";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.traces.enable = true;
     };
 
@@ -925,7 +946,10 @@ in
     name = "victoria-stack-traces-static-user-custom-data-dir";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.traces = {
         enable = true;
         dataDir = "/data/victoria/traces";
@@ -983,7 +1007,10 @@ in
       name = "victoria-stack-traces-package-override-takes-effect";
 
       containers.machine = {
-        imports = [ module ];
+        imports = [
+          module
+          testLib.testStartupTimeouts
+        ];
         services.victoriaStack.traces = {
           enable = true;
           package = overridePackage;
@@ -1238,7 +1265,10 @@ in
     name = "victoria-stack-metrics-snapshot";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.metrics = {
         enable = true;
         snapshots.enable = true;
@@ -1283,7 +1313,10 @@ in
     name = "victoria-stack-logs-snapshot";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.logs = {
         enable = true;
         snapshots.enable = true;
@@ -1318,7 +1351,10 @@ in
     name = "victoria-stack-traces-snapshot";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.traces = {
         enable = true;
         snapshots.enable = true;
@@ -1480,7 +1516,10 @@ in
     # default because the metrics database is enabled. Only the interval is
     # shortened so the test doesn't wait 30s.
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics = {
           enable = true;
@@ -1766,6 +1805,45 @@ in
       throw "startupTimeout default changed: ${builtins.toJSON (builtins.attrNames failed)}"
   );
 
+  # The boot tests' shared snippet shortens all three probes, and a test's own
+  # value still wins over it.
+  storage-test-startup-timeouts-snippet-applies =
+    pkgs.runCommand "storage-test-startup-timeouts" { }
+      (
+        let
+          units = {
+            metrics = "victoriametrics";
+            logs = "victorialogs";
+            traces = "victoriatraces";
+          };
+          evaluated =
+            extra:
+            evalWith {
+              imports = [ testLib.testStartupTimeouts ];
+              services.victoriaStack = lib.recursiveUpdate (lib.mapAttrs (_: _: { enable = true; }) units) extra;
+            };
+          defaults = (evaluated { }).config.systemd.services;
+          overridden =
+            (evaluated { metrics.startupTimeout = "45s"; }).config.systemd.services.victoriametrics;
+          checks =
+            lib.mapAttrs' (
+              _: unit:
+              lib.nameValuePair "${unit}: snippet gives a 2m probe and a 3min unit timeout" (
+                lib.hasSuffix "--timeout 2m" defaults.${unit}.postStart
+                && defaults.${unit}.serviceConfig.TimeoutStartSec == "3min"
+              )
+            ) units
+            // {
+              "a test's own value wins" = lib.hasSuffix "--timeout 45s" overridden.postStart;
+            };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "test startup-timeout snippet wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
   # Both wait4x (Go durations) and systemd read these; wait4x takes `0s` as "no
   # timeout" (measured), which would make a broken unit hang until systemd's
   # TimeoutStartSec, and rejects `5min`.
@@ -1823,7 +1901,10 @@ in
     name = "victoria-stack-startup-timeout-broken-unit";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.metrics = {
         enable = true;
         startupTimeout = "20s";
@@ -1883,7 +1964,10 @@ in
         os.execv(real, [real] + sys.argv[1:])
       '';
       node = timeout: {
-        imports = [ module ];
+        imports = [
+          module
+          testLib.testStartupTimeouts
+        ];
         services.victoriaStack.logs = {
           enable = true;
           package = slowLogs;
@@ -1927,7 +2011,10 @@ in
     name = "victoria-stack-hardening-effective";
 
     containers.dyn = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics = {
           enable = true;
@@ -1949,7 +2036,10 @@ in
     # A static user has no implied sandbox and no StateDirectory: its data
     # directory must be explicitly writable under ProtectSystem=strict.
     containers.static = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.metrics = {
         enable = true;
         dynamicUser = false;
@@ -2050,7 +2140,10 @@ in
     name = "victoria-stack-execstart-specifiers-literal";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.metrics = {
         enable = true;
         extraFlags = [ "-envflag.prefix=p%h-\${HOME}" ];

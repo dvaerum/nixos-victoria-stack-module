@@ -316,10 +316,22 @@ let
                 )
             time.sleep(1)
   '';
+
+  # Boot tests import this so a storage unit that cannot start fails in 2 minutes
+  # rather than 5 (wait_active above ends earlier only when the main process is
+  # gone). The slowest healthy storage start in the nspawn tests was 15s with the
+  # whole suite building at once, so 2m keeps about 8x headroom. mkDefault: a test
+  # of the option itself sets its own value.
+  testStartupTimeouts = {
+    services.victoriaStack = lib.genAttrs [ "metrics" "logs" "traces" ] (_: {
+      startupTimeout = lib.mkDefault "2m";
+    });
+  };
 in
 {
   inherit
     waitActivePython
+    testStartupTimeouts
     grafanaReadToken
     grafanaReadTokenFile
     vmauthReadTokensWithGrafana

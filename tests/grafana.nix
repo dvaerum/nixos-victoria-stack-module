@@ -60,6 +60,7 @@ let
       containers.machine = {
         imports = [
           module
+          testLib.testStartupTimeouts
           grafanaConsumerConfig
           grafanaTokenWiring
         ];
@@ -91,6 +92,7 @@ in
     containers.machine = {
       imports = [
         module
+        testLib.testStartupTimeouts
         grafanaConsumerConfig
         grafanaTokenWiring
       ];
@@ -131,6 +133,7 @@ in
     containers.machine = {
       imports = [
         module
+        testLib.testStartupTimeouts
         grafanaConsumerConfig
         grafanaTokenWiring
       ];
@@ -176,6 +179,7 @@ in
     containers.machine = {
       imports = [
         module
+        testLib.testStartupTimeouts
         grafanaConsumerConfig
         grafanaTokenWiring
       ];
@@ -285,6 +289,7 @@ in
     containers.machine = {
       imports = [
         module
+        testLib.testStartupTimeouts
         grafanaConsumerConfig
         grafanaTokenWiring
       ];
@@ -324,6 +329,7 @@ in
     containers.machine = {
       imports = [
         module
+        testLib.testStartupTimeouts
         grafanaConsumerConfig
         grafanaTokenWiring
       ];

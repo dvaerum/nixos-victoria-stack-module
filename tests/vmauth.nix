@@ -71,7 +71,10 @@ let
       name = "victoria-stack-vmauth-${name}";
 
       containers.machine = {
-        imports = [ module ];
+        imports = [
+          module
+          testLib.testStartupTimeouts
+        ];
         services.victoriaStack = backends // {
           vmauth = {
             "${tier}TokensFile" = "${pkgs.writeText "bad-${tier}-tokens.yaml" yaml}";
@@ -545,7 +548,10 @@ in
     name = "victoria-stack-vmauth-write-paths-open-when-auth-disabled";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.requireAuthForWrites = false;
@@ -593,7 +599,10 @@ in
     name = "victoria-stack-vmauth-write-paths-closed-via-empty-open-ingest-paths";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.requireAuthForWrites = false;
@@ -626,7 +635,10 @@ in
     name = "victoria-stack-vmauth-write-paths-require-write-token-by-default";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         # requireAuthForWrites left at its true default.
@@ -667,7 +679,10 @@ in
     name = "victoria-stack-vmauth-write-token-cannot-read";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.writeTokensFile = "${writeTokensFixture}";
@@ -704,7 +719,10 @@ in
     name = "victoria-stack-vmauth-read-path-requires-credential";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.adminPasswordFile = "${adminPasswordFixture}";
@@ -752,7 +770,10 @@ in
     name = "victoria-stack-vmauth-token-replaced-during-restart";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       systemd.tmpfiles.rules = [
         "d /var/lib/rotation 0700 root root -"
         "f /var/lib/rotation/read.yaml 0600 root root - tokens:\\n  - token: token-generation-one\\n"
@@ -805,7 +826,10 @@ in
     name = "victoria-stack-vmauth-token-rotation-restarts";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       # A runtime path (not a store path) so the test can replace it.
       systemd.tmpfiles.rules = [
         "d /var/lib/rotation 0700 root root -"
@@ -911,7 +935,10 @@ in
     name = "victoria-stack-vmauth-backend-tls-flags";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.backendTls = {
@@ -945,7 +972,10 @@ in
     name = "victoria-stack-vmauth-backend-tls-rotation-restarts";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       # Runtime paths (not store paths) so the test can replace them.
       systemd.tmpfiles.rules = [
         "d /var/lib/rotation 0700 root root -"
@@ -1010,7 +1040,10 @@ in
     name = "victoria-stack-vmauth-read-and-admin-cannot-write";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -1059,7 +1092,10 @@ in
     name = "victoria-stack-vmauth-all-three-tiers-coexist";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -1140,7 +1176,10 @@ in
     name = "victoria-stack-vmauth-full-combination";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         metrics.mcp.enable = true;
@@ -1252,7 +1291,10 @@ in
     name = "victoria-stack-vmauth-no-write-tokens-file-rejects-all-writes";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         # requireAuthForWrites left at its true default; writeTokensFile
@@ -1293,7 +1335,10 @@ in
     name = "victoria-stack-vmauth-all-signal-types-end-to-end";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         logs.enable = true;
@@ -1382,7 +1427,10 @@ in
     name = "victoria-stack-vmauth-no-op-without-backend";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.vmauth.enable = true;
       # Deliberately no backend enabled at all.
     };
@@ -1454,7 +1502,10 @@ in
     name = "victoria-stack-vmauth-read-tier-is-genuinely-read-only";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         logs.enable = true;
@@ -1649,7 +1700,10 @@ in
     name = "victoria-stack-vmauth-malformed-read-tokens-legible-error";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.readTokensFile = "${pkgs.writeText "malformed-read-tokens.yaml" ''
@@ -1677,7 +1731,10 @@ in
     name = "victoria-stack-vmauth-malformed-write-tokens-legible-error";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.writeTokensFile = "${pkgs.writeText "malformed-write-tokens.yaml" ''
@@ -1769,7 +1826,10 @@ in
     name = "victoria-stack-vmauth-open-ingest-paths-partial-override";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         logs.enable = true;
@@ -1858,7 +1918,10 @@ in
     name = "victoria-stack-vmauth-extra-flag-live";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.extraFlags = [ "-http.maxGracefulShutdownDuration=7s" ];
@@ -1991,7 +2054,10 @@ in
     name = "victoria-stack-vmauth-extra-write-url-map";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -2047,7 +2113,10 @@ in
     name = "victoria-stack-vmauth-scoped-read-token";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics = {
           enable = true;
@@ -2128,7 +2197,10 @@ in
     name = "victoria-stack-vmauth-scoped-write-token";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         logs.enable = true;
@@ -2197,7 +2269,10 @@ in
     name = "victoria-stack-vmauth-no-access-entries-warn";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         traces.enable = true; # logs deliberately NOT enabled
@@ -2486,7 +2561,10 @@ in
     name = "victoria-stack-vmauth-write-doors";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -2572,7 +2650,10 @@ in
     name = "victoria-stack-vmauth-write-door-http-open";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -2706,7 +2787,10 @@ in
     name = "victoria-stack-vmauth-low-ports";
 
     containers.low = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -2726,7 +2810,10 @@ in
       };
     };
     containers.high = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.writeTokensFile = "${writeTokensFixture}";
@@ -2772,7 +2859,10 @@ in
     name = "victoria-stack-vmauth-access-log-default-off";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -2802,7 +2892,10 @@ in
 
     containers.stack = {
       virtualisation.vlans = [ 1 ];
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -2858,7 +2951,10 @@ in
     name = "victoria-stack-vmauth-anonymous-write-door-closed";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -3078,7 +3174,10 @@ in
     name = "victoria-stack-vmauth-builtin-pages-internal-only";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -3250,7 +3349,10 @@ in
     name = "victoria-stack-vmauth-empty-admin-password";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         # An empty file used to render an admin user with an EMPTY password
@@ -3307,7 +3409,10 @@ in
     name = "victoria-stack-vmauth-scoped-extra-url-map";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         logs.enable = true;
@@ -3422,7 +3527,10 @@ in
     name = "victoria-stack-vmauth-scoped-no-src-paths";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth = {
@@ -3500,7 +3608,10 @@ in
     name = "victoria-stack-vmauth-authorization-not-forwarded";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
 
       systemd.services.echo-headers = {
         wantedBy = [ "multi-user.target" ];

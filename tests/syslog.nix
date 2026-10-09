@@ -890,7 +890,10 @@ in
     # `main`: the defaults. `custom`: the labels overridden and extended on the
     # UDP slot only.
     containers.main = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       environment.systemPackages = tools;
       services.victoriaStack.logs = {
         enable = true;
@@ -901,7 +904,10 @@ in
       };
     };
     containers.custom = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       environment.systemPackages = tools;
       services.victoriaStack.logs = {
         enable = true;
@@ -963,7 +969,10 @@ in
     name = "victoria-stack-syslog-udp-on-http-port";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       environment.systemPackages = tools;
       services.victoriaStack.logs = {
         enable = true;
@@ -1189,7 +1198,10 @@ in
     name = "victoria-stack-syslog-read-tier";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       environment.systemPackages = tools;
       services.victoriaStack = {
         logs = {
@@ -1339,7 +1351,10 @@ in
     name = "victoria-stack-syslog-low-port";
 
     containers.low = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       environment.systemPackages = tools;
       services.victoriaStack.logs = {
         enable = true;
@@ -1350,7 +1365,10 @@ in
       };
     };
     containers.high = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack.logs = {
         enable = true;
         syslog.udp = slot "127.0.0.1" 5514;

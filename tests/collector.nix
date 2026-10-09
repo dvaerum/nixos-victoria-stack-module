@@ -89,7 +89,10 @@ let
     }:
     {
       virtualisation.vlans = [ 1 ];
-      imports = [ stackModule ];
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = services // {
         vmauth = {
           writeTokensFile = "${tokensFile}";
@@ -127,7 +130,10 @@ in
 
     containers.stack = {
       virtualisation.vlans = [ 1 ];
-      imports = [ stackModule ];
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.writeTokensFile = "${writeTokensFixture}";
@@ -204,7 +210,10 @@ in
 
     containers.stack = {
       virtualisation.vlans = [ 1 ];
-      imports = [ stackModule ];
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         logs.enable = true;
         vmauth.writeTokensFile = "${writeTokensFixture}";
@@ -263,7 +272,10 @@ in
 
     containers.stack = {
       virtualisation.vlans = [ 1 ];
-      imports = [ stackModule ];
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         traces.enable = true;
         vmauth.writeTokensFile = "${writeTokensFixture}";
@@ -328,7 +340,10 @@ in
 
     containers.stack = {
       virtualisation.vlans = [ 1 ];
-      imports = [ stackModule ];
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         traces.enable = true;
@@ -1231,7 +1246,10 @@ in
 
     containers.stack = {
       virtualisation.vlans = [ 1 ];
-      imports = [ stackModule ];
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         vmauth.writeTokensFile = "${writeTokensFixture}";
@@ -1860,7 +1878,10 @@ in
 
     containers.stack = {
       virtualisation.vlans = [ 1 ];
-      imports = [ stackModule ];
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         logs.enable = true;
         vmauth.writeTokensFile = "${writeTokensFixture}";
@@ -2665,7 +2686,10 @@ in
 
     containers.stack = {
       virtualisation.vlans = [ 1 ];
-      imports = [ stackModule ];
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         logs.enable = true;
         vmauth.writeTokensFile = "${writeTokensFixture}";

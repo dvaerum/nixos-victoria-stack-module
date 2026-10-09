@@ -274,7 +274,10 @@ in
     name = "victoria-stack-mcp-through-vmauth";
 
     containers.machine = {
-      imports = [ module ];
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
       services.victoriaStack = {
         metrics.enable = true;
         metrics.mcp.enable = true;
@@ -450,7 +453,10 @@ in
     containers.machine =
       { lib, ... }:
       {
-        imports = [ module ];
+        imports = [
+          module
+          testLib.testStartupTimeouts
+        ];
         services.victoriaStack = {
           metrics.enable = true;
           metrics.mcp = {
@@ -517,7 +523,10 @@ in
     containers.machine =
       { lib, ... }:
       {
-        imports = [ module ];
+        imports = [
+          module
+          testLib.testStartupTimeouts
+        ];
         services.victoriaStack = {
           metrics.enable = true;
           metrics.mcp.enable = true;
