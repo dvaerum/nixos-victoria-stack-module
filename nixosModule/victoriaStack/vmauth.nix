@@ -12,10 +12,9 @@ let
   anyBackendEnabled = topCfg.metrics.enable || topCfg.logs.enable || topCfg.traces.enable;
   selfMonitoring = import ./self-monitoring.nix { inherit lib; };
 
-  # systemd expands specifiers (%h) and ${VAR} in Exec* lines even inside
-  # quotes. Applied only to user-supplied text: the module's own %d
+  # Applied only to user-supplied text: the module's own %d
   # credential-directory flags must stay raw.
-  esc = lib.replaceStrings [ "%" "$" ] [ "%%" "$$" ];
+  inherit (import ./exec-escape.nix { inherit lib; }) escape;
   listen = import ./listen.nix { inherit lib; };
 
   # `ip:port`, bracketing a bare IPv6 literal.
@@ -580,19 +579,19 @@ in
             "${cfg.package}/bin/vmauth"
             "-auth.config=/run/vmauth/config.json"
           ]
-          ++ map (l: esc "-httpListenAddr=${l.addr}") listeners
+          ++ map (l: escape "-httpListenAddr=${l.addr}") listeners
           # vmauth's own pages move off every -httpListenAddr listener onto this
           # one. It reads the SAME -tls/-tlsCertFile/-tlsKeyFile array slot as
           # listener 0, which is why, whenever any listener uses TLS, those
           # arrays are written out in full and keep a plain first entry.
-          ++ [ (esc "-httpInternalListenAddr=${cfg.internalListenAddress}") ]
+          ++ [ (escape "-httpInternalListenAddr=${cfg.internalListenAddress}") ]
           ++ lib.optionals anyTls (
             map (l: "-tls=${lib.boolToString l.tls}") listeners
             ++ map (l: "-tlsCertFile=${lib.optionalString l.tls "%d/https-cert"}") listeners
             ++ map (l: "-tlsKeyFile=${lib.optionalString l.tls "%d/https-key"}") listeners
           )
           ++ [
-            (esc "-http.idleConnTimeout=${cfg.idleConnTimeout}")
+            (escape "-http.idleConnTimeout=${cfg.idleConnTimeout}")
           ]
           ++ lib.optional (
             cfg.maxConcurrentRequests != null
@@ -609,7 +608,7 @@ in
           # LoadCredential= at runtime.
           ++ lib.optional (cfg.backendTls.certFile != null) "-backend.TLSCertFile=%d/backend-tls-cert"
           ++ lib.optional (cfg.backendTls.keyFile != null) "-backend.TLSKeyFile=%d/backend-tls-key"
-          ++ map esc (
+          ++ map escape (
             selfMonitoring.mkFlags {
               selfMonitoring = cfg.selfMonitoring;
               metricsEnabled = topCfg.metrics.enable;
@@ -617,7 +616,7 @@ in
               job = "vmauth";
             }
           )
-          ++ map esc cfg.extraFlags
+          ++ map escape cfg.extraFlags
         );
         RuntimeDirectory = "vmauth";
         RuntimeDirectoryMode = "0700";

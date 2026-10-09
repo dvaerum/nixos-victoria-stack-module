@@ -72,9 +72,7 @@ let
     ) 0 parts;
   minRetentionSeconds = 86400;
 
-  # systemd expands specifiers (%h) and ${VAR} in Exec* lines even inside
-  # quotes; user-supplied text must reach the process literally.
-  escapeSystemd = lib.replaceStrings [ "%" "$" ] [ "%%" "$$" ];
+  inherit (import ./exec-escape.nix { inherit lib; }) escape;
 in
 {
   # Renamed from extraOptions to match vmauth.extraFlags and the
@@ -164,7 +162,7 @@ in
           serviceConfig = lib.mkMerge [
             {
               ExecStart = lib.escapeShellArgs (
-                map escapeSystemd (
+                map escape (
                   [
                     "${cfg.package}/bin/${binaryName}"
                     "-storageDataPath=${toString cfg.dataDir}"
@@ -193,7 +191,7 @@ in
                 )
                 # Escaped by the helper itself: the TLS flags carry raw %d.
                 ++ lib.optionals supportsSyslog (syslog.mkFlags cfg.syslog)
-                ++ map escapeSystemd cfg.extraFlags
+                ++ map escape cfg.extraFlags
               );
               Restart = "on-failure";
               RestartSec = 5;
@@ -324,7 +322,7 @@ in
           serviceConfig = {
             Type = "oneshot";
             ExecStart = lib.escapeShellArgs (
-              map escapeSystemd [
+              map escape [
                 (lib.getExe pkgs.curl)
                 "--silent"
                 "--show-error"

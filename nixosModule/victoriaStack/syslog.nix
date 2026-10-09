@@ -9,10 +9,7 @@
 let
   listen = import ./listen.nix { inherit lib; };
 
-  # systemd expands specifiers (%h) and ${VAR} in Exec* lines even inside
-  # quotes, and reads C escapes there too (`\"` loses its backslash); user text
-  # must reach the process literally.
-  esc = lib.replaceStrings [ "\\" "%" "$" ] [ "\\\\" "%%" "$$" ];
+  inherit (import ./exec-escape.nix { inherit lib; }) escape;
 in
 rec {
   transports = [
@@ -122,7 +119,7 @@ rec {
       in
       map (s: "-syslog.listenAddr.${transport}=${listen.hostPort s.ipAddress s.port}") slots
       ++ lib.optionals (lib.any (f: f != "") fields) (
-        map (f: "-syslog.extraFields.${transport}=${esc f}") fields
+        map (f: "-syslog.extraFields.${transport}=${escape f}") fields
       )
       ++ tlsFlags
     ) transports;

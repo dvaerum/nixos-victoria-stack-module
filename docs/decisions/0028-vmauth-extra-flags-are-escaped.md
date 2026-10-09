@@ -18,3 +18,10 @@ one: the same option name behaved differently per service.
 - Every flag containing `=` is single-quoted in the rendered unit (so are the
   storage services'); systemd still expands the `%d` credential specifier inside
   the quotes (the real https-door boot test pins it).
+- Quoting alone does not make a value literal: systemd also reads C escapes
+  (`\"` loses its backslash, `\b` becomes a backspace) and expands `%` and `$`
+  inside the quotes. Every user-supplied element is therefore escaped for
+  systemd first (`nixosModule/victoriaStack/exec-escape.nix`, one helper for the
+  storage services, vmauth and the syslog flags) and only then quoted; the
+  module's own `%d` flags skip the escape. MCP's values travel in `Environment=`,
+  where only `%` needs escaping.

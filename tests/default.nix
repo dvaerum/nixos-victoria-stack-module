@@ -11,6 +11,7 @@ let
     grafana = import ./grafana.nix { inherit pkgs nixosModule; };
     nginx = import ./nginx.nix { inherit pkgs nixosModule; };
     mcp = import ./mcp.nix { inherit pkgs nixosModule; };
+    escaping = import ./escaping.nix { inherit pkgs nixosModule; };
     syslog = import ./syslog.nix { inherit pkgs nixosModule; };
     collector = import ./collector.nix { inherit pkgs nixosModule; };
     full = import ./full.nix { inherit pkgs nixosModule; };

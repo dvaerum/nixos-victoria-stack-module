@@ -8,6 +8,7 @@
 let
   topCfg = config.services.victoriaStack;
   listen = import ./listen.nix { inherit lib; };
+  inherit (import ./exec-escape.nix { inherit lib; }) escapeEnvironment;
 
   # Each MCP server talks directly to its own backend over loopback, not
   # through vmauth -- by the time a request reaches the MCP server it's
@@ -38,32 +39,34 @@ let
           ];
           wantedBy = [ "multi-user.target" ];
 
-          environment = {
-            # effectiveUrl, not listenAddress: see docs/decisions/0019. Already
-            # includes its scheme.
-            "${envPrefix}_INSTANCE_ENTRYPOINT" = serviceCfg.effectiveUrl;
-            MCP_SERVER_MODE = "http";
-            MCP_LISTEN_ADDR = serviceCfg.mcp.listenAddress;
-          }
-          // lib.optionalAttrs (instanceType != null) {
+          environment = lib.mapAttrs (_: escapeEnvironment) (
+            {
+              # effectiveUrl, not listenAddress: see docs/decisions/0019. Already
+              # includes its scheme.
+              "${envPrefix}_INSTANCE_ENTRYPOINT" = serviceCfg.effectiveUrl;
+              MCP_SERVER_MODE = "http";
+              MCP_LISTEN_ADDR = serviceCfg.mcp.listenAddress;
+            }
+            // lib.optionalAttrs (instanceType != null) {
 
-            "${envPrefix}_INSTANCE_TYPE" = instanceType;
-          }
-          # MCP_LOG_LEVEL/MCP_LOG_FORMAT/MCP_DISABLED_TOOLS -- confirmed
-          # identical across all three mcp-victoria* binaries' own
-          # READMEs. All inert unless configured.
-          // lib.optionalAttrs (serviceCfg.mcp.logLevel != null) {
-            MCP_LOG_LEVEL = serviceCfg.mcp.logLevel;
-          }
-          // lib.optionalAttrs (serviceCfg.mcp.logFormat != null) {
-            MCP_LOG_FORMAT = serviceCfg.mcp.logFormat;
-          }
-          // lib.optionalAttrs (upstreamDefaultDisabledTools != [ ] || serviceCfg.mcp.disabledTools != [ ]) {
-            # Union, so a user's list never drops upstreamDefaultDisabledTools.
-            MCP_DISABLED_TOOLS = lib.concatStringsSep "," (
-              lib.unique (upstreamDefaultDisabledTools ++ serviceCfg.mcp.disabledTools)
-            );
-          };
+              "${envPrefix}_INSTANCE_TYPE" = instanceType;
+            }
+            # MCP_LOG_LEVEL/MCP_LOG_FORMAT/MCP_DISABLED_TOOLS -- confirmed
+            # identical across all three mcp-victoria* binaries' own
+            # READMEs. All inert unless configured.
+            // lib.optionalAttrs (serviceCfg.mcp.logLevel != null) {
+              MCP_LOG_LEVEL = serviceCfg.mcp.logLevel;
+            }
+            // lib.optionalAttrs (serviceCfg.mcp.logFormat != null) {
+              MCP_LOG_FORMAT = serviceCfg.mcp.logFormat;
+            }
+            // lib.optionalAttrs (upstreamDefaultDisabledTools != [ ] || serviceCfg.mcp.disabledTools != [ ]) {
+              # Union, so a user's list never drops upstreamDefaultDisabledTools.
+              MCP_DISABLED_TOOLS = lib.concatStringsSep "," (
+                lib.unique (upstreamDefaultDisabledTools ++ serviceCfg.mcp.disabledTools)
+              );
+            }
+          );
 
           # HTTP probe, like the storage services': all 3 mcp-victoria* binaries
           # serve /health/readiness. Without it vmauth's `after` on this unit
