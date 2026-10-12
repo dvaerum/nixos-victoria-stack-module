@@ -130,7 +130,7 @@ exposed directly via its own `listenAddress` when vmauth is off).
 ## Explicitly deferred (not in this plan)
 
 Vendored Grafana dashboards, default alerting rules, migrating
-`deployment-a`/`deployment-b` onto the new module.
+the two existing deployments this module generalizes from onto the new module.
 
 **External/remote backends** (docs/decisions/0019): `vmauth`/`grafana`/
 `nginx` assume every enabled signal's storage service is co-located on

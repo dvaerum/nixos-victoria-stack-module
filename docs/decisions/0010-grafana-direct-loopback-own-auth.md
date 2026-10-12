@@ -25,8 +25,8 @@ module's design always runs on the *same host* as the backends it reads from
 whose only job is "let the thing next to me on the same filesystem read my
 data" is a secret to generate, store, and rotate that stops nobody: anyone
 with same-host code-execution could already read the credential file
-directly. `deployment-a` — confirmed to be the more mature, bug-fixed of the
-two real deployments this module generalizes from — already makes this exact
+directly. One of the two real deployments this module generalizes from (the more
+mature, bug-fixed one) already makes this exact
 call (direct loopback, no vmauth hop for Grafana's datasources).
 
 ## Consequence

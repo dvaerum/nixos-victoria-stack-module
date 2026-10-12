@@ -2,9 +2,9 @@
 
 # A complete, realistic single-host configuration -- metrics + logs +
 # traces + vmauth (both credential tiers) + Grafana + nginx + MCP, plus
-# the host collecting its own data (self-monitoring, matching
-# deployment-a's real pattern: the same host that runs the stack also
-# runs victoriaCollector against its own vmauth gateway over loopback).
+# the host collecting its own data (self-monitoring: a single host that runs
+# the stack also runs victoriaCollector against its own vmauth gateway over
+# loopback).
 #
 # Secret file paths below are placeholders -- replace with wherever your
 # own secrets mechanism (sops-nix, agenix, a manually-placed file, this

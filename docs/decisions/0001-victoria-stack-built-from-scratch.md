@@ -9,8 +9,7 @@ configure nixpkgs' own `services.victoriametrics`/`services.victorialogs`/
 
 ## Why
 
-Both real deployments this module generalizes from (`deployment-a`,
-`deployment-b`) independently hit the same wall and independently built the same
+Both real deployments this module generalizes from independently hit the same wall and independently built the same
 workaround: nixpkgs' own modules hardcode `-storageDataPath=/var/lib/<service>`
 with no option to override it, and hardcode `DynamicUser = true`, whose
 `StateDirectory` handling tries to migrate a pre-existing `/var/lib/<name>`

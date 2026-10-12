@@ -9,8 +9,8 @@ entry in `warnings`), not a hard assertion — and the warning is itself suppres
 
 ## Why
 
-This is exactly the broken combination both real deployments
-(`deployment-a`, `deployment-b`) independently discovered the hard way
+This is exactly the broken combination both real deployments this module
+generalizes from independently discovered the hard way
 (`DynamicUser`'s `StateDirectory` migration fails against an externally
 mounted path). A hard assertion would make that combination impossible to
 build at all. A warning catches it at `nixos-rebuild build` time (not months

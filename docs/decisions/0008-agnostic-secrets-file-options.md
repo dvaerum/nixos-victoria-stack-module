@@ -13,8 +13,8 @@ file whose *content* is the secret, however that file got there.
 Matches this author's own existing convention (`CoNexus`'s
 `clientSecretFile`) and the project's own stated secrets policy: sops is
 something a *consumer* wires up, not something a module assumes. Baking
-`config.sops.placeholder."..."` directly into module logic (as today's real
-`deployment-a` vmauth.nix does) works, but makes sops-nix a hard, invisible
+`config.sops.placeholder."..."` directly into module logic (as one of the
+deployments this module generalizes from did in its vmauth config) works, but makes sops-nix a hard, invisible
 dependency of this flake for anyone who wants real secrets at all — agenix,
 a manually-placed file, or any other mechanism would be locked out.
 
