@@ -318,7 +318,7 @@ let
           exit 1
         fi
         # vmauth itself dies on a duplicate and prints the token in its fatal line.
-        bad=$(jq -r '[to_entries[] | select((.value.token // "") != "") | {n: (.key + 1), t: .value.token}] | group_by(.t) | map(select(length > 1) | map("#\(.n)") | join(" and ")) | join("; ")' <<<"$tokens_json")
+        bad=$(jq -r '[to_entries[] | select((.value.token // "") | test("^\\s*$") | not) | {n: (.key + 1), t: .value.token}] | group_by(.t) | map(select(length > 1) | map("#\(.n)") | join(" and ")) | join("; ")' <<<"$tokens_json")
         if [ -n "$bad" ]; then
           echo "vmauth-render-config: $label lists the same token more than once (entries $bad)" >&2
           exit 1
@@ -355,6 +355,7 @@ let
                (.key + 1) as $n
                | .value as $t
                | ($t.token // "") as $tok
+               | ($tok | test("^\\s*$")) as $blank
                | ($t | has("backends")) as $scoped
                | (($t.backends // []) | unique) as $req
                | ($req - $known) as $unknown
@@ -374,9 +375,9 @@ let
                      end)
                   else $urlmap[0] end) as $um
                | {
-                   user: (if $tok != "" and ($um | length) > 0 then {bearer_token: $tok, url_map: $um} else null end),
+                   user: (if ($blank | not) and ($um | length) > 0 then {bearer_token: $tok, url_map: $um} else null end),
                    warnings: (
-                     if $tok == "" then ["\($label) entry #\($n) has an empty token -- skipped"]
+                     if $blank then ["\($label) entry #\($n) has an empty or whitespace-only token -- skipped"]
                      else
                        (if ($unknown | length) > 0
                         then ["\($label) entry #\($n) names unknown backend(s): \($unknown | join(", ")) -- ignored (valid names: \($known | join(", ")))"]
@@ -408,7 +409,7 @@ let
       # The same token in both tiers would give one bearer two routings.
       if [ -n "$read_tokens_json" ] && [ -n "$write_tokens_json" ]; then
         shared=$(jq -n -r --slurpfile r <(printf '%s' "$read_tokens_json") --slurpfile w <(printf '%s' "$write_tokens_json") \
-          '[$r[0] | to_entries[] | . as $e | select(($e.value.token // "") != "") | ($w[0] | to_entries[] | select(.value.token == $e.value.token)) as $m | "readTokensFile (entry #\($e.key + 1)) and writeTokensFile (entry #\($m.key + 1))"] | join("; ")')
+          '[$r[0] | to_entries[] | . as $e | select(($e.value.token // "") | test("^\\s*$") | not) | ($w[0] | to_entries[] | select(.value.token == $e.value.token)) as $m | "readTokensFile (entry #\($e.key + 1)) and writeTokensFile (entry #\($m.key + 1))"] | join("; ")')
         if [ -n "$shared" ]; then
           echo "vmauth-render-config: the same token is in $shared" >&2
           exit 1

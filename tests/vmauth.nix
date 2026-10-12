@@ -2355,6 +2355,7 @@ in
                 backends:
               - token: read-good-token # gitleaks:allow
               - token: ""
+              - token: "   "
           ''}";
           writeTokensFile = "${pkgs.writeText "warn-write-tokens.yaml" ''
             tokens:
@@ -2365,6 +2366,7 @@ in
               - token: write-good-token # gitleaks:allow
               - token:
               - token: ""
+              - token: " \t "
           ''}";
           # Whitespace only (and a newline): no admin user, no empty-password login.
           adminPasswordFile = "${pkgs.writeText "blank-admin-password" "  \t \n"}";
@@ -2379,6 +2381,8 @@ in
       wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
 
+      import json
+
       journal = machine.succeed("journalctl --no-pager")
       for expected in [
           "readTokensFile entry #1 has no valid backend",
@@ -2387,13 +2391,15 @@ in
           "readTokensFile entry #3 names unknown backend(s): trackers",
           "readTokensFile entry #4 is scoped to [logs], none of which is enabled",
           "readTokensFile entry #5 has no valid backend",
-          "readTokensFile entry #7 has an empty token",
+          "readTokensFile entry #7 has an empty or whitespace-only token",
+          "readTokensFile entry #8 has an empty or whitespace-only token",
           "writeTokensFile entry #1 has no valid backend",
           "writeTokensFile entry #2 names unknown backend(s): trackers",
-          "writeTokensFile entry #4 has an empty token",
+          "writeTokensFile entry #4 has an empty or whitespace-only token",
           # An empty token in BOTH tiers is not "the same token in both": it is
           # no token at all, so vmauth must still start.
-          "writeTokensFile entry #5 has an empty token",
+          "writeTokensFile entry #5 has an empty or whitespace-only token",
+          "writeTokensFile entry #6 has an empty or whitespace-only token",
           "adminPasswordFile is empty or only whitespace",
       ]:
           assert expected in journal, (expected, journal)
@@ -2455,6 +2461,70 @@ in
       ]:
           assert token not in config, token
       assert '"admin"' not in config, config
+      # A whitespace-only token is not a user either: its bearer would be blank.
+      users = json.loads(config)["users"]
+      assert all(u.get("bearer_token", "x").strip() for u in users), users
+      blank = machine.succeed(
+          "curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer    ' "
+          "'http://127.0.0.1:4204/metrics/api/v1/labels'"
+      ).strip()
+      assert blank == "401", blank
+    '';
+  };
+
+  # A blank token (empty string, YAML null or only whitespace) in BOTH files, and
+  # the same whitespace twice in one file, are warned about like any other blank
+  # entry: they must never reach the "same token" errors, which exit.
+  blank-tokens-in-both-files-warn-and-do-not-exit = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-blank-tokens-both-files";
+
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          readTokensFile = "${pkgs.writeText "blank-read-tokens.yaml" ''
+            tokens:
+              - token: ""
+              - token: "   "
+              - token: "   "
+              - token:
+              - token: blank-both-read-token # gitleaks:allow
+          ''}";
+          writeTokensFile = "${pkgs.writeText "blank-write-tokens.yaml" ''
+            tokens:
+              - token: ""
+              - token: "   "
+              - token:
+              - token: blank-both-write-token # gitleaks:allow
+          ''}";
+        };
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      wait_active(machine, "vmauth.service")
+      machine.wait_for_open_port(4204)
+
+      journal = machine.succeed("journalctl -u vmauth.service --no-pager -o cat")
+      for expected in [
+          "readTokensFile entry #1 has an empty or whitespace-only token",
+          "readTokensFile entry #2 has an empty or whitespace-only token",
+          "readTokensFile entry #3 has an empty or whitespace-only token",
+          "readTokensFile entry #4 has an empty or whitespace-only token",
+          "writeTokensFile entry #1 has an empty or whitespace-only token",
+          "writeTokensFile entry #2 has an empty or whitespace-only token",
+          "writeTokensFile entry #3 has an empty or whitespace-only token",
+      ]:
+          assert expected in journal, (expected, journal)
+      assert "more than once" not in journal and "the same token" not in journal, journal
+      config = machine.succeed("cat /run/vmauth/config.json")
+      assert "blank-both-read-token" in config and "blank-both-write-token" in config, config
     '';
   };
 
