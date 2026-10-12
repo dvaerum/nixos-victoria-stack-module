@@ -1015,10 +1015,17 @@ Put nginx in front of the service instead\.
 The ` syslog.udp ` / ` syslog.tcp ` options own the ` -syslog.listenAddr.* `
 and ` -syslog.extraFields.* ` arrays of their transport (and the
 ` -syslog.tls `, ` -syslog.tlsCertFile ` and ` -syslog.tlsKeyFile ` arrays
-while a tcp slot is enabled): those arrays are positional with the
-listeners, so a flag of the same array here is rejected at build time\.
-Every other ` -syslog.* ` flag, and the ` unix ` transport, can be passed
-here freely\.
+while a tcp or a tls slot is enabled): those arrays are positional with
+the listeners, so a flag of the same array here is rejected at build
+time\. Every other ` -syslog.* ` flag, and the ` unix ` transport, can be
+passed here freely\.
+
+The ` tcp ` and ` tls ` slots are the first and second tcp listener, so a
+` -syslog.<name>.tcp ` flag given once (` tenantID `, ` streamFields `,
+` compressMethod `, …) applies to the ` tcp ` slot only and the ` tls ` slot
+keeps the default; with both slots enabled evaluation warns about it\. Give
+such a flag twice, the ` tcp ` slot’s value first and the ` tls ` slot’s
+second (a blank value means the default)\.
 
 A unix socket is not a slot (and the module does not test it): pass
 ` -syslog.listenAddr.unix=/run/victorialogs/syslog.sock ` here
