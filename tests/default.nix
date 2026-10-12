@@ -14,6 +14,7 @@ let
     escaping = import ./escaping.nix { inherit pkgs nixosModule; };
     syslog = import ./syslog.nix { inherit pkgs nixosModule; };
     collector = import ./collector.nix { inherit pkgs nixosModule; };
+    testlib = import ./testlib.nix { inherit pkgs nixosModule; };
     full = import ./full.nix { inherit pkgs nixosModule; };
   };
 in

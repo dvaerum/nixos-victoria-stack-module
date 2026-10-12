@@ -45,6 +45,7 @@ in
       {
         imports = [
           module
+          testLib.testStartupTimeouts
           example
         ];
 
@@ -253,6 +254,7 @@ in
         virtualisation.vlans = [ 1 ];
         imports = [
           module
+          testLib.testStartupTimeouts
           example
         ];
 
