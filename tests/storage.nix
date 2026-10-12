@@ -1607,6 +1607,32 @@ in
                 extraFlags = [ "-pushmetrics.extraLabel=a=\"b\"" ];
               };
             };
+            # Go's flag package takes one dash or two.
+            "double-dash --pushmetrics.url counts" = warns "metrics" {
+              metrics = {
+                enable = true;
+                extraFlags = [ "--pushmetrics.url=http://example.invalid/push" ];
+              };
+            };
+            "double-dash --pushmetrics.interval counts" = warns "traces" {
+              traces = {
+                enable = true;
+                extraFlags = [ "--pushmetrics.interval=10s" ];
+              };
+            };
+            "double-dash on vmauth counts" = warns "vmauth" {
+              vmauth.extraFlags = [ "--pushmetrics.url=http://example.invalid/push" ];
+            };
+            "a flag that only starts like it does not count" =
+              warningsFor {
+                metrics = {
+                  enable = true;
+                  extraFlags = [
+                    "--pushmetricsX=1"
+                    "-search.pushmetrics.x=1"
+                  ];
+                };
+              } == [ ];
             "the old extraOptions name still counts (it is renamed to extraFlags)" = warns "logs" {
               logs = {
                 enable = true;

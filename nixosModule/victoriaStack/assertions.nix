@@ -399,7 +399,9 @@ in
         ];
         conflicts = lib.filter (
           svc:
-          svc.active && svc.selfMonitoring.enable && lib.any (lib.hasPrefix "-pushmetrics.") svc.extraFlags
+          svc.active
+          && svc.selfMonitoring.enable
+          && lib.any (f: lib.hasPrefix "pushmetrics." (flagName f)) svc.extraFlags
         ) services;
       in
       syslogWarnings
