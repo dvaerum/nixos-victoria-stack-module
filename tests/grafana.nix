@@ -745,7 +745,7 @@ in
             "the helper try-restarts grafana, as a oneshot with no capabilities" =
               evaluated.config.systemd.services.grafana-secret-restart.serviceConfig == {
                 Type = "oneshot";
-                ExecStart = "${evaluated.config.systemd.package}/bin/systemctl try-restart grafana.service";
+                ExecStart = "${evaluated.config.systemd.package}/bin/systemctl try-restart --no-block grafana.service";
                 CapabilityBoundingSet = "";
               };
           };
@@ -787,6 +787,68 @@ in
         else
           throw "token plumbing rendered without a token file: ${builtins.toJSON failed}"
       );
+
+  # The path unit only re-arms once the restart helper has finished, so a helper
+  # that waits for Grafana to come back loses a token file replaced meanwhile
+  # (the helper is --no-block). Grafana is held in a slow start AFTER the unit
+  # has read the token; the file is replaced a second time during it, and the
+  # last file must be the one Grafana ends up sending.
+  token-file-replaced-during-a-restart-is-not-lost = pkgs.testers.nixosTest {
+    name = "victoria-stack-grafana-token-replaced-during-restart";
+
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+        grafanaConsumerConfig
+        grafanaTokenWiring
+      ];
+      systemd.tmpfiles.rules = [
+        "d /var/lib/rotation 0700 root root -"
+        "f /var/lib/rotation/grafana-token 0600 root root - token-generation-one"
+      ];
+      # After the header is built from the token, so a token replaced during the
+      # sleep is only picked up by another restart.
+      systemd.services.grafana.serviceConfig.ExecStartPre = lib.mkAfter [
+        "${pkgs.coreutils}/bin/sleep 8"
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana = {
+          enable = true;
+          readTokenFile = lib.mkForce "/var/lib/rotation/grafana-token";
+        };
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      wait_active(machine, "grafana.service")
+      machine.wait_for_unit("grafana-read-token-watch.path")
+
+      def header():
+          return machine.succeed("cat /run/grafana/vmauth-authorization")
+
+      assert header() == "Bearer token-generation-one", header()
+
+      machine.succeed("printf token-generation-two > /var/lib/rotation/grafana-token")
+      # The restart has read the new token and is held in its slow start.
+      machine.wait_until_succeeds(
+          "test \"$(cat /run/grafana/vmauth-authorization)\" = 'Bearer token-generation-two'", timeout=60
+      )
+      machine.succeed("systemctl show -p ActiveState --value grafana.service | grep -qx activating")
+      machine.succeed("printf token-generation-three > /var/lib/rotation/grafana-token")
+
+      # The last file written is the one Grafana must end up sending.
+      machine.wait_until_succeeds(
+          "test \"$(cat /run/grafana/vmauth-authorization)\" = 'Bearer token-generation-three'",
+          timeout=180,
+      )
+      wait_active(machine, "grafana.service")
+      assert header() == "Bearer token-generation-three", header()
+    '';
+  };
 
   # The whole provisioning document the module hands to Grafana, spelled out: a
   # datasource's type, uid, URL, default flag, access mode, editability and the

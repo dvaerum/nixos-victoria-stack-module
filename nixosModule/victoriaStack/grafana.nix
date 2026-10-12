@@ -101,11 +101,13 @@ in
     };
 
     # try-restart: a rotation while Grafana is stopped must not start it.
+    # --no-block: the path unit only re-arms once this helper finishes, so waiting
+    # for Grafana to come back would lose a token replaced in the meantime.
     systemd.services.grafana-secret-restart = lib.mkIf (cfg.readTokenFile != null) {
       description = "Restart Grafana after its vmauth read token changed";
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = "${config.systemd.package}/bin/systemctl try-restart grafana.service";
+        ExecStart = "${config.systemd.package}/bin/systemctl try-restart --no-block grafana.service";
         CapabilityBoundingSet = "";
       };
     };
