@@ -8,6 +8,7 @@
 let
   topCfg = config.services.victoriaStack;
   listen = import ./listen.nix { inherit lib; };
+  readiness = import ./readiness.nix { inherit lib pkgs; };
   inherit (import ./exec-escape.nix { inherit lib; }) escapeEnvironment;
 
   # One value for the readiness probe and, a minute above it, TimeoutStartSec.
@@ -75,15 +76,14 @@ let
           # HTTP probe, like the storage services': all 3 mcp-victoria* binaries
           # serve /health/readiness. Without it vmauth's `after` on this unit
           # (vmauth.nix) would only mean "started", not "answering".
-          path = [ pkgs.wait4x ];
-          postStart =
-            let
-              bindAddr = listen.connectAddr serviceCfg.mcp.listenAddress;
-            in
-            "wait4x http http://${bindAddr}/health/readiness --timeout ${readinessTimeout}";
-
           serviceConfig = {
             ExecStart = "${serviceCfg.mcp.package}/bin/${binaryName}";
+            ExecStartPost = readiness.command {
+              unit = "mcp-victoria${name}.service";
+              kind = "http";
+              target = "http://${listen.connectAddr serviceCfg.mcp.listenAddress}/health/readiness";
+              timeout = readinessTimeout;
+            };
             DynamicUser = true;
             Restart = "on-failure";
             RestartSec = 5;
@@ -91,7 +91,7 @@ let
 
             # Hardening -- same general-purpose systemd profile applied
             # across this module (docs/decisions/0015). Readiness is
-            # handled above via postStart's wait4x probe, not here.
+            # handled above via ExecStartPost, not here.
             DeviceAllow = [ "/dev/null rw" ];
             DevicePolicy = "strict";
             LockPersonality = true;

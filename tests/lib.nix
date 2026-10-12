@@ -254,16 +254,37 @@ let
     ];
   };
 
-  # Seconds of the wait4x probe and of TimeoutStartSec for one eval'd unit; each
-  # is null when absent or not in whole seconds. Callers pin both the values and
+  # The readiness probe of one eval'd unit (readiness.nix renders ExecStartPost
+  # as `<store path> <unit> <deadline seconds> <kind> <target>`): its
+  # executable and the four arguments, null when the unit has no such probe.
+  # Targets that need shell quoting are not handled; pin those separately.
+  readinessProbe =
+    unit:
+    let
+      words = lib.splitString " " (unit.serviceConfig.ExecStartPost or "");
+    in
+    if builtins.length words == 5 then
+      {
+        exe = builtins.head words;
+        unit = builtins.elemAt words 1;
+        deadline = builtins.elemAt words 2;
+        kind = builtins.elemAt words 3;
+        target = builtins.elemAt words 4;
+      }
+    else
+      null;
+
+  # Seconds the probe waits and of TimeoutStartSec for one eval'd unit; each is
+  # null when absent or not in whole seconds. Callers pin both the values and
   # the gap between them.
   probeAndStartSeconds =
     unit:
     let
       seconds = m: if m == null then null else lib.toIntBase10 (builtins.head m);
+      probe = readinessProbe unit;
     in
     {
-      probe = seconds (builtins.match ".*--timeout ([0-9]+)s.*" unit.postStart);
+      probe = if probe == null then null else seconds (builtins.match "([0-9]+)" probe.deadline);
       start = seconds (builtins.match "([0-9]+)s" (unit.serviceConfig.TimeoutStartSec or ""));
     };
 
@@ -338,6 +359,47 @@ let
             time.sleep(1)
   '';
 
+  # Test-script snippet: start a unit whose main process dies at once and return
+  # the seconds from systemd's "Starting" line to its first "Failed with result"
+  # line (RestartSec=5 spaces the later cycles), both stamps from the guest's
+  # monotonic journal so a loaded host cannot skew them. It also requires the
+  # probe's own "main process exited" message within `bound`: without the probe's
+  # main-process check neither line comes before its whole deadline, so `bound`
+  # (well under any default deadline) turns that into a quick failure. The unit
+  # must not be wantedBy anything: a unit failing in a loop keeps the container's
+  # boot job pending.
+  brokenUnitFailureSeconds = ''
+    def broken_unit_failure_seconds(machine, unit, bound=30):
+        import re
+        machine.succeed(f"systemctl start --no-block {unit}")
+        verdict = f"{unit}: main process exited before becoming ready"
+        try:
+            machine.wait_until_succeeds(
+                f"journalctl -u {unit} --no-pager | grep -q '{verdict}'", timeout=bound
+            )
+        except Exception:
+            _, journal = machine.execute(f"journalctl -u {unit} -n 30 --no-pager")
+            state = machine.succeed(f"systemctl show -p ActiveState,SubState,MainPID {unit}")
+            raise AssertionError(
+                f"no '{verdict}' within {bound}s of its start ({state.split()}); journal:\n{journal}"
+            )
+        journal = machine.succeed(f"journalctl -u {unit} -o short-monotonic --no-pager")
+
+        def stamp(marker):
+            line = next(l for l in journal.splitlines() if marker in l)
+            m = re.match(r"\[\s*([0-9.]+)\]", line)
+            assert m is not None, line
+            return float(m.group(1))
+
+        # systemd counts the start as failed, not only the probe: the unit
+        # leaves `activating` (Restart=on-failure then cycles it).
+        machine.wait_until_succeeds(
+            f"systemctl show -p NRestarts,ActiveState {unit} | grep -qE 'NRestarts=[1-9]|ActiveState=failed'",
+            timeout=bound,
+        )
+        return stamp("Failed with result") - stamp("Starting ")
+  '';
+
   # Boot tests import this so a storage unit that cannot start fails in 2 minutes
   # rather than 5 (wait_active above ends earlier only when the main process is
   # gone). The slowest healthy storage start in the nspawn tests was 15s with the
@@ -352,6 +414,7 @@ in
 {
   inherit
     waitActivePython
+    brokenUnitFailureSeconds
     testStartupTimeouts
     grafanaReadToken
     grafanaReadTokenFile
@@ -366,6 +429,7 @@ in
     hardeningProfile
     hardeningDiff
     probeAndStartSeconds
+    readinessProbe
     otlpMetricGenerator
     otlpTestPython
     httpTestPython

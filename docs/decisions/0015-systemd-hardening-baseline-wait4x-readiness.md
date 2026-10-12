@@ -19,8 +19,9 @@ network namespace (a real boot failed with `bind: permission denied` otherwise).
 effectively strict even with an explicit `full`; only static-user units truly
 ran with `full`.
 
-Readiness on the storage services is a `wait4x http <url>/ping --timeout 5m`
-call (the probe outlasts a slow open of a large data directory;
+Readiness on the storage services is an `ExecStartPost` probe that polls `wait4x http
+<url>/ping` until the `startupTimeout` deadline (5 minutes by default: the probe outlasts
+a slow open of a large data directory;
 `TimeoutStartSec` is 6 minutes so the two never expire together; both derive from
 the `startupTimeout` option, `5m` by default, with `TimeoutStartSec` always a
 minute above it) instead of a
@@ -33,14 +34,23 @@ nixpkgs' own modules hand-roll independently five separate times
 `influxdb` — confirmed by reading all five, no shared helper exists
 anywhere in nixpkgs for this). Neither `Type=notify` nor socket activation
 apply — none of these binaries implement `sd_notify()` or
-`sd_listen_fds()`.
+`sd_listen_fds()`, so the readiness signal stays a probe.
+
+The probe is one shared script (`readiness.nix` / `readiness.sh`) used by every unit. It
+retries `wait4x` with a 2-second per-attempt `--timeout` about once a second, and also
+watches the unit's main process (`$MAINPID`, which systemd sets for `ExecStartPost`):
+when that process is gone the probe fails at once, naming the unit, instead of
+polling a port nobody will ever listen on. systemd waits for `ExecStartPost`, so a
+plain `wait4x --timeout 5m` left a crashed unit in `activating (start-post)` for the
+whole five minutes. The deadline therefore only bounds how long a *live* but
+unready process is waited for; a slow start is still given all of it.
 
 Hardening is also applied to `vmauth.nix` and `mcp.nix`'s three services,
-each with its own probe: vmauth is checked with a TCP probe
-(`wait4x tcp <listen address> --timeout 90s`: with `-httpInternalListenAddr`
+each with its own probe target: vmauth is checked with a TCP probe
+(`<listen address>`, 90s deadline: with `-httpInternalListenAddr`
 its `/health` is not served on the data listener, so there is no HTTP endpoint
-to poll), and each MCP server with `wait4x http <url>/health/readiness
---timeout 90s`. A lighter pass (`NoNewPrivileges`, `PrivateTmp`,
+to poll), and each MCP server with an HTTP probe of `<url>/health/readiness`
+(90s deadline). A lighter pass (`NoNewPrivileges`, `PrivateTmp`,
 `ProtectHome`, and later an empty `CapabilityBoundingSet`) covers the two
 token oneshots. The exception is
 the journal-upload one, which keeps `CAP_CHOWN` because it must `chgrp` its

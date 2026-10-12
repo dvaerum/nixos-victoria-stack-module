@@ -1,4 +1,4 @@
-# One value behind a storage unit's readiness probe (`wait4x --timeout`) and
+# One value behind a storage unit's readiness probe deadline (readiness.nix) and
 # its TimeoutStartSec, so the unit can never be killed by systemd before its own
 # probe has given up.
 #

@@ -86,12 +86,13 @@ let
       let
         evaluated = evalWith enableModule;
         sc = evaluated.config.systemd.services.${serviceName}.serviceConfig;
-        postStart = evaluated.config.systemd.services.${serviceName}.postStart or "";
+        execStartPost = sc.ExecStartPost or "";
         hardeningChecks = {
           "full hardening profile (differs in: ${builtins.toJSON (testLib.hardeningDiff sc)})" =
             testLib.hardeningDiff sc == [ ];
           "LimitNOFILE" = (sc.LimitNOFILE or null) == (if expectLimitNOFILE then 1048576 else null);
-          "wait4x readiness (not a hand-rolled curl loop)" = lib.hasInfix "wait4x" postStart;
+          "readiness probe (not a hand-rolled curl loop)" =
+            lib.hasInfix "victoria-stack-readiness" execStartPost;
           # Orders the unit after the dataDir's own mount (e.g. a ZFS
           # dataset) -- a no-op for the default path under /.
           "RequiresMountsFor dataDir" =
@@ -140,11 +141,12 @@ let
             listenAddress = ":19998";
           };
         };
-        postStart = evaluated: evaluated.config.systemd.services.${serviceName}.postStart;
+        execStartPost =
+          evaluated: evaluated.config.systemd.services.${serviceName}.serviceConfig.ExecStartPost;
         checks = {
-          "IPv4 wildcard substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (postStart ipv4);
-          "IPv6 wildcard substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (postStart ipv6);
-          "bare :port substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (postStart bare);
+          "IPv4 wildcard substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (execStartPost ipv4);
+          "IPv6 wildcard substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (execStartPost ipv6);
+          "bare :port substitutes to loopback" = lib.hasInfix "127.0.0.1:19998" (execStartPost bare);
         };
         failed = lib.filterAttrs (_: ok: !ok) checks;
       in
@@ -1714,7 +1716,7 @@ in
           sc = (evalWith { services.victoriaStack.${attr}.enable = true; }).config.systemd.services.${unit};
         in
         {
-          "${unit}: readiness waits up to 5 minutes" = lib.hasInfix "--timeout 5m" sc.postStart;
+          "${unit}: readiness waits up to 5 minutes (300s)" = (testLib.probeAndStartSeconds sc).probe == 300;
           "${unit}: TimeoutStartSec is 6 minutes, above the probe" =
             sc.serviceConfig.TimeoutStartSec == "6min";
         };
@@ -1730,7 +1732,7 @@ in
       throw "storage start timeouts wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
   );
 
-  # startupTimeout is the one value behind both the probe's --timeout and
+  # startupTimeout is the one value behind both the probe deadline and
   # TimeoutStartSec, which stays a minute above it so systemd never kills a
   # unit before its own probe has given up.
   storage-startup-timeout-drives-probe-and-unit-timeout =
@@ -1738,7 +1740,7 @@ in
       (
         let
           perUnit =
-            attr: unit: timeout: expectedStart:
+            attr: unit: timeout: expectedStart: expectedDeadline:
             let
               sc =
                 (evalWith {
@@ -1749,21 +1751,22 @@ in
                 }).config.systemd.services.${unit};
             in
             {
-              "${unit} ${timeout}: probe --timeout" = lib.hasSuffix "--timeout ${timeout}" sc.postStart;
+              "${unit} ${timeout}: probe deadline ${expectedDeadline}s" =
+                (testLib.readinessProbe sc).deadline == expectedDeadline;
               "${unit} ${timeout}: TimeoutStartSec ${expectedStart}" =
                 sc.serviceConfig.TimeoutStartSec == expectedStart;
             };
           forEveryService =
-            timeout: expectedStart:
-            perUnit "metrics" "victoriametrics" timeout expectedStart
-            // perUnit "logs" "victorialogs" timeout expectedStart
-            // perUnit "traces" "victoriatraces" timeout expectedStart;
+            timeout: expectedStart: expectedDeadline:
+            perUnit "metrics" "victoriametrics" timeout expectedStart expectedDeadline
+            // perUnit "logs" "victorialogs" timeout expectedStart expectedDeadline
+            // perUnit "traces" "victoriatraces" timeout expectedStart expectedDeadline;
           checks =
-            forEveryService "90s" "150s"
-            // forEveryService "20m" "21min"
-            // forEveryService "1h30m" "91min"
-            // forEveryService "1m30s" "150s"
-            // forEveryService "1s" "61s";
+            forEveryService "90s" "150s" "90"
+            // forEveryService "20m" "21min" "1200"
+            // forEveryService "1h30m" "91min" "5400"
+            // forEveryService "1m30s" "150s" "90"
+            // forEveryService "1s" "61s" "1";
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
         if failed == { } then
@@ -1771,6 +1774,165 @@ in
         else
           throw "startupTimeout does not reach the unit for: ${builtins.toJSON (builtins.attrNames failed)}"
       );
+
+  # Every unit that waits for readiness renders the one shared probe as an
+  # ExecStartPost (not a postStart script, whose text is a shell script and would
+  # take the exec escaping wrongly), with the deadline behind TimeoutStartSec's
+  # margin: the 90s constant for vmauth and the MCP servers, startupTimeout for
+  # the storage services.
+  readiness-probe-is-one-shared-exec-start-post-for-every-unit =
+    pkgs.runCommand "readiness-probe-for-every-unit" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics = {
+                enable = true;
+                mcp.enable = true;
+              };
+              logs = {
+                enable = true;
+                mcp.enable = true;
+              };
+              traces = {
+                enable = true;
+                mcp.enable = true;
+              };
+            };
+          };
+          expected = {
+            victoriametrics = {
+              kind = "http";
+              target = "http://127.0.0.1:4201/ping";
+              deadline = "300";
+              start = "6min";
+            };
+            victorialogs = {
+              kind = "http";
+              target = "http://127.0.0.1:4202/ping";
+              deadline = "300";
+              start = "6min";
+            };
+            victoriatraces = {
+              kind = "http";
+              target = "http://127.0.0.1:4203/ping";
+              deadline = "300";
+              start = "6min";
+            };
+            vmauth = {
+              kind = "tcp";
+              target = "127.0.0.1:4204";
+              deadline = "90";
+              start = "150s";
+            };
+            mcp-victoriametrics = {
+              kind = "http";
+              target = "http://127.0.0.1:4205/health/readiness";
+              deadline = "90";
+              start = "150s";
+            };
+            mcp-victorialogs = {
+              kind = "http";
+              target = "http://127.0.0.1:4206/health/readiness";
+              deadline = "90";
+              start = "150s";
+            };
+            mcp-victoriatraces = {
+              kind = "http";
+              target = "http://127.0.0.1:4207/health/readiness";
+              deadline = "90";
+              start = "150s";
+            };
+          };
+          perUnit =
+            unit: want:
+            let
+              svc = evaluated.config.systemd.services.${unit};
+              probe = testLib.readinessProbe svc;
+            in
+            {
+              "${unit}: a probe is rendered" = probe != null;
+              "${unit}: executable is the shared script" =
+                probe != null && lib.hasSuffix "/bin/victoria-stack-readiness" probe.exe;
+              "${unit}: arguments" =
+                probe != null
+                &&
+                  builtins.removeAttrs probe [ "exe" ] == {
+                    unit = "${unit}.service";
+                    inherit (want) kind target deadline;
+                  };
+              "${unit}: TimeoutStartSec margin" = svc.serviceConfig.TimeoutStartSec == want.start;
+              "${unit}: no postStart script left over" = (svc.postStart or "") == "";
+            };
+          checks = lib.concatMapAttrs perUnit expected;
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+          # A user-typed address reaches the probe as one quoted argument.
+          bracketed =
+            (evalWith {
+              services.victoriaStack.metrics = {
+                enable = true;
+                listenAddress = "[::1]:4201";
+              };
+            }).config.systemd.services.victoriametrics.serviceConfig.ExecStartPost;
+        in
+        if failed == { } && lib.hasSuffix " 300 http 'http://[::1]:4201/ping'" bracketed then
+          "echo OK > $out"
+        else
+          throw "readiness probe rendering wrong for: ${builtins.toJSON (builtins.attrNames failed)} (${bracketed})"
+      );
+
+  # listenAddress is a plain string the operator types; the probe must receive it
+  # as one inert argument, never as shell text: `;`, spaces, quotes, `$`, backticks
+  # and the specifier `%h` all stay literal (systemd would otherwise expand `$`
+  # and `%`, so those are doubled).
+  readiness-probe-takes-a-hostile-listen-address-as-one-inert-argument =
+    pkgs.runCommand "readiness-probe-hostile-address" { }
+      (
+        let
+          rendered =
+            (evalWith {
+              services.victoriaStack.logs = {
+                enable = true;
+                listenAddress = "127.0.0.1:9428;touch /tmp/PWNED $(id) `id` \"q\" 'x' %h";
+              };
+            }).config.systemd.services.victorialogs.serviceConfig.ExecStartPost;
+          expectedTail = " victorialogs.service 300 http 'http://127.0.0.1:9428;touch /tmp/PWNED $$(id) `id` \"q\" '\\''x'\\'' %%h/ping'";
+        in
+        if lib.hasSuffix expectedTail rendered then
+          "echo OK > $out"
+        else
+          throw "hostile listenAddress is not one escaped argument: ${rendered}"
+      );
+
+  # The same value in a real boot: nothing it contains may run. Writable by the
+  # unit's own user (its state directory) so a command that did run could leave
+  # the marker; the unit itself may fail to start on the invalid address.
+  readiness-probe-does-not-execute-a-hostile-listen-address = pkgs.testers.nixosTest {
+    name = "victoria-stack-readiness-hostile-address";
+
+    containers.machine = {
+      imports = [ module ];
+      services.victoriaStack.logs = {
+        enable = true;
+        listenAddress = "127.0.0.1:9428;touch /var/lib/victorialogs/pwned $(touch /var/lib/victorialogs/pwned2) `touch /var/lib/victorialogs/pwned3`";
+      };
+      systemd.services.victorialogs.wantedBy = lib.mkForce [ ];
+    };
+
+    testScript = ''
+      start_all()
+      machine.succeed("systemctl start --no-block victorialogs.service")
+      # The probe is the part that sees the address; the start is over once the
+      # unit has failed and been rescheduled.
+      machine.wait_until_succeeds(
+          "systemctl show -p NRestarts,ActiveState victorialogs.service "
+          "| grep -qE 'NRestarts=[1-9]|ActiveState=failed'",
+          timeout=60,
+      )
+      machine.succeed("test -d /var/lib/private/victorialogs")
+      machine.fail("ls /var/lib/private/victorialogs | grep -q pwned")
+    '';
+  };
 
   # The default is the previous hard-coded behaviour, rendered identically.
   storage-startup-timeout-default-is-5m = pkgs.runCommand "storage-startup-timeout-default" { } (
@@ -1781,16 +1943,27 @@ in
             "${attr}: default option value" =
               (evalWith { services.victoriaStack.${attr}.enable = true; })
               .config.services.victoriaStack.${attr}.startupTimeout == "5m";
-            "${attr}: probe line unchanged" =
-              (evalWith { services.victoriaStack.${attr}.enable = true; })
-              .config.systemd.services.${unit}.postStart == "wait4x http http://127.0.0.1:${
-                {
-                  metrics = "4201";
-                  logs = "4202";
-                  traces = "4203";
-                }
-                .${attr}
-              }/ping --timeout 5m";
+            "${attr}: probe is the shared readiness probe on /ping with a 300s deadline" =
+              let
+                probe = testLib.readinessProbe (
+                  (evalWith { services.victoriaStack.${attr}.enable = true; }).config.systemd.services.${unit}
+                );
+              in
+              lib.hasSuffix "/bin/victoria-stack-readiness" probe.exe
+              &&
+                builtins.removeAttrs probe [ "exe" ] == {
+                  unit = "${unit}.service";
+                  deadline = "300";
+                  kind = "http";
+                  target = "http://127.0.0.1:${
+                    {
+                      metrics = "4201";
+                      logs = "4202";
+                      traces = "4203";
+                    }
+                    .${attr}
+                  }/ping";
+                };
           })
           {
             metrics = "victoriametrics";
@@ -1829,12 +2002,12 @@ in
             lib.mapAttrs' (
               _: unit:
               lib.nameValuePair "${unit}: snippet gives a 2m probe and a 3min unit timeout" (
-                lib.hasSuffix "--timeout 2m" defaults.${unit}.postStart
+                (testLib.readinessProbe defaults.${unit}).deadline == "120"
                 && defaults.${unit}.serviceConfig.TimeoutStartSec == "3min"
               )
             ) units
             // {
-              "a test's own value wins" = lib.hasSuffix "--timeout 45s" overridden.postStart;
+              "a test's own value wins" = (testLib.readinessProbe overridden).deadline == "45";
             };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
@@ -1894,62 +2067,47 @@ in
     if problems == [ ] then "echo OK > $out" else throw (lib.concatStringsSep "\n" problems)
   );
 
-  # A broken unit used to take the whole probe (5 minutes) to be declared failed.
-  # The flag is harmless but unknown to the binary, so it exits at once while the
-  # probe keeps polling a port nobody listens on.
-  startup-timeout-bounds-how-long-a-broken-unit-takes-to-fail = pkgs.testers.nixosTest {
-    name = "victoria-stack-startup-timeout-broken-unit";
+  # A broken unit used to take the whole probe (5 minutes by default) to be
+  # declared failed: the probe kept polling a port nobody listens on. The flag is
+  # harmless but unknown to the binary, so it exits at once; the probe must end
+  # with the main process, whatever startupTimeout is. Dynamic and static user
+  # both, since the probe checks the main process from inside each sandbox.
+  broken-storage-unit-fails-when-its-main-process-dies-not-at-the-deadline = pkgs.testers.nixosTest {
+    name = "victoria-stack-broken-storage-unit";
 
     containers.machine = {
-      imports = [
-        module
-        testLib.testStartupTimeouts
-      ];
-      services.victoriaStack.metrics = {
-        enable = true;
-        startupTimeout = "20s";
-        extraFlags = [ "-noSuchFlag=1" ];
+      imports = [ module ];
+      services.victoriaStack = {
+        metrics = {
+          enable = true;
+          extraFlags = [ "-noSuchFlag=1" ];
+        };
+        logs = {
+          enable = true;
+          dynamicUser = false;
+          extraFlags = [ "-noSuchFlag=1" ];
+        };
       };
+      # A unit failing in a loop keeps the container's boot job pending.
+      systemd.services.victoriametrics.wantedBy = lib.mkForce [ ];
+      systemd.services.victorialogs.wantedBy = lib.mkForce [ ];
     };
 
     testScript = ''
-      ${testLib.waitActivePython}
-      import re
+      ${testLib.brokenUnitFailureSeconds}
       start_all()
-      try:
-          wait_active(machine, "victoriametrics.service", timeout=120)
-      except AssertionError as e:
-          message = str(e)
-      else:
-          raise Exception("a unit with an unknown flag became active")
-      assert "noSuchFlag" in message, message
-
-      # systemd itself must have given up on the start, not only the helper's
-      # heuristic: the probe's own 20s bound is what ends the start. Timed on
-      # the guest's monotonic journal stamps so a loaded host cannot skew it.
-      machine.wait_until_succeeds(
-          "systemctl show -p NRestarts,ActiveState victoriametrics.service "
-          "| grep -qE 'NRestarts=[1-9]|ActiveState=failed'",
-          timeout=120,
-      )
-      journal = machine.succeed("journalctl -u victoriametrics.service -o short-monotonic --no-pager")
-
-      def stamp(marker):
-          line = next(l for l in journal.splitlines() if marker in l)
-          m = re.match(r"\[\s*([0-9.]+)\]", line)
-          assert m is not None, line
-          return float(m.group(1))
-
-      took = stamp("Control process exited") - stamp("Starting ")
-      print(f"broken unit declared failed {took:.1f}s after its start with startupTimeout=20s")
-      assert 15 < took < 40, f"startupTimeout=20s should end a broken start after about 20s, took {took:.1f}s"
+      for unit in ["victoriametrics.service", "victorialogs.service"]:
+          took = broken_unit_failure_seconds(machine, unit)
+          print(f"{unit}: probe gave up {took:.1f}s after the start, default startupTimeout")
+          assert took < 20, f"{unit}: took {took:.1f}s; the default startupTimeout is 300s"
     '';
   };
 
   # A slow-but-healthy start must survive a generous startupTimeout and be cut
   # off by a short one -- the option controls the real behaviour. The package
   # override makes the main process listen only after 10s, the way a large data
-  # directory delays it.
+  # directory delays it. The generous one runs on the option's default, so a
+  # live process is also proven to be waited for, not given up on early.
   startup-timeout-decides-whether-a-slow-start-survives =
     let
       # No child process: a grandchild left in the cgroup when systemd stops
@@ -1964,21 +2122,18 @@ in
         os.execv(real, [real] + sys.argv[1:])
       '';
       node = timeout: {
-        imports = [
-          module
-          testLib.testStartupTimeouts
-        ];
+        imports = [ module ] ++ lib.optional (timeout != null) testLib.testStartupTimeouts;
         services.victoriaStack.logs = {
           enable = true;
           package = slowLogs;
-          startupTimeout = timeout;
-        };
+        }
+        // lib.optionalAttrs (timeout != null) { startupTimeout = timeout; };
       };
     in
     pkgs.testers.nixosTest {
       name = "victoria-stack-startup-timeout-slow-start";
 
-      containers.generous = node "60s";
+      containers.generous = node null;
       # A restart loop keeps the boot's start job pending forever and the
       # container never reports ready, so this one is started by the script.
       containers.short = {
@@ -1991,6 +2146,8 @@ in
         start_all()
         wait_active(generous, "victorialogs.service")
         generous.succeed("curl -sf http://127.0.0.1:4202/ping")
+        restarts = generous.succeed("systemctl show -p NRestarts --value victorialogs.service").strip()
+        assert restarts == "0", f"a live but slow start was given up on: {restarts} restarts"
 
         # 5s of probe against a 10s start: every attempt is cut off, so the
         # unit loops through restarts and never becomes active.

@@ -153,20 +153,20 @@ in
     pkgs.runCommand "vmauth-wildcard-readiness-substitutes-loopback" { }
       (
         let
-          postStart =
+          execStartPost =
             listenAddress:
             (evalWith {
               services.victoriaStack = {
                 metrics.enable = true;
                 vmauth = { inherit listenAddress; };
               };
-            }).config.systemd.services.vmauth.postStart;
+            }).config.systemd.services.vmauth.serviceConfig.ExecStartPost;
           checks = {
-            "IPv4 wildcard" = lib.hasInfix "wait4x tcp 127.0.0.1:4204 " (postStart "0.0.0.0:4204");
-            "IPv6 wildcard" = lib.hasInfix "wait4x tcp 127.0.0.1:4204 " (postStart "[::]:4204");
-            "bare :port" = lib.hasInfix "wait4x tcp 127.0.0.1:4204 " (postStart ":4204");
-            "specific address is probed as-is" = lib.hasInfix "wait4x tcp 10.1.2.3:4204 " (
-              postStart "10.1.2.3:4204"
+            "IPv4 wildcard" = lib.hasInfix " tcp 127.0.0.1:4204" (execStartPost "0.0.0.0:4204");
+            "IPv6 wildcard" = lib.hasInfix " tcp 127.0.0.1:4204" (execStartPost "[::]:4204");
+            "bare :port" = lib.hasInfix " tcp 127.0.0.1:4204" (execStartPost ":4204");
+            "specific address is probed as-is" = lib.hasInfix " tcp 10.1.2.3:4204" (
+              execStartPost "10.1.2.3:4204"
             );
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
@@ -177,7 +177,7 @@ in
           throw "vmauth wildcard readiness substitution broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # The readiness probe (wait4x, 90s) used to wait exactly as long as systemd's
+  # The readiness probe (90s deadline) used to wait exactly as long as systemd's
   # default start timeout, so the two expired together; TimeoutStartSec sits a
   # minute above it, as for the storage services.
   vmauth-start-timeout-leaves-a-minute-above-the-readiness-probe =
@@ -1938,6 +1938,34 @@ in
   # extraFlags used for something real: the running vmauth accepts the flag
   # and reports it on its own /flags page. (TLS, listeners and auth flags are
   # rejected at build time instead: the https door is the supported route.)
+  # A vmauth that dies at start (here: a flag it does not know) must fail the
+  # start at once. Its TCP probe used to keep dialling a port nobody listens on
+  # for its whole 90s.
+  broken-vmauth-fails-when-its-main-process-dies-not-at-the-deadline = pkgs.testers.nixosTest {
+    name = "victoria-stack-broken-vmauth";
+
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth.extraFlags = [ "-noSuchFlag=1" ];
+      };
+      # A unit failing in a loop keeps the container's boot job pending.
+      systemd.services.vmauth.wantedBy = lib.mkForce [ ];
+    };
+
+    testScript = ''
+      ${testLib.brokenUnitFailureSeconds}
+      start_all()
+      took = broken_unit_failure_seconds(machine, "vmauth.service")
+      print(f"vmauth.service: probe gave up {took:.1f}s after the start")
+      assert took < 20, f"vmauth.service: took {took:.1f}s; its probe deadline is 90s"
+    '';
+  };
+
   vmauth-extra-flag-reaches-the-running-process = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-extra-flag-live";
 

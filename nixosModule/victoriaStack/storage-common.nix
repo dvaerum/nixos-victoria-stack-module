@@ -31,6 +31,7 @@ let
   cfg = topCfg.${name};
   selfMonitoring = import ./self-monitoring.nix { inherit lib; };
   startupTimeout = import ./startup-timeout.nix { inherit lib; };
+  readiness = import ./readiness.nix { inherit lib pkgs; };
 
   listen = import ./listen.nix { inherit lib; };
   syslog = import ./syslog.nix { inherit lib; };
@@ -149,18 +150,18 @@ in
           # local-fs.target, so safe unconditionally.
           unitConfig.RequiresMountsFor = toString cfg.dataDir;
 
-          # wait4x replaces a hand-rolled curl-poll loop -- one command,
-          # purpose-built for exactly this. Neither Type=notify nor socket
-          # activation apply: these binaries implement neither sd_notify()
-          # nor sd_listen_fds(). See docs/decisions/0015.
-          path = [ pkgs.wait4x ];
-          # TimeoutStartSec sits a minute above the probe (startup-timeout.nix):
-          # with both at 90s (systemd's own default) they expired together and
-          # Restart=on-failure looped a slow start.
-          postStart = "wait4x http http://${bindAddr}/ping --timeout ${cfg.startupTimeout}";
-
           serviceConfig = lib.mkMerge [
             {
+              # Neither Type=notify nor socket activation apply: these binaries
+              # implement neither sd_notify() nor sd_listen_fds()
+              # (docs/decisions/0015), so readiness is a probe that also ends
+              # when the main process dies.
+              ExecStartPost = readiness.command {
+                unit = "${unitName}.service";
+                kind = "http";
+                target = "http://${bindAddr}/ping";
+                timeout = cfg.startupTimeout;
+              };
               ExecStart = lib.escapeShellArgs (
                 map escape (
                   [
@@ -195,6 +196,9 @@ in
               );
               Restart = "on-failure";
               RestartSec = 5;
+              # A minute above the probe (startup-timeout.nix): with both at 90s
+              # (systemd's own default) they expired together and
+              # Restart=on-failure looped a slow start.
               TimeoutStartSec = startupTimeout.unitTimeout cfg.startupTimeout;
               # A non-root user keeps no capability across exec unless it is ambient.
               AmbientCapabilities = lib.mkIf needsLowPort [ "CAP_NET_BIND_SERVICE" ];

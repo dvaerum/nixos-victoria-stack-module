@@ -9,7 +9,7 @@ let
 
   # Same shape as storage.nix's mkHardeningCheck, minus LimitNOFILE --
   # no nixpkgs module to confirm a LimitNOFILE value against here. The
-  # wait4x readiness probe itself (mcp.nix) has its own dedicated eval
+  # readiness probe itself (mcp.nix) has its own dedicated eval
   # check below, not folded into this one.
   mkMcpHardeningCheck =
     {
@@ -386,7 +386,7 @@ in
 
   # vmauth's own `after=` must include each enabled MCP service -- without
   # it, vmauth could start routing to /mcp/* before the corresponding
-  # mcp-victoria* unit (and its own wait4x readiness probe) has even
+  # mcp-victoria* unit (and its own readiness probe) has even
   # begun, the same ordering gap already fixed for the 3 storage backends.
   vmauth-after-includes-enabled-mcp-services =
     pkgs.runCommand "vmauth-after-includes-enabled-mcp-services" { }
@@ -485,7 +485,7 @@ in
     pkgs.runCommand "mcp-wildcard-readiness-substitutes-loopback" { }
       (
         let
-          postStart =
+          execStartPost =
             listenAddress:
             (evalWith {
               services.victoriaStack.metrics = {
@@ -495,15 +495,17 @@ in
                   inherit listenAddress;
                 };
               };
-            }).config.systemd.services.mcp-victoriametrics.postStart;
+            }).config.systemd.services.mcp-victoriametrics.serviceConfig.ExecStartPost;
           checks = {
             "IPv4 wildcard" = lib.hasInfix "http://127.0.0.1:19997/health/readiness" (
-              postStart "0.0.0.0:19997"
+              execStartPost "0.0.0.0:19997"
             );
-            "IPv6 wildcard" = lib.hasInfix "http://127.0.0.1:19997/health/readiness" (postStart "[::]:19997");
-            "bare :port" = lib.hasInfix "http://127.0.0.1:19997/health/readiness" (postStart ":19997");
+            "IPv6 wildcard" = lib.hasInfix "http://127.0.0.1:19997/health/readiness" (
+              execStartPost "[::]:19997"
+            );
+            "bare :port" = lib.hasInfix "http://127.0.0.1:19997/health/readiness" (execStartPost ":19997");
             "specific address is probed as-is" = lib.hasInfix "http://10.1.2.3:19997/health/readiness" (
-              postStart "10.1.2.3:19997"
+              execStartPost "10.1.2.3:19997"
             );
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
@@ -591,6 +593,37 @@ in
       assert "127.0.0.1:4205" in listeners, f"expected a loopback listener: {listeners!r}"
       for wildcard in ["0.0.0.0:4205", "[::]:4205", "*:4205"]:
           assert wildcard not in listeners, f"unexpected wildcard bind {wildcard}: {listeners!r}"
+    '';
+  };
+
+  # An MCP server that dies at start must fail the start at once; its HTTP probe
+  # used to keep polling for its whole 90s. The package override is a stand-in
+  # that exits immediately.
+  broken-mcp-unit-fails-when-its-main-process-dies-not-at-the-deadline = pkgs.testers.nixosTest {
+    name = "victoria-stack-broken-mcp-unit";
+
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack.metrics = {
+        enable = true;
+        mcp = {
+          enable = true;
+          package = pkgs.writeShellScriptBin "mcp-victoriametrics" "exit 3";
+        };
+      };
+      # A unit failing in a loop keeps the container's boot job pending.
+      systemd.services.mcp-victoriametrics.wantedBy = lib.mkForce [ ];
+    };
+
+    testScript = ''
+      ${testLib.brokenUnitFailureSeconds}
+      start_all()
+      took = broken_unit_failure_seconds(machine, "mcp-victoriametrics.service")
+      print(f"mcp-victoriametrics.service: probe gave up {took:.1f}s after the start")
+      assert took < 20, f"mcp-victoriametrics.service: took {took:.1f}s; its probe deadline is 90s"
     '';
   };
 }

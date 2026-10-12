@@ -311,15 +311,16 @@ let
         default = "5m";
         example = "20m";
         description = ''
-          How long the unit's readiness probe waits for ${binaryName} to answer
-          before the start counts as failed. systemd's `TimeoutStartSec` is
+          How long the unit's readiness probe waits for a running ${binaryName}
+          to answer before the start counts as failed. systemd's `TimeoutStartSec` is
           derived from it, always one minute longer, so systemd never kills the
           unit before its own probe gives up.
 
           Raise it when opening the data directory is slow (a slow disk, a very
           large data directory): a value too low kills a slow but healthy start
-          and the unit restart-loops. It also bounds how long a broken unit
-          takes to be declared failed.
+          and the unit restart-loops. It only bounds how long a live but unready
+          process is waited for: a process that exits during start fails the
+          start at once, whatever this is set to.
 
           Format: one or more whole numbers with a unit of `s`, `m` or `h`
           (`90s`, `5m`, `1h30m`); zero is not allowed.

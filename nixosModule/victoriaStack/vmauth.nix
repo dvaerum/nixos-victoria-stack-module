@@ -16,6 +16,7 @@ let
   # credential-directory flags must stay raw.
   inherit (import ./exec-escape.nix { inherit lib; }) escape;
   listen = import ./listen.nix { inherit lib; };
+  readiness = import ./readiness.nix { inherit lib pkgs; };
 
   # One value for the readiness probe and, a minute above it, TimeoutStartSec.
   readinessTimeout = "90s";
@@ -546,10 +547,13 @@ in
       # TCP probe, not HTTP: with -httpInternalListenAddr, /health is not served
       # on the data listener. Lets units ordered after vmauth (nginx) rely on it
       # listening, not just having forked.
-      path = [ pkgs.wait4x ];
-      postStart = "wait4x tcp ${listen.connectAddr cfg.listenAddress} --timeout ${readinessTimeout}";
-
       serviceConfig = {
+        ExecStartPost = readiness.command {
+          unit = "vmauth.service";
+          kind = "tcp";
+          target = listen.connectAddr cfg.listenAddress;
+          timeout = readinessTimeout;
+        };
         LoadCredential =
           lib.optional (cfg.adminPasswordFile != null) "admin-password:${cfg.adminPasswordFile}"
           ++ lib.optional (cfg.readTokensFile != null) "read-tokens:${cfg.readTokensFile}"
