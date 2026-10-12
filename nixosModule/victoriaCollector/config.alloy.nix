@@ -30,6 +30,12 @@ let
     }
   '';
 
+  # Without a token file VICTORIA_WRITE_TOKEN is unset, and a bearer-auth
+  # block fed by it passes `alloy validate` but panics Alloy at its first
+  # export; an open gateway needs no auth anyway.
+  hasToken = cfg.writeTokenFile != null;
+  authLine = lib.optionalString hasToken "auth     = otelcol.auth.bearer.write_token.handler";
+
   queueBlock = ''
     otelcol.storage.file "queue" {
       directory = ${str (toString cfg.queue.directory)}
@@ -218,7 +224,7 @@ let
     otelcol.exporter.otlphttp "metrics" {
       client {
         endpoint = ${str "${writeBase}/opentelemetry"}
-        auth     = otelcol.auth.bearer.write_token.handler
+        ${authLine}
         ${tlsBlock}
       }
       sending_queue {
@@ -235,7 +241,7 @@ let
     otelcol.exporter.otlphttp "traces" {
       client {
         endpoint = ${str "${writeBase}/insert/opentelemetry"}
-        auth     = otelcol.auth.bearer.write_token.handler
+        ${authLine}
         ${tlsBlock}
       }
       sending_queue {
@@ -249,7 +255,7 @@ let
 in
 lib.concatStringsSep "\n\n" (
   lib.filter (s: s != "") [
-    (lib.optionalString needsAlloyOtlp authBlock)
+    (lib.optionalString (needsAlloyOtlp && hasToken) authBlock)
     metricsSection
     tracesSection
     (lib.optionalString needsAlloyOtlp queueBlock)

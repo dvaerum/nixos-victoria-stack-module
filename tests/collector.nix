@@ -565,6 +565,121 @@ in
     '';
   };
 
+  # writeTokenFile is optional (only a gateway with requireAuthForWrites needs
+  # it). An otelcol.auth.bearer block fed by an unset VICTORIA_WRITE_TOKEN
+  # passes `alloy validate` but panics Alloy at its first export, so the block
+  # and the exporters' `auth =` lines must exist only with a token file. A real
+  # boot against an open gateway is the proof; validate alone hid the panic.
+  alloy-without-a-write-token-survives-and-delivers = pkgs.testers.nixosTest {
+    name = "victoria-collector-alloy-without-a-write-token";
+
+    containers.stack = {
+      virtualisation.vlans = [ 1 ];
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        traces.enable = true;
+        vmauth = {
+          requireAuthForWrites = false;
+          listenAddress = "0.0.0.0:4204";
+        };
+      };
+      networking.firewall.allowedTCPPorts = [ 4204 ];
+    };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        traces.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = null;
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      wait_active(stack, "vmauth.service")
+      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "victoriatraces.service")
+      wait_active(collector, "alloy.service")
+      collector.wait_for_open_port(4318)
+
+      stack.systemctl("start network-online.target")
+      collector.systemctl("start network-online.target")
+      stack.wait_for_unit("network-online.target")
+      collector.wait_for_unit("network-online.target")
+
+      collector.succeed(
+          "now=$(date +%s%N); "
+          "payload=$(cat <<JSON\n"
+          "{\"resourceSpans\":[{\"resource\":{\"attributes\":["
+          "{\"key\":\"service.name\",\"value\":{\"stringValue\":\"victoria_stack_collector_no_token_service\"}}"
+          "]},\"scopeSpans\":[{\"spans\":[{"
+          "\"traceId\":\"00000000000000000000000000000005\","
+          "\"spanId\":\"0000000000000005\","
+          "\"name\":\"victoria_stack_collector_no_token_span\","
+          "\"kind\":1,"
+          "\"startTimeUnixNano\":\"$now\","
+          "\"endTimeUnixNano\":\"$now\""
+          "}]}]}]}\nJSON\n); "
+          "curl -sf -X POST -H 'Content-Type: application/json' --data-binary \"$payload\" "
+          "'http://127.0.0.1:4318/v1/traces'"
+      )
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          timeout=180,
+      )
+      stack.wait_until_succeeds(
+          "curl -sf 'http://127.0.0.1:4203/select/jaeger/api/services' "
+          "| grep -q victoria_stack_collector_no_token_service",
+          timeout=180,
+      )
+      # The panic kills the process, so a restart means it came back.
+      wait_active(collector, "alloy.service", max_restarts=1)
+      collector.succeed("test \"$(systemctl show -p NRestarts --value alloy.service)\" = 0")
+      collector.fail("grep -q otelcol.auth.bearer /etc/alloy/config.alloy")
+      collector.fail("grep -qE '^ *auth ' /etc/alloy/config.alloy")
+    '';
+  };
+
+  # Counterpart to the boot test: the auth block and both `auth =` lines are
+  # there exactly when a token file is configured.
+  alloy-auth-block-follows-the-token-file =
+    pkgs.runCommand "alloy-auth-block-follows-the-token-file" { }
+      (
+        let
+          configFor =
+            tokenFile:
+            (evalWithCollector {
+              services.victoriaCollector = {
+                metrics.enable = true;
+                traces.enable = true;
+                writeEndpoint = "http://127.0.0.1:4204";
+                writeTokenFile = tokenFile;
+                hostType = "server";
+              };
+            }).config.environment.etc."alloy/config.alloy".text;
+          count = needle: text: builtins.length (lib.splitString needle text) - 1;
+          noToken = configFor null;
+          withToken = configFor "/run/secrets/write-token";
+        in
+        if
+          count "otelcol.auth.bearer" noToken == 0
+          && count "otelcol.auth.bearer \"write_token\"" withToken == 1
+          && count "otelcol.auth.bearer.write_token.handler" withToken == 2
+        then
+          "echo OK > $out"
+        else
+          throw "the auth block does not follow writeTokenFile"
+      );
+
   # Empty capability set everywhere, except the one oneshot that changes a file's
   # group (a real boot proves it needs CAP_CHOWN: "" made it fail).
   collector-oneshots-drop-capabilities = pkgs.runCommand "collector-oneshots-drop-capabilities" { } (
@@ -2076,6 +2191,7 @@ in
             metrics.enable = true;
             traces.enable = true;
             writeEndpoint = "http://127.0.0.1:4204";
+            writeTokenFile = "/run/secrets/write-token";
             hostType = "server";
           };
         }).config.environment.etc."alloy/config.alloy".text;
