@@ -6,7 +6,7 @@ option's own description — it's a property of how the pieces combine.
 See the individual ADRs (`docs/decisions/`) for the reasoning behind each
 component's own choices; this page is purely the connective picture.
 
-## Default bind addresses — everything is loopback-only except nginx and the opt-in vmauth doors
+## Default bind addresses — everything is loopback-only except nginx, the opt-in vmauth doors and the opt-in syslog slots
 
 ```
 ┌────────────────────────────┬───────────────────┬──────────────────────┐
@@ -152,7 +152,9 @@ What you still have behind a proxy:
 - **vmauth is the only thing every storage backend's own native API
   goes through** when reached from outside this host — metrics/logs/
   traces/mcp×3 all bind loopback-only and have no other sanctioned way
-  out.
+  out, with one exception: the opt-in `logs.syslog` slots, extra
+  VictoriaLogs listeners with no authentication that bypass vmauth
+  (ADR 0031).
 - **The collector's local OTLP receiver has no relationship to vmauth at
   all** — it's a separate, loopback-only endpoint for host-local
   OTLP-speaking applications, unrelated to the fleet-shipping path the

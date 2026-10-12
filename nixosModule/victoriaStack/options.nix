@@ -76,11 +76,19 @@ let
   };
 
   syslogSecretReplacementNote = ''
-    Writing this file, or renaming a new file over it, restarts VictoriaLogs
-    automatically, since the unit reads a copy made at start. A secrets manager
-    that instead swaps a symlinked directory (sops-nix) does not trigger that
-    watch, so it must restart `victorialogs.service` itself: with sops-nix, list
-    it in the secret's `restartUnits`.
+    Writing this file, or renaming a new file over it, restarts VictoriaLogs automatically,
+    since the unit reads a copy made at start. A secrets manager that instead
+    swaps a symlinked directory (sops-nix) does not trigger that watch, so it
+    must restart `victorialogs.service` itself: with sops-nix, list it in the
+    secret's `restartUnits`.
+  '';
+
+  grafanaSecretReplacementNote = ''
+    Writing this file, or renaming a new file over it, restarts Grafana automatically,
+    since Grafana reads the token only at start. A secrets manager that instead
+    swaps a symlinked directory (sops-nix) does not trigger that watch, so it
+    must restart `grafana.service` itself: with sops-nix, list it in the
+    secret's `restartUnits`.
   '';
 
   doorOpenFirewallDescription = kind: ''
@@ -925,7 +933,9 @@ in
         type = types.nullOr types.str;
         default = null;
         description = ''
-          Path (as a plain string, NOT a Nix path literal -- interpolating
+          Path (as a plain string, NOT a Nix path literal; this rule holds for
+          every `*File` option that carries a secret, while public material
+          such as `backendTls.caFile` may be a path -- interpolating
           a real Nix path forces a Nix-store copy at eval time, which
           either crashes if the file doesn't exist yet on the build
           machine (the normal case: it lands at runtime via
@@ -1092,7 +1102,8 @@ in
           Path (as a plain string -- see `vmauth.writeTokensFile`'s
           description for why not a Nix path literal) to a file holding ONE
           bearer token, the credential Grafana's datasources send to vmauth.
-          Required when `grafana.enable` is on.
+          Required when `grafana.enable` is on and at least one of
+          `metrics`/`logs`/`traces` is enabled.
 
           The same token must also be listed in `vmauth.readTokensFile`;
           this module does not add it for you, so a mismatch makes every
@@ -1101,8 +1112,9 @@ in
 
           The file is delivered to Grafana's unit with systemd
           `LoadCredential=`, so it need not be readable by the `grafana`
-          user. Replacing it restarts Grafana automatically, since Grafana
-          reads it only at start.
+          user.
+
+          ${grafanaSecretReplacementNote}
         '';
       };
     };

@@ -3198,28 +3198,51 @@ in
     pkgs.runCommand "vmauth-secret-options-document-restart" { }
       (
         let
-          vmauth = (evalWith { }).options.services.victoriaStack.vmauth;
-          options = {
-            writeTokensFile = vmauth.writeTokensFile;
-            readTokensFile = vmauth.readTokensFile;
-            adminPasswordFile = vmauth.adminPasswordFile;
-            "https.certFile" = vmauth.https.certFile;
-            "https.keyFile" = vmauth.https.keyFile;
-            "backendTls.caFile" = vmauth.backendTls.caFile;
-            "backendTls.certFile" = vmauth.backendTls.certFile;
-            "backendTls.keyFile" = vmauth.backendTls.keyFile;
-          };
-          notes = [
-            "restarts vmauth automatically"
+          stack = (evalWith { }).options.services.victoriaStack;
+          vmauth = stack.vmauth;
+          # Each group names the unit its options' text must say gets restarted.
+          groups = [
+            {
+              unit = "vmauth";
+              options = {
+                writeTokensFile = vmauth.writeTokensFile;
+                readTokensFile = vmauth.readTokensFile;
+                adminPasswordFile = vmauth.adminPasswordFile;
+                "https.certFile" = vmauth.https.certFile;
+                "https.keyFile" = vmauth.https.keyFile;
+                "backendTls.caFile" = vmauth.backendTls.caFile;
+                "backendTls.certFile" = vmauth.backendTls.certFile;
+                "backendTls.keyFile" = vmauth.backendTls.keyFile;
+              };
+            }
+            {
+              unit = "Grafana";
+              options."grafana.readTokenFile" = stack.grafana.readTokenFile;
+            }
+            {
+              unit = "VictoriaLogs";
+              options = {
+                "logs.syslog.tls.certFile" = stack.logs.syslog.tls.certFile;
+                "logs.syslog.tls.keyFile" = stack.logs.syslog.tls.keyFile;
+              };
+            }
+          ];
+          notesFor = unit: [
+            "restarts ${unit} automatically"
             "swaps a symlinked directory"
             "`restartUnits`"
           ];
-          failed = lib.filterAttrs (_: o: !(lib.all (n: lib.hasInfix n o.description) notes)) options;
+          failed = lib.concatMap (
+            g:
+            lib.attrNames (
+              lib.filterAttrs (_: o: !(lib.all (n: lib.hasInfix n o.description) (notesFor g.unit))) g.options
+            )
+          ) groups;
         in
-        if failed == { } then
+        if failed == [ ] then
           "echo OK > $out"
         else
-          throw "options missing the restart-on-replacement note: ${builtins.toJSON (builtins.attrNames failed)}"
+          throw "options missing the restart-on-replacement note: ${builtins.toJSON failed}"
       );
 
   # acmeCertName is the one door option with no boot test (a real ACME issuance

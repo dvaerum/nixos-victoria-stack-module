@@ -12,8 +12,9 @@ syscall filtering, etc. — initially copied from nixpkgs, not re-derived), plus
 nixpkgs' own asymmetry — logs doesn't set it either, upstream).
 
 Since raised: `ProtectSystem=strict` and an empty `CapabilityBoundingSet` on the
-storage, vmauth and mcp units. The one exception is vmauth with a listener on a port
-below 1024: it gets `CAP_NET_BIND_SERVICE` (bounding and ambient) and `PrivateUsers=false`,
+storage, vmauth and mcp units. The exception is a unit with a listener on a port
+below 1024 (vmauth, or the logs unit with a syslog port below 1024 -- the default
+`udp`/`tcp` port 514): it gets `CAP_NET_BIND_SERVICE` (bounding and ambient) and `PrivateUsers=false`,
 because a capability held inside a user namespace does not count for binding in the host's
 network namespace (a real boot failed with `bind: permission denied` otherwise). Measured: DynamicUser units were already
 effectively strict even with an explicit `full`; only static-user units truly
