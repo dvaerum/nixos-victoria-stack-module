@@ -139,7 +139,7 @@ in
         {
           "${name}: effectiveUrl" =
             e.config.services.victoriaStack.metrics.effectiveUrl == "http://127.0.0.1:4301";
-          "${name}: nginx upstream" = readLoc.proxyPass == "http://127.0.0.1:4303";
+          "${name}: nginx upstream" = readLoc.proxyPass == "\"http://127.0.0.1:4303\"";
           "${name}: vmauth route to the MCP server" =
             mcpEntry != null && mcpEntry.url_prefix == "http://127.0.0.1:4302/mcp";
           "${name}: mcp entrypoint is the effective URL" =
@@ -178,10 +178,10 @@ in
         e.config.services.nginx.virtualHosts."victoria-stack".locations."/grafana/".proxyPass;
     in
     mkTableCheck "grafana-wildcard-http-addr-behind-nginx" {
-      "empty" = proxyPassFor "" == "http://127.0.0.1:3000";
-      "0.0.0.0" = proxyPassFor "0.0.0.0" == "http://127.0.0.1:3000";
-      "IPv6 literal is bracketed" = proxyPassFor "::1" == "http://[::1]:3000";
-      "specific address untouched" = proxyPassFor "10.0.0.7" == "http://10.0.0.7:3000";
+      "empty" = proxyPassFor "" == "\"http://127.0.0.1:3000\"";
+      "0.0.0.0" = proxyPassFor "0.0.0.0" == "\"http://127.0.0.1:3000\"";
+      "IPv6 literal is bracketed" = proxyPassFor "::1" == "\"http://[::1]:3000\"";
+      "specific address untouched" = proxyPassFor "10.0.0.7" == "\"http://10.0.0.7:3000\"";
     };
 
   # The collision assertion compared raw strings, so `0.0.0.0:4204` next to

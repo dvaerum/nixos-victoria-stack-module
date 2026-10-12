@@ -744,6 +744,44 @@ in
       "the tls slot listens on 6514 by default" = lib.hasInfix ":6514" (sc only).ExecStart;
     };
 
+  # systemd reads C escapes and expands specifiers in ExecStart, so text the user
+  # typed in ipAddress is escaped like every other flag (exec-escape.nix); the
+  # module's own %d credential flags stay raw. The values here are only evaluated
+  # for the flags: the address assertion rejects them in a real configuration.
+  address-reaches-the-unit-escaped =
+    let
+      one =
+        ip:
+        syslogFlags {
+          udp = (slot ip 514) // {
+            extraFields = { };
+          };
+        };
+      tlsWith =
+        ip:
+        lib.filter (lib.hasPrefix "-syslog.tls") (syslogFlags {
+          tls = tlsSlot ip 6514;
+        });
+    in
+    mkTableCheck "syslog-address-escaped" {
+      "a specifier" = one "10.0.0.%H" == [ "-syslog.listenAddr.udp=10.0.0.%%H:514" ];
+      "a variable" = one "10.0.0.$X" == [ "-syslog.listenAddr.udp=10.0.0.$$X:514" ];
+      "a trailing backslash" = one "10.0.0.\\" == [ "-syslog.listenAddr.udp=10.0.0.\\\\:514" ];
+      "all three together" = one "10.0.0.%H$X\\" == [ "-syslog.listenAddr.udp=10.0.0.%%H$$X\\\\:514" ];
+      "a plain address is untouched" = one "192.0.2.10" == [ "-syslog.listenAddr.udp=192.0.2.10:514" ];
+      "an IPv6 address is bracketed once, escaped inside" =
+        one "fe80::1%eth0" == [ "-syslog.listenAddr.udp=[fe80::1%%eth0]:514" ];
+      "the credential specifier stays raw" =
+        tlsWith "10.0.0.%H" == [
+          "-syslog.tls=true"
+          "-syslog.tlsCertFile=%d/syslog-tls-cert"
+          "-syslog.tlsKeyFile=%d/syslog-tls-key"
+        ];
+      "the tls address is escaped too" = lib.elem "-syslog.listenAddr.tcp=10.0.0.%%H:6514" (syslogFlags {
+        tls = tlsSlot "10.0.0.%H" 6514;
+      });
+    };
+
   tls-slot-assertions =
     let
       failed =

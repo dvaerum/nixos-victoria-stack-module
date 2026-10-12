@@ -1917,6 +1917,9 @@ in
         listenAddress = "127.0.0.1:9428;touch /var/lib/victorialogs/pwned $(touch /var/lib/victorialogs/pwned2) `touch /var/lib/victorialogs/pwned3`";
       };
       systemd.services.victorialogs.wantedBy = lib.mkForce [ ];
+      # The address assertion refuses this value before any unit exists; the probe
+      # must be safe on its own too, so the assertions are switched off here.
+      assertions = lib.mkForce [ ];
     };
 
     testScript = ''

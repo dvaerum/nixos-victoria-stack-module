@@ -9,12 +9,16 @@ let
   cfg = topCfg.nginx;
   listen = import ./listen.nix { inherit lib; };
 
+  # One nginx argument, whatever the text holds (`;` or a space would otherwise
+  # end it). A `$` cannot be escaped in nginx: the address assertion keeps it out.
+  quote = s: "\"${lib.replaceStrings [ "\\" "\"" ] [ "\\\\" "\\\"" ] s}\"";
+
   # Read from Grafana's own settings rather than assumed: the consumer may
   # override them (docs/decisions/0010).
   grafanaHttpAddr = config.services.grafana.settings.server.http_addr;
   # Wildcard and IPv6 handling lives in listen.nix.
   grafanaHost = listen.connectHost grafanaHttpAddr;
-  grafanaUrl = "http://${grafanaHost}:${toString config.services.grafana.settings.server.http_port}";
+  grafanaUrl = quote "http://${grafanaHost}:${toString config.services.grafana.settings.server.http_port}";
 
   # First path segments of what nginx's /victoria/ lets through: the 3
   # backends' read APIs plus the MCP routes, plus operator additions.
@@ -113,7 +117,7 @@ in
           # url_map regexes are written assuming "/victoria" is already
           # gone (nixosModule/victoriaStack/vmauth.nix).
           "~ ^/victoria/(${lib.concatStringsSep "|" readPrefixes})(/|$)" = {
-            proxyPass = "http://${listen.connectAddr topCfg.vmauth.listenAddress}";
+            proxyPass = quote "http://${listen.connectAddr topCfg.vmauth.listenAddress}";
 
             # Mirrors vmauth's own tuning, never an independently-chosen
             # nginx default (docs/decisions/0016 -- "nginx mirrors what

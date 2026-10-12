@@ -117,7 +117,7 @@ rec {
         );
         fields = map (s: if s.extraFields == { } then "" else builtins.toJSON s.extraFields) slots;
       in
-      map (s: "-syslog.listenAddr.${transport}=${listen.hostPort s.ipAddress s.port}") slots
+      map (s: "-syslog.listenAddr.${transport}=${escape (listen.hostPort s.ipAddress s.port)}") slots
       ++ lib.optionals (lib.any (f: f != "") fields) (
         map (f: "-syslog.extraFields.${transport}=${escape f}") fields
       )

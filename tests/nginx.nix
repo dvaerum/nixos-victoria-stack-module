@@ -666,6 +666,106 @@ in
     '';
   };
 
+  # An address becomes nginx's `proxy_pass <value>;`, where an unquoted `;`
+  # would end the directive and start another. The value is quoted (and a quote
+  # or backslash escaped), so even one that got past the address assertion stays
+  # one argument. Evaluated without forcing assertions on purpose.
+  nginx-upstream-addresses-are-quoted =
+    let
+      upstreams =
+        vmauthAddr: grafanaAddr:
+        let
+          e = evalWith {
+            services.grafana = {
+              enable = true;
+              settings = {
+                security.secret_key = "$__file{${secretKeyFixture}}";
+                server.http_addr = grafanaAddr;
+              };
+            };
+            services.victoriaStack = {
+              metrics.enable = true;
+              grafana.enable = true;
+              nginx.enable = true;
+              vmauth.listenAddress = vmauthAddr;
+            };
+          };
+          locs = e.config.services.nginx.virtualHosts."victoria-stack".locations;
+        in
+        {
+          read =
+            locs.${lib.findFirst (lib.hasPrefix "~ ^/victoria/") "MISSING" (builtins.attrNames locs)}.proxyPass;
+          grafana = locs."/grafana/".proxyPass;
+          live = locs."/grafana/api/live/".proxyPass;
+        };
+      plain = upstreams "127.0.0.1:4204" "127.0.0.1";
+      hostile = upstreams "127.0.0.1:4204;touch /tmp/PWNED" "127.0.0.1;touch /tmp/PWNED";
+      quotes = upstreams ''a"b\c:4204'' ''a"b\c'';
+      checks = {
+        "vmauth upstream is quoted" = plain.read == ''"http://127.0.0.1:4204"'';
+        "grafana upstream is quoted" = plain.grafana == ''"http://127.0.0.1:3000"'';
+        "grafana live upstream is quoted" = plain.live == ''"http://127.0.0.1:3000"'';
+        "a ; stays inside the vmauth argument" =
+          hostile.read == ''"http://127.0.0.1:4204;touch /tmp/PWNED"'';
+        "a ; stays inside the grafana argument" =
+          hostile.grafana == ''"http://127.0.0.1;touch /tmp/PWNED:3000"'';
+        "a quote and a backslash are escaped" = quotes.read == ''"http://a\"b\\c:4204"'';
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    pkgs.runCommand "nginx-upstream-addresses-are-quoted" { } (
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
+
+  # `domain` is `server_name` and also the ACME certificate name nixpkgs derives
+  # from it, so it cannot be quoted: it is validated instead.
+  nginx-domain-accepts-only-host-names =
+    let
+      firesFor =
+        domain:
+        lib.any (lib.hasInfix "services.victoriaStack.nginx.domain = ") (
+          map (a: a.message) (
+            builtins.filter (a: !a.assertion)
+              (evalWith {
+                services.victoriaStack = {
+                  metrics.enable = true;
+                  nginx = {
+                    enable = true;
+                    inherit domain;
+                  };
+                };
+              }).config.assertions
+          )
+        );
+      checks = {
+        "a plain name" = !(firesFor "victoria.example.com");
+        "a wildcard name" = !(firesFor "*.example.com");
+        "a single label" = !(firesFor "victoria");
+        "unset" = !(firesFor null);
+        "a semicolon" = firesFor "a;b";
+        "a path" = firesFor "a/b";
+        "a newline" = firesFor "a\nb";
+        "a colon" = firesFor "a:b";
+        "a tilde" = firesFor "~a";
+        "a space" = firesFor "a.example.com b.example.com";
+        "a brace" = firesFor "a.example.com}";
+        "a quote" = firesFor ''a"b'';
+        "a dollar" = firesFor "a$b";
+        "a hash" = firesFor "a#b";
+        "empty" = firesFor "";
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    pkgs.runCommand "nginx-domain-accepts-only-host-names" { } (
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
+
   # nginx needs systemd ordering on vmauth.service and grafana.service:
   # `systemctl show nginx.service -p After` on a real container listed
   # neither, and the resulting race gave "502 Bad Gateway" from

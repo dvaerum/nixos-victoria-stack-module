@@ -570,5 +570,146 @@ in
     name = "backend-tls-neither-cert-nor-key-is-not-an-assertion-failure";
     module = { };
   };
+
+  # Every address option reaches shell scripts, unit files or nginx's config,
+  # so it may hold only what a host:port holds. All options are set to one value
+  # at a time; each must be named when the value is hostile and silent when not.
+  address-options-accept-only-host-port-characters =
+    let
+      hostPortOptions = [
+        "metrics.listenAddress"
+        "logs.listenAddress"
+        "traces.listenAddress"
+        "metrics.mcp.listenAddress"
+        "logs.mcp.listenAddress"
+        "traces.mcp.listenAddress"
+        "vmauth.listenAddress"
+        "vmauth.internalListenAddress"
+      ];
+      ipOptions = [
+        "vmauth.https.ipAddress"
+        "vmauth.http.ipAddress"
+        "logs.syslog.udp.ipAddress"
+        "logs.syslog.tcp.ipAddress"
+        "logs.syslog.tls.ipAddress"
+      ];
+      setAt =
+        path: value:
+        lib.setAttrByPath (
+          [
+            "services"
+            "victoriaStack"
+          ]
+          ++ lib.splitString "." path
+        ) value;
+      everything =
+        hostPort: ip:
+        lib.foldl' lib.recursiveUpdate {
+          services.victoriaStack = {
+            metrics = {
+              enable = true;
+              mcp.enable = true;
+            };
+            logs = {
+              enable = true;
+              mcp.enable = true;
+              syslog = {
+                udp.enable = true;
+                tcp.enable = true;
+                tls = {
+                  enable = true;
+                  certFile = "/run/fake-cert.pem";
+                  keyFile = "/run/fake-key.pem";
+                };
+              };
+            };
+            traces = {
+              enable = true;
+              mcp.enable = true;
+            };
+            vmauth = {
+              https = {
+                enable = true;
+                certFile = "/run/fake-cert.pem";
+                keyFile = "/run/fake-key.pem";
+              };
+              http.enable = true;
+            };
+          };
+        } (map (o: setAt o hostPort) hostPortOptions ++ map (o: setAt o ip) ipOptions);
+      namedFor =
+        hostPort: ip:
+        let
+          failed = map (a: a.message) (
+            builtins.filter (a: !a.assertion) (testLib.evalWith (everything hostPort ip)).config.assertions
+          );
+        in
+        o: lib.any (lib.hasInfix "services.victoriaStack.${o} = ") failed;
+      allOptions = hostPortOptions ++ ipOptions;
+      verdicts =
+        wantNamed: value:
+        let
+          named = namedFor value value;
+        in
+        lib.listToAttrs (
+          map (
+            o:
+            lib.nameValuePair "${o} ${if wantNamed then "rejects" else "accepts"} ${builtins.toJSON value}" (
+              named o == wantNamed
+            )
+          ) allOptions
+        );
+      hostile = [
+        "127.0.0.1:9428;touch /tmp/PWNED"
+        "a;b:1"
+        "a b:1"
+        "a$b:1"
+        "a!b:1"
+        "a(b):1"
+        "a*b:1"
+        "a=b:1"
+        "a?b:1"
+        "a@b:1"
+        "a~b:1"
+        "a,b:1"
+        "127.0.0.1:9428 --evil"
+        "$(id):1"
+        "`id`:1"
+        "a\"b:1"
+        "a'b:1"
+        "a\\b:1"
+        "a{b}:1"
+        "a|b:1"
+        "a#b:1"
+        "a\nb:1"
+        "a&b:1"
+        "a<b>:1"
+        "a/b:1"
+        ""
+      ];
+      accepted = [
+        ":4201"
+        "[::1]:4201"
+        "localhost:4201"
+        "0.0.0.0:4201"
+        "[::]:4201"
+        "127.0.0.1:4201"
+        "::"
+        "fe80::1%eth0"
+        "host-name.example.com"
+      ];
+      checks = lib.foldl' (a: b: a // b) { } (
+        map (verdicts true) hostile ++ map (verdicts false) accepted
+      );
+    in
+    pkgs.runCommand "address-options-accept-only-host-port-characters" { } (
+      let
+        failed = lib.filterAttrs (_: ok: !ok) checks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "address validation wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
 }
 // extraFlagsChecks

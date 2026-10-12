@@ -256,7 +256,99 @@ let
     ) (syslogLib.exposed cfg.logs.syslog)
   );
 
-  moduleAssertions = extraFlagsAssertions ++ syslogAssertions ++ syslogTlsFiles ++ syslogRequiresLogs;
+  # Every address option ends up in a shell script, a systemd unit or nginx's
+  # config, so it must hold only what a host:port (or a bare host) holds: that
+  # is all the listen helper takes. `%` is for an IPv6 zone (`fe80::1%eth0`);
+  # it is harmless in all three places once escaped.
+  addressOptions =
+    lib.optionals cfg.metrics.enable [
+      {
+        name = "metrics.listenAddress";
+        value = cfg.metrics.listenAddress;
+      }
+    ]
+    ++ lib.optionals cfg.logs.enable (
+      [
+        {
+          name = "logs.listenAddress";
+          value = cfg.logs.listenAddress;
+        }
+      ]
+      ++ map (s: {
+        name = "logs.syslog.${s.name}.ipAddress";
+        value = s.slot.ipAddress;
+      }) (syslogLib.active cfg.logs.syslog)
+    )
+    ++ lib.optionals cfg.traces.enable [
+      {
+        name = "traces.listenAddress";
+        value = cfg.traces.listenAddress;
+      }
+    ]
+    ++
+      lib.concatMap
+        (
+          svc:
+          lib.optional (mcp svc) {
+            name = "${svc}.mcp.listenAddress";
+            value = cfg.${svc}.mcp.listenAddress;
+          }
+        )
+        [
+          "metrics"
+          "logs"
+          "traces"
+        ]
+    ++ lib.optionals active (
+      [
+        {
+          name = "vmauth.listenAddress";
+          value = cfg.vmauth.listenAddress;
+        }
+        {
+          name = "vmauth.internalListenAddress";
+          value = cfg.vmauth.internalListenAddress;
+        }
+      ]
+      ++ lib.optional cfg.vmauth.https.enable {
+        name = "vmauth.https.ipAddress";
+        value = cfg.vmauth.https.ipAddress;
+      }
+      ++ lib.optional cfg.vmauth.http.enable {
+        name = "vmauth.http.ipAddress";
+        value = cfg.vmauth.http.ipAddress;
+      }
+    );
+
+  # nginx's server_name, which nixpkgs also uses as the ACME certificate name,
+  # so it cannot be quoted like the upstream addresses (nginx.nix).
+  domainAssertions = lib.optional (cfg.nginx.enable && cfg.nginx.domain != null) {
+    assertion = lib.match "[A-Za-z0-9._*-]+" cfg.nginx.domain != null;
+    message = ''
+      services.victoriaStack.nginx.domain = ${builtins.toJSON cfg.nginx.domain} is not a
+      host name: it may contain only letters, digits and . _ * - . The value
+      becomes nginx's server_name, so anything else would change the config.
+    '';
+  };
+
+  addressAssertions = map (o: {
+    assertion = lib.match "[]A-Za-z0-9._:%[-]+" o.value != null;
+    message = ''
+      services.victoriaStack.${o.name} = ${builtins.toJSON o.value} is not an
+      address: it may contain only letters, digits and . _ : % [ ] - (a host,
+      an IP address, or host:port). The value is written into unit files,
+      shell scripts and the nginx config, so anything else would be executed
+      or change what they mean.
+    '';
+  }) addressOptions;
+
+  moduleAssertions =
+    extraFlagsAssertions
+    ++ syslogAssertions
+    ++ syslogTlsFiles
+    ++ syslogRequiresLogs
+    ++ addressAssertions
+    ++ domainAssertions;
 in
 {
   config = {
