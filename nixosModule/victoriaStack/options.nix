@@ -83,6 +83,16 @@ let
     it in the secret's `restartUnits`.
   '';
 
+  doorOpenFirewallDescription = kind: ''
+    Whether to open this door's port in the NixOS firewall
+    (`networking.firewall.allowedTCPPorts`) for every interface. Off by
+    default: the module opens nothing unless asked. The door serves every
+    client holding a valid token, so open it only where that is intended, or
+    restrict it with your own firewall rules instead. It does not change the
+    address the ${kind} listener binds; the internal listener
+    (`internalListenAddress`) is never opened.
+  '';
+
   # One syslog listener (docs/decisions/0031). The slots differ only in
   # transport and default port; the notes below are shared so every slot says the
   # same thing about exposure.
@@ -90,8 +100,7 @@ let
     {
       proto,
       defaultPort,
-      # The tls slot is encrypted, so it has nothing to warn about.
-      warnsWhenExposed ? true,
+      encrypted ? false,
     }:
     {
       enable = mkEnableOption "the ${proto} syslog listener of VictoriaLogs";
@@ -110,9 +119,10 @@ let
           reach the port can write log lines, claim any hostname or program name,
           and create new streams (each distinct hostname/app_name/proc_id
           combination is one). Bind a specific address and restrict who can
-          reach the port with a firewall. A listener on a non-loopback address
-          without TLS also sends the logs unencrypted, and evaluation warns about
-          it (see `suppressExposureWarning`).
+          reach the port with a firewall. Evaluation warns about a listener on a
+          non-loopback address (see `suppressExposureWarning`)${
+            lib.optionalString (!encrypted) ", which also sends the logs unencrypted"
+          }.
         '';
       };
 
@@ -158,17 +168,16 @@ let
         '';
       };
 
-    }
-    // lib.optionalAttrs warnsWhenExposed {
       suppressExposureWarning = mkOption {
         type = types.bool;
         default = false;
         description = ''
-          Silences the evaluation warning that this listener accepts unencrypted,
-          unauthenticated syslog from the network (an address other than
-          loopback). Set it once you have confirmed that a firewall or a trusted
-          network restricts who can reach the port; same idea as
-          `suppressDynamicUserWarning`
+          Silences the evaluation warning that this listener accepts ${
+            if encrypted then "syslog from any sender" else "unencrypted, unauthenticated syslog"
+          } from the network
+          (an address other than loopback). Set it once you have confirmed that a
+          firewall or a trusted network restricts who can reach the port; same idea
+          as `suppressDynamicUserWarning`
           (docs/decisions/0009-dynamicuser-warning-not-assertion.md).
         '';
       };
@@ -387,7 +396,7 @@ let
           mkSyslogSlot {
             proto = "TLS";
             defaultPort = 6514;
-            warnsWhenExposed = false;
+            encrypted = true;
           }
           // {
             certFile = mkOption {
@@ -734,6 +743,12 @@ in
           description = "Port of the HTTPS listener.";
         };
 
+        openFirewall = mkOption {
+          type = types.bool;
+          default = false;
+          description = doorOpenFirewallDescription "HTTPS";
+        };
+
         certFile = mkOption {
           type = types.nullOr types.str;
           default = null;
@@ -787,6 +802,12 @@ in
           type = types.ints.between 1 65535;
           default = 8080;
           description = "Port of the plain-HTTP listener.";
+        };
+
+        openFirewall = mkOption {
+          type = types.bool;
+          default = false;
+          description = doorOpenFirewallDescription "plain-HTTP";
         };
       };
 

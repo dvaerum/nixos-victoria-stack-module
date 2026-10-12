@@ -172,7 +172,7 @@ let
 
   # The end-to-end scenario's stack, written the way a user would: logs behind
   # vmauth with a read token, and all three syslog slots open to the network.
-  # `suppress` is the plain slots' suppressExposureWarning.
+  # `suppress` is every slot's suppressExposureWarning.
   scenarioServices = suppress: {
     logs = {
       enable = true;
@@ -190,6 +190,7 @@ let
           // runtimeCert
           // {
             openFirewall = true;
+            suppressExposureWarning = suppress;
             extraFields = {
               source = "edge";
               site = "lab";
@@ -585,6 +586,16 @@ in
         udp = suppressed "0.0.0.0";
         tcp = slot "0.0.0.0" 514;
       };
+      tlsSuppressed =
+        ip:
+        (tlsSlot ip 6514)
+        // {
+          suppressExposureWarning = true;
+        };
+      mixedTls = {
+        tcp = slot "0.0.0.0" 514;
+        tls = tlsSuppressed "0.0.0.0";
+      };
     in
     mkTableCheck "syslog-exposure-warning" {
       "plain tcp on the wildcard" = warns { tcp = slot "0.0.0.0" 514; } "tcp";
@@ -603,6 +614,33 @@ in
           (warnings {
             udp = slot "0.0.0.0" 514;
           });
+      "tls on the wildcard" = warns { tls = tlsSlot "0.0.0.0" 6514; } "tls";
+      "tls on a specific non-loopback address" = warns { tls = tlsSlot "192.0.2.10" 6514; } "tls";
+      "tls on loopback" = quiet { tls = tlsSlot "127.0.0.1" 6514; };
+      "tls on [::1]" = quiet { tls = tlsSlot "[::1]" 6514; };
+      "tls suppressed" = quiet { tls = tlsSuppressed "0.0.0.0"; };
+      "suppress on tls leaves the tcp warning" = warns mixedTls "tcp" && !(warns mixedTls "tls");
+      "suppress on tcp leaves the tls warning" = warns {
+        tcp = suppressed "0.0.0.0";
+        tls = tlsSlot "0.0.0.0" 6514;
+      } "tls";
+      "the tls warning says it is encrypted but not authenticated" =
+        lib.any (lib.hasInfix "TLS encrypts but does not authenticate senders")
+          (warnings {
+            tls = tlsSlot "0.0.0.0" 6514;
+          });
+      "the tls warning does not claim the traffic is unencrypted" =
+        !(lib.any (lib.hasInfix "unencrypted") (warnings {
+          tls = tlsSlot "0.0.0.0" 6514;
+        }));
+      "the tls warning names its own suppress option" =
+        lib.any (lib.hasInfix "logs.syslog.tls.suppressExposureWarning")
+          (warnings {
+            tls = tlsSlot "0.0.0.0" 6514;
+          });
+      "the plain warning still says unencrypted" = lib.any (lib.hasInfix "unencrypted") (warnings {
+        tcp = slot "0.0.0.0" 514;
+      });
     };
 
   # --- tls slot ---
@@ -708,18 +746,6 @@ in
         } != [ ];
       "enabled with both files is fine" = failed { tls = tlsSlot "192.0.2.10" 6514; } == [ ];
     };
-
-  # A TLS listener is encrypted, so it does not trigger the exposure warning
-  # (it still has no authentication: that lives in the option text and the ADR).
-  tls-slot-does-not-warn-on-the-wildcard = mkNoWarningsCheck {
-    name = "syslog-tls-slot-does-not-warn-on-the-wildcard";
-    module = {
-      services.victoriaStack.logs = {
-        enable = true;
-        syslog.tls = tlsSlot "0.0.0.0" 6514;
-      };
-    };
-  };
 
   tls-slot-collides-with-tcp-slot-on-one-port =
     let
@@ -1134,7 +1160,13 @@ in
                 inherit openFirewall;
                 suppressExposureWarning = true;
               };
-              tls = (slot "0.0.0.0" 6514) // runtimeCert // { inherit openFirewall; };
+              tls =
+                (slot "0.0.0.0" 6514)
+                // runtimeCert
+                // {
+                  inherit openFirewall;
+                  suppressExposureWarning = true;
+                };
             };
           };
         };
@@ -1325,9 +1357,8 @@ in
     '';
   };
 
-  # The same scenario evaluated: the plain udp and tcp slots on the wildcard warn,
-  # the tls slot does not, and the slots' own suppress option silences the
-  # warning.
+  # The same scenario evaluated: every slot on the wildcard warns, and the
+  # slots' own suppress option silences the warning.
   e2e-exposure-warning-emitted-and-suppressible =
     let
       warnings =
@@ -1340,7 +1371,7 @@ in
     mkTableCheck "syslog-e2e-exposure-warning" {
       "udp warns" = lib.any (lib.hasInfix "logs.syslog.udp") loud;
       "tcp warns" = lib.any (lib.hasInfix "logs.syslog.tcp") loud;
-      "tls does not" = !(lib.any (lib.hasInfix "logs.syslog.tls") loud);
+      "tls warns" = lib.any (lib.hasInfix "logs.syslog.tls") loud;
       "suppressed is silent" = warnings true == [ ];
     };
 

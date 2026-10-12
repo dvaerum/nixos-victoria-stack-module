@@ -229,15 +229,31 @@ let
   }) syslogSlotNames;
 
   syslogWarnings = lib.optionals cfg.logs.enable (
-    map (s: ''
-      services.victoriaStack.logs.syslog.${s.name} listens on
-      ${listen.hostPort s.slot.ipAddress s.slot.port} (${s.transport}, unencrypted) and VictoriaLogs' syslog
-      ingestion has no authentication: anyone who can reach that port can write
-      log lines and create streams (docs/decisions/0031). Bind a specific
-      address and restrict the port with a firewall, or set
-      services.victoriaStack.logs.syslog.${s.name}.suppressExposureWarning = true
-      once that is deliberate.
-    '') (syslogLib.exposedPlain cfg.logs.syslog)
+    map (
+      s:
+      let
+        addr = listen.hostPort s.slot.ipAddress s.slot.port;
+        option = "services.victoriaStack.logs.syslog.${s.name}";
+      in
+      if s.name == "tls" then
+        ''
+          ${option} listens on ${addr} (tcp, TLS) and
+          VictoriaLogs' syslog ingestion has no authentication (docs/decisions/0031).
+          TLS encrypts but does not authenticate senders: anyone who can reach the port can still write logs.
+          Restrict it with a firewall or bind a specific address, or set
+          ${option}.suppressExposureWarning = true once that is deliberate.
+        ''
+      else
+        ''
+          ${option} listens on
+          ${addr} (${s.transport}, unencrypted) and VictoriaLogs' syslog
+          ingestion has no authentication: anyone who can reach that port can write
+          log lines and create streams (docs/decisions/0031). Bind a specific
+          address and restrict the port with a firewall, or set
+          ${option}.suppressExposureWarning = true
+          once that is deliberate.
+        ''
+    ) (syslogLib.exposed cfg.logs.syslog)
   );
 
   moduleAssertions = extraFlagsAssertions ++ syslogAssertions ++ syslogTlsFiles ++ syslogRequiresLogs;

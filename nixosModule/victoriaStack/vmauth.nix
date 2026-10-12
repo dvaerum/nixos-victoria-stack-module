@@ -450,6 +450,10 @@ let
 in
 {
   config = lib.mkIf (cfg.enable && anyBackendEnabled) {
+    networking.firewall.allowedTCPPorts =
+      lib.optional (cfg.https.enable && cfg.https.openFirewall) cfg.https.port
+      ++ lib.optional (cfg.http.enable && cfg.http.openFirewall) cfg.http.port;
+
     # vmauth's binary ships inside the SAME victoriametrics package as the
     # metrics storage server (docs/decisions/0007) -- but that package's
     # own default is only ever set by metrics.nix's `lib.mkIf

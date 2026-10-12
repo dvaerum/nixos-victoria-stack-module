@@ -34,6 +34,10 @@ writes       collectors --------------------------> vmauth :8443 (HTTPS)  [vmaut
 - All of vmauth's listeners share one routing/auth config, so the public
   doors also accept reads (still behind credentials). Restrict reachability
   with a firewall or Tailscale if that matters.
+- Each door has `openFirewall` (default false), which adds its port to
+  `networking.firewall.allowedTCPPorts`, like the syslog slots
+  ([0031](0031-victorialogs-syslog-listeners.md)); the internal listener is never
+  opened.
 - vmauth cannot redirect (no routing key or code for it), so there is no
   8080-to-8443 redirect; `http` is either open, loopback, or off.
 - The certificate is staged by systemd `LoadCredential=` (a copy): replace

@@ -53,8 +53,10 @@ after they arrive.
   within one protocol, because udp and tcp sockets can share a port (syslog on 514,
   or udp on the number of an HTTP port). A tcp slot still collides with every other
   tcp listener the module binds (the HTTP ports, vmauth's doors, nginx, Grafana).
-- A listener on a non-loopback address without TLS gets an evaluation **warning**,
-  never an assertion: a firewall or a trusted network may legitimately restrict it.
+- A listener on a non-loopback address gets an evaluation **warning**, never an
+  assertion: a firewall or a trusted network may legitimately restrict it. The `tls`
+  slot warns too, with its own text: its traffic is encrypted, but anyone who can
+  reach the port can still write logs.
   Each slot has its own `suppressExposureWarning`, like `suppressDynamicUserWarning`
   ([0009](0009-dynamicuser-warning-not-assertion.md)).
 - `extraFlags` may not carry a flag of an array the module renders for a transport
@@ -74,8 +76,8 @@ There is no ACME-name option. The `-syslog.tls*` arrays are positional with the 
 listeners, so a plain `tcp` slot sitting before the `tls` slot gets blank entries.
 
 TLS only encrypts. VictoriaLogs has no client-certificate option for syslog (a
-client with no certificate is accepted, measured), so the `tls` slot does not warn
-about exposure but is just as unauthenticated as the others. The minimum version is
+client with no certificate is accepted, measured), so the `tls` slot is just as
+unauthenticated as the others and warns about exposure like them. The minimum version is
 TLS 1.3; older devices need `-syslog.tlsMinVersion=TLS12` in `logs.extraFlags`
 (a scalar flag, deliberately not owned by the module).
 
@@ -87,9 +89,10 @@ directory does not trigger the watch and must restart the unit itself.
 ## Firewall and reads
 
 Each slot has `openFirewall` (default false), which adds its port to
-`networking.firewall.allowedUDPPorts` (udp) or `allowedTCPPorts` (tcp, tls). It is
-the first place the module touches the firewall; the default stays "opens nothing",
-checked from another container (unreachable without it, reachable with it).
+`networking.firewall.allowedUDPPorts` (udp) or `allowedTCPPorts` (tcp, tls). The
+default stays "opens nothing", checked from another container (unreachable without
+it, reachable with it). The vmauth doors have the same option
+([0025](0025-vmauth-public-write-doors.md)).
 
 Syslog rows live in tenant 0:0, so vmauth's read tier, Grafana and the MCP server
 read them like any other log row. A unix socket is deliberately not a slot: the

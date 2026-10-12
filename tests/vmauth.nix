@@ -18,6 +18,18 @@ let
     ;
   otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
 
+  mkTableCheck =
+    name: checks:
+    pkgs.runCommand name { } (
+      let
+        failed = lib.filterAttrs (_: ok: !ok) checks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "${name} wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
+
   # Plain test fixtures -- not sops-rendered (this module's own options are
   # secrets-backend-agnostic, see docs/decisions/0008; sops-nix integration
   # is a consumer concern, not something to bring into the test harness).
@@ -2953,10 +2965,12 @@ in
         vmauth = {
           writeTokensFile = "${writeTokensFixture}";
           accessLog = true;
-          http.enable = true; # 0.0.0.0:8080
+          http = {
+            enable = true; # 0.0.0.0:8080
+            openFirewall = true;
+          };
         };
       };
-      networking.firewall.allowedTCPPorts = [ 8080 ];
     };
 
     containers.client = {
@@ -2992,6 +3006,62 @@ in
       journal = stack.succeed("journalctl -u vmauth.service --no-pager -o cat")
       lines = [l for l in journal.splitlines() if client_ip in l and "opentelemetry/v1/metrics" in l]
       assert lines, f"no access-log line for the successful write from {client_ip}:\n{journal}"
+    '';
+  };
+
+  # From another host: a door on the wildcard is unreachable behind the default
+  # firewall, and reachable once the door asks for openFirewall.
+  door-open-firewall-is-reachable-from-another-host = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-door-open-firewall";
+
+    containers =
+      let
+        stack = openFirewall: {
+          virtualisation.vlans = [ 1 ];
+          imports = [
+            module
+            testLib.testStartupTimeouts
+          ];
+          services.victoriaStack = {
+            metrics.enable = true;
+            vmauth = {
+              writeTokensFile = "${writeTokensFixture}";
+              http = {
+                enable = true; # 0.0.0.0:8080
+                inherit openFirewall;
+              };
+            };
+          };
+        };
+      in
+      {
+        sealed = stack false;
+        exposed = stack true;
+        client = {
+          virtualisation.vlans = [ 1 ];
+          environment.systemPackages = [ pkgs.curl ];
+        };
+      };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      for m in (sealed, exposed, client):
+          m.systemctl("start network-online.target")
+          m.wait_for_unit("network-online.target")
+      wait_active(sealed, "vmauth.service")
+      wait_active(exposed, "vmauth.service")
+      sealed.wait_for_open_port(8080)
+      exposed.wait_for_open_port(8080)
+
+      def probe(host):
+          return f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 5 http://{host}:8080/opentelemetry/v1/metrics"
+
+      # No token: vmauth itself answers 401, so a 401 means the door was reached.
+      assert client.succeed(probe("exposed")) == "401"
+      client.fail(probe("sealed"))
+      # The listener itself is fine, so the absence above is the firewall.
+      assert sealed.succeed(probe("127.0.0.1")) == "401"
     '';
   };
 
@@ -3217,6 +3287,115 @@ in
     else
       throw "http.port did not reach ExecStart: ${execStart}"
   );
+
+  # Each public door opens its own port in the tcp list, only when asked, and
+  # leaves what the operator already opened alone. The internal listener has no
+  # such option and is never opened.
+  door-open-firewall-adds-the-door-port =
+    let
+      opened =
+        vmauth:
+        let
+          fw =
+            (evalWith {
+              services.victoriaStack = {
+                metrics.enable = true;
+                inherit vmauth;
+              };
+              networking.firewall = {
+                allowedTCPPorts = [ 22 ];
+                allowedUDPPorts = [ 123 ];
+              };
+            }).config.networking.firewall;
+        in
+        {
+          tcp = lib.sort (a: b: a < b) fw.allowedTCPPorts;
+          udp = lib.sort (a: b: a < b) fw.allowedUDPPorts;
+        };
+      untouched = {
+        tcp = [ 22 ];
+        udp = [ 123 ];
+      };
+      withTcp = ports: {
+        tcp = [ 22 ] ++ ports;
+        udp = [ 123 ];
+      };
+      https = {
+        enable = true;
+        certFile = "/run/fake-cert.pem";
+        keyFile = "/run/fake-key.pem";
+      };
+    in
+    mkTableCheck "vmauth-door-open-firewall" {
+      "off by default" =
+        opened {
+          inherit https;
+          http.enable = true;
+        } == untouched;
+      "https door" =
+        opened {
+          https = https // {
+            openFirewall = true;
+          };
+        } == withTcp [ 8443 ];
+      "http door" =
+        opened {
+          http = {
+            enable = true;
+            openFirewall = true;
+          };
+        } == withTcp [ 8080 ];
+      "both doors" =
+        opened {
+          https = https // {
+            openFirewall = true;
+          };
+          http = {
+            enable = true;
+            openFirewall = true;
+          };
+        } == withTcp [
+          8080
+          8443
+        ];
+      "only the door that asks" =
+        opened {
+          https = https // {
+            openFirewall = true;
+          };
+          http.enable = true;
+        } == withTcp [ 8443 ];
+      "a custom port is the one opened" =
+        opened {
+          http = {
+            enable = true;
+            port = 9090;
+            openFirewall = true;
+          };
+        } == withTcp [ 9090 ];
+      "a disabled door opens nothing" =
+        opened {
+          http = {
+            enable = false;
+            openFirewall = true;
+          };
+        } == untouched;
+      "the internal listener is never opened" =
+        opened {
+          http = {
+            enable = true;
+            openFirewall = true;
+          };
+        } == withTcp [ 8080 ];
+      "no backend, no vmauth, nothing opened" =
+        ((evalWith {
+          services.victoriaStack.vmauth.http = {
+            enable = true;
+            openFirewall = true;
+          };
+        }).config.networking.firewall.allowedTCPPorts
+        ) == [ ];
+    };
 
   # vmauth's own diagnostic pages (/health, /metrics, /flags, /debug/pprof,
   # /-/reload) used to be served on every listener, so the public write doors

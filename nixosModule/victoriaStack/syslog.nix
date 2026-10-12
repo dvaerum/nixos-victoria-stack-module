@@ -67,12 +67,12 @@ rec {
 
   needsLowPort = syslog: lib.any (s: s.slot.port < 1024) (active syslog);
 
-  # A listener reachable from the network that does not encrypt.
-  exposedPlain =
+  # A listener reachable from the network, unless its warning is suppressed.
+  exposed =
     syslog:
-    lib.filter (
-      s: s.name != "tls" && !listen.isLoopbackHost s.slot.ipAddress && !s.slot.suppressExposureWarning
-    ) (active syslog);
+    lib.filter (s: !listen.isLoopbackHost s.slot.ipAddress && !s.slot.suppressExposureWarning) (
+      active syslog
+    );
 
   # Ports the slots ask to have opened, by firewall list. The tls slot is tcp.
   firewallPorts =

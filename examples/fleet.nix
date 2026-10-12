@@ -29,6 +29,7 @@
           # stays loopback-only for nginx and local callers.
           https = {
             enable = true; # 0.0.0.0:8443 by default
+            openFirewall = true;
             certFile = "/run/secrets/victoria/gateway-cert.pem";
             keyFile = "/run/secrets/victoria/gateway-key.pem";
             # Or reuse an ACME certificate NixOS already manages:
@@ -40,10 +41,6 @@
           writeTokensFile = "/run/secrets/victoria/collector-write-tokens.yaml";
         };
       };
-
-      # This module never opens firewall ports itself (infrastructure-
-      # agnostic); the gateway's operator does.
-      networking.firewall.allowedTCPPorts = [ 8443 ];
     };
 
   # One call per fleet host: its own label and its own token file.
