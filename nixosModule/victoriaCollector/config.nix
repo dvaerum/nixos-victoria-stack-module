@@ -276,6 +276,9 @@ in
           RemainAfterExit = true;
           LoadCredential = [ "write-token:${cfg.writeTokenFile}" ];
           ExecStart = lib.getExe renderJournalUploadTokenHeader;
+          # RemainAfterExit keeps the unit "active" after the script ends, so
+          # without this the drop-in outlives the unit until reboot.
+          ExecStop = "${lib.getExe' pkgs.coreutils "rm"} -f /run/systemd/journal-upload.conf.d/50-write-token.conf";
           # chgrp to systemd-journal: root is not a member of that group.
           CapabilityBoundingSet = [ "CAP_CHOWN" ];
 

@@ -2945,6 +2945,39 @@ in
       throw "queue.maxSizeBytes warning wrong"
   );
 
+  # The oneshot is RemainAfterExit, so without an ExecStop the drop-in holding
+  # the write token outlived its unit (removal, logs/writeTokenFile turned off)
+  # until reboot.
+  journal-upload-token-dropin-is-removed-with-its-unit = pkgs.testers.nixosTest {
+    name = "victoria-collector-journal-upload-token-dropin-removed-on-stop";
+
+    containers.collector = {
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        logs.enable = true;
+        writeEndpoint = "http://127.0.0.1:4204";
+        writeTokenFile = "${writeTokenFixture}";
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      wait_active(collector, "systemd-journal-upload.service", max_restarts=None)
+      conf = "/run/systemd/journal-upload.conf.d/50-write-token.conf"
+      collector.succeed(f"test -f {conf}")
+
+      collector.succeed("systemctl stop victoria-collector-journal-upload-token.service")
+      collector.fail(f"test -e {conf}")
+
+      collector.succeed("systemctl start victoria-collector-journal-upload-token.service")
+      assert collector.succeed(f"stat -c '%a %U:%G' {conf}").strip() == "640 root:systemd-journal"
+      assert collector.succeed(
+          "stat -c '%a %U' /run/systemd/journal-upload.conf.d"
+      ).strip() == "755 root"
+    '';
+  };
+
   # URL schemes are case-insensitive, and a trailing slash on the endpoint
   # must not turn the uploader's URL into `//insert/journald`. Both used to
   # slip through: `lib.hasPrefix "https"` skipped the TLS settings and the CA
