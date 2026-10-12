@@ -31,6 +31,10 @@ let
     "-tlsKeyFile=/run/fake-key.pem"
     "-httpAuth.username=someone"
     "-httpAuth.password=file:///run/fake-pass"
+    # An entry of the -httpListenAddr family is positional with the module's own
+    # -httpListenAddr: the proxy protocol made the readiness probe get a 400.
+    "-httpListenAddr.useProxyProtocol=true"
+    "--httpListenAddr.useProxyProtocol=true"
   ];
   badFlagsFor =
     svc:

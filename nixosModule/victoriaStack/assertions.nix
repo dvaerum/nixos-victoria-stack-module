@@ -123,6 +123,10 @@ let
   # path, so these would break them silently. The flag NAME decides, whether
   # given as `-f`, `--f`, `-f=v` or `--f=v`; Go flags are case-sensitive.
   flagName = f: lib.head (lib.splitString "=" (lib.removePrefix "-" (lib.removePrefix "-" f)));
+  # The -httpListenAddr.* arrays (useProxyProtocol) are positional with the
+  # module's own -httpListenAddr; the proxy protocol makes the readiness probe get
+  # a 400. The plain -httpListenAddr itself is not owned.
+  storageOwnedPrefixes = [ "httpListenAddr." ];
   addressingOrAuthPrefixes = [
     "http.pathPrefix"
     "tls"
@@ -133,7 +137,7 @@ let
       name = "metrics";
       active = cfg.metrics.enable;
       inherit (cfg.metrics) extraFlags;
-      ownedPrefixes = [ ];
+      ownedPrefixes = storageOwnedPrefixes;
       ownedNames = [ ];
       alternative = "put nginx in front of the service";
     }
@@ -141,7 +145,7 @@ let
       name = "logs";
       active = cfg.logs.enable;
       inherit (cfg.logs) extraFlags;
-      ownedPrefixes = syslogLib.ownedPrefixes cfg.logs.syslog;
+      ownedPrefixes = storageOwnedPrefixes ++ syslogLib.ownedPrefixes cfg.logs.syslog;
       ownedNames = syslogLib.ownedNames cfg.logs.syslog;
       alternative = "put nginx in front of the service (for the -syslog.* flags the syslog.udp / syslog.tcp options own, use those)";
     }
@@ -149,7 +153,7 @@ let
       name = "traces";
       active = cfg.traces.enable;
       inherit (cfg.traces) extraFlags;
-      ownedPrefixes = [ ];
+      ownedPrefixes = storageOwnedPrefixes;
       ownedNames = [ ];
       alternative = "put nginx in front of the service";
     }
