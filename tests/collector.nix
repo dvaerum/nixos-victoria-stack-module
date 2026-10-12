@@ -2903,6 +2903,48 @@ in
             echo OK > $out
     '';
 
+  # One metrics batch measured 0.32-0.51 MB in a minimal test VM (60000 and
+  # 400000 delivered nothing, 1000000 delivered): a cap below one batch drops
+  # everything without a word, so a cap under the floor draws a build warning.
+  queue-max-size-below-one-batch-warns = pkgs.runCommand "queue-max-size-below-one-batch-warns" { } (
+    let
+      warns =
+        module:
+        lib.any (lib.hasInfix "services.victoriaCollector.queue.maxSizeBytes") (
+          (evalWithCollector {
+            services.victoriaCollector = {
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+            }
+            // module;
+          }).config.warnings
+        );
+      withCap = size: {
+        metrics.enable = true;
+        queue.maxSizeBytes = size;
+      };
+    in
+    if
+      warns (withCap 60000)
+      && warns (withCap 1000000)
+      && warns (withCap 4194303)
+      && warns {
+        traces.enable = true;
+        queue.maxSizeBytes = 1000;
+      }
+      && !(warns (withCap 4194304))
+      && !(warns { metrics.enable = true; })
+      # Logs alone never touch Alloy's queue.
+      && !(warns {
+        logs.enable = true;
+        queue.maxSizeBytes = 1000;
+      })
+    then
+      "echo OK > $out"
+    else
+      throw "queue.maxSizeBytes warning wrong"
+  );
+
   # URL schemes are case-insensitive, and a trailing slash on the endpoint
   # must not turn the uploader's URL into `//insert/journald`. Both used to
   # slip through: `lib.hasPrefix "https"` skipped the TLS settings and the CA

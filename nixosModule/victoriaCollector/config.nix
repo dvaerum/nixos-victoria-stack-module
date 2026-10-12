@@ -25,6 +25,8 @@ let
   journaldIsHttps = lib.hasPrefix "https://" journaldBaseUrl;
 
   # `..` is rejected by assertions.nix, so a plain prefix test is sound here.
+  queueFloorBytes = 4194304;
+
   queueOutsideStateDir = !(lib.hasPrefix "/var/lib/alloy/" (toString cfg.queue.directory));
 
   # Shared by both render oneshots below: validates the token file and sets $token.
@@ -112,18 +114,28 @@ in
       # default; a queue directory the dynamic user cannot own draws a warning, and
       # `alloy.dynamicUser = false` is the way out.
       warnings =
-        lib.optional
-          (queueOutsideStateDir && cfg.alloy.dynamicUser && !cfg.alloy.suppressDynamicUserWarning)
-          ''
-            services.victoriaCollector.queue.directory (${toString cfg.queue.directory}) is
-            outside /var/lib/alloy while Alloy runs as a systemd DynamicUser. A
-            dynamic user can only write inside its own StateDirectory and nothing
-            owns that directory for it, so Alloy would fail to write its queue
-            there. Set services.victoriaCollector.alloy.dynamicUser = false (a
-            static "alloy" user; the module then creates the directory for it), or
-            services.victoriaCollector.alloy.suppressDynamicUserWarning = true once
-            you have made the directory writable for Alloy's runtime user yourself.
-          '';
+        lib.optional (cfg.queue.maxSizeBytes < queueFloorBytes) ''
+          services.victoriaCollector.queue.maxSizeBytes (${toString cfg.queue.maxSizeBytes})
+          is below ${toString queueFloorBytes} bytes. The cap applies to each exporter and must
+          hold at least one batch (a metrics batch measured 0.32-0.51 MB on a
+          minimal host and grows with it): below that, Alloy rejects every
+          export ("sending queue is full") and nothing reaches the gateway.
+          Raise it, or ignore this warning once you have checked that data
+          arrives.
+        ''
+        ++
+          lib.optional
+            (queueOutsideStateDir && cfg.alloy.dynamicUser && !cfg.alloy.suppressDynamicUserWarning)
+            ''
+              services.victoriaCollector.queue.directory (${toString cfg.queue.directory}) is
+              outside /var/lib/alloy while Alloy runs as a systemd DynamicUser. A
+              dynamic user can only write inside its own StateDirectory and nothing
+              owns that directory for it, so Alloy would fail to write its queue
+              there. Set services.victoriaCollector.alloy.dynamicUser = false (a
+              static "alloy" user; the module then creates the directory for it), or
+              services.victoriaCollector.alloy.suppressDynamicUserWarning = true once
+              you have made the directory writable for Alloy's runtime user yourself.
+            '';
 
       users.users.alloy = lib.mkIf (!cfg.alloy.dynamicUser) {
         isSystemUser = true;

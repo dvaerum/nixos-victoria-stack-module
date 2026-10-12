@@ -184,12 +184,21 @@ in
         type = types.ints.positive;
         default = 1073741824; # 1GiB
         description = ''
-          Size cap for Alloy's disk-backed write-back queue (per exporter),
-          so a gateway outage doesn't silently drop everything past the
-          small in-memory default. A constrained edge device may want a
-          much smaller cap; a busier host may want more headroom -- no
-          universally-right value, hence a real option rather than a fixed
-          constant.
+          Size cap for Alloy's disk-backed write-back queue, so a gateway
+          outage doesn't silently drop everything past the small in-memory
+          default. The cap applies to EACH exporter separately (metrics and
+          traces each get this much). When a queue is full Alloy rejects the
+          newest data ("Rejecting data. sending queue is full") and keeps what
+          is already queued.
+
+          The cap must hold at least one whole batch: a cap smaller than a
+          single batch rejects every export without delivering anything. One
+          metrics batch measured 0.32-0.51 MB in a minimal test VM (caps of
+          60000 and 400000 delivered nothing there, 1000000 did) and grows
+          with the host (CPUs, disks, network interfaces, systemd units), so
+          a value below 4194304 (4 MiB) draws a build-time warning. A
+          constrained edge device may still want a small cap once it has
+          checked that data arrives.
         '';
       };
 
@@ -307,11 +316,19 @@ in
             outage can last before Alloy gives up on a batch entirely.
             The default `"0s"` means never: a batch keeps retrying until the
             gateway is back, and the disk-backed `queue` is what bounds the
-            data held (when it is full the oldest data is dropped). Alloy's
-            own default is `5m`, after which it logs "Dropping data" even
-            though the queue still has room -- so a longer outage would lose
-            data the queue was meant to protect. Set a duration to give up
-            sooner; `null` omits the setting (Alloy's own `5m`).
+            data held (when it is full the newest data is rejected and the
+            already queued data is kept). Alloy's own default is `5m`, after
+            which it logs "Dropping data" even though the queue still has room
+            -- so a longer outage would lose data the queue was meant to
+            protect. Set a duration to give up sooner; `null` omits the
+            setting (Alloy's own `5m`).
+
+            Only some failures are retried: the exporter treats a 401, 403,
+            413 or 500 answer as a permanent error and drops that batch at
+            once (logged as "Dropping data ... Permanent error"), whatever this
+            setting says -- so a wrong or rotated-away `writeTokenFile` token
+            loses data from the very first batch. 429 and 503 answers are
+            retried (forever with the default `"0s"`).
           '';
         };
       };
