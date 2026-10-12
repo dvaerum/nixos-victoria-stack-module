@@ -226,6 +226,11 @@ in
       grafana = "http://127.0.0.1:3000"
 
       machine.wait_until_succeeds(f"curl -sf {admin} {grafana}/api/health")
+
+      # The header file holds the read token, so only Grafana's own user may read it.
+      mode = machine.succeed("stat -c %a /run/grafana/vmauth-authorization").strip()
+      assert mode == "600", f"the token header file must be owner-only, got {mode!r}"
+
       machine.succeed(
           f"curl -sf {admin} -X POST {grafana}/api/admin/users "
           "-H 'Content-Type: application/json' "
@@ -300,6 +305,106 @@ in
       assert "viewer_written_metric" not in series, f"import must not have run: {series!r}"
       logs = machine.succeed("curl -sf http://127.0.0.1:4202/select/logsql/query -d 'query=*'")
       assert "viewer-written-line" not in logs, f"insert must not have run: {logs!r}"
+    '';
+  };
+
+  # A replaced token file must reach Grafana: it only reads the token at start,
+  # so the watcher has to restart it. Grafana is rotated BEFORE vmauth, so the
+  # in-between state (Grafana sending the new token to a vmauth that does not
+  # know it yet) proves Grafana really sends the new one, not the old.
+  read-token-rotation-restarts-grafana = pkgs.testers.nixosTest {
+    name = "victoria-stack-grafana-token-rotation";
+
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+        grafanaConsumerConfig
+      ];
+      # Runtime paths (not store paths) so the test can replace them.
+      systemd.tmpfiles.rules = [
+        "d /var/lib/rotation 0700 root root -"
+        "f /var/lib/rotation/grafana-token 0600 root root - grafana-rotation-token-one"
+        "f /var/lib/rotation/vmauth-read.yaml 0600 root root - tokens:\\n  - token: grafana-rotation-token-one\\n"
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana = {
+          enable = true;
+          readTokenFile = "/var/lib/rotation/grafana-token";
+        };
+        vmauth.readTokensFile = "/var/lib/rotation/vmauth-read.yaml";
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      wait_active(machine, "grafana.service")
+      wait_active(machine, "vmauth.service")
+      machine.wait_for_open_port(3000)
+      machine.wait_for_open_port(4204)
+      machine.wait_for_unit("grafana-read-token-watch.path")
+      machine.wait_for_unit("vmauth-secret-watch-read-tokens.path")
+
+      admin = "-u admin:admin"  # gitleaks:allow
+      proxy = "http://127.0.0.1:3000/api/datasources/proxy/uid/victoriametrics-ds/api/v1/labels"
+
+      def direct_status(token):
+          return machine.succeed(
+              "curl -s -o /dev/null -w '%{http_code}' "
+              f"-H 'Authorization: Bearer {token}' 'http://127.0.0.1:4204/metrics/api/v1/labels'"
+          ).strip()
+
+      def invocation(unit):
+          return machine.succeed(f"systemctl show -p InvocationID --value {unit}").strip()
+
+      def settled(path_unit, helper):
+          # The path unit re-arms only once its helper has finished.
+          machine.wait_until_succeeds(
+              f"systemctl show -p SubState --value {path_unit} | grep -qx waiting", timeout=120
+          )
+          machine.wait_until_succeeds(
+              f"systemctl show -p ActiveState --value {helper} | grep -qx inactive", timeout=120
+          )
+
+      def wait_proxy(ok):
+          machine.wait_until_succeeds(
+              f"test \"$(curl -s -o /dev/null -w '%{{http_code}}' {admin} '{proxy}')\" "
+              f"{'=' if ok else '!='} 200",
+              timeout=180,
+          )
+
+      wait_proxy(True)
+      assert direct_status("grafana-rotation-token-one") == "200"
+
+      # 1. New token to Grafana only: Grafana restarts and now sends a token that
+      #    vmauth does not list.
+      settled("grafana-read-token-watch.path", "grafana-secret-restart.service")
+      was = invocation("grafana.service")
+      machine.succeed("printf %s grafana-rotation-token-two > /var/lib/rotation/grafana-token")
+      machine.wait_until_succeeds(
+          f"test \"$(systemctl show -p InvocationID --value grafana.service)\" != {was}", timeout=180
+      )
+      wait_active(machine, "grafana.service")
+      machine.wait_for_open_port(3000)
+      header = machine.succeed("cat /run/grafana/vmauth-authorization")
+      assert header == "Bearer grafana-rotation-token-two", f"Grafana restarted with the old header: {header!r}"
+      wait_proxy(False)
+
+      # 2. vmauth learns the new token and forgets the old one.
+      settled("vmauth-secret-watch-read-tokens.path", "vmauth-secret-restart.service")
+      was = invocation("vmauth.service")
+      machine.succeed("printf 'tokens:\\n  - token: grafana-rotation-token-two\\n' > /var/lib/rotation/vmauth-read.yaml")
+      machine.wait_until_succeeds(
+          f"test \"$(systemctl show -p InvocationID --value vmauth.service)\" != {was}", timeout=180
+      )
+      wait_active(machine, "vmauth.service")
+      machine.wait_for_open_port(4204)
+
+      wait_proxy(True)
+      assert direct_status("grafana-rotation-token-two") == "200"
+      assert direct_status("grafana-rotation-token-one") == "401", "the old token must be refused"
     '';
   };
 
@@ -627,8 +732,22 @@ in
               == "str";
             "a path watches the file" =
               watch != null && watch.pathConfig.PathChanged == "${grafanaReadTokenFile}";
-            "a change try-restarts grafana" =
-              lib.hasInfix "try-restart grafana.service" evaluated.config.systemd.services.grafana-secret-restart.serviceConfig.ExecStart;
+            # Every key: a path unit without Unit= would trigger a service named
+            # after itself (which does not exist), and one not wanted by
+            # multi-user.target is never started, so rotations go unnoticed.
+            "the path unit triggers the restart helper and nothing else" =
+              watch.pathConfig == {
+                PathChanged = "${grafanaReadTokenFile}";
+                Unit = "grafana-secret-restart.service";
+              };
+            "the path unit starts with the system" = watch.wantedBy == [ "multi-user.target" ];
+            # No capabilities: the helper only asks systemd to restart a unit.
+            "the helper try-restarts grafana, as a oneshot with no capabilities" =
+              evaluated.config.systemd.services.grafana-secret-restart.serviceConfig == {
+                Type = "oneshot";
+                ExecStart = "${evaluated.config.systemd.package}/bin/systemctl try-restart grafana.service";
+                CapabilityBoundingSet = "";
+              };
           };
           failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) checks);
         in
@@ -636,6 +755,37 @@ in
           "echo OK > $out"
         else
           throw "grafana.readTokenFile handling broken: ${builtins.toJSON failed}"
+      );
+
+  # Without readTokenFile (the assertion reports it) nothing token-related may
+  # be rendered: interpolating the null path would be an evaluation error, and
+  # a watcher on no file is meaningless. The attributes are forced on purpose.
+  no-token-file-renders-no-token-plumbing =
+    pkgs.runCommand "grafana-no-token-file-renders-no-token-plumbing" { }
+      (
+        let
+          evaluated = evalWith {
+            services.grafana.enable = true;
+            services.victoriaStack = {
+              metrics.enable = true;
+              grafana.enable = true;
+            };
+          };
+          inherit (evaluated.config.systemd) services paths;
+          sc = services.grafana.serviceConfig;
+          checks = {
+            "no credential" = !(lib.any (lib.hasPrefix "grafana-read-token") (sc.LoadCredential or [ ]));
+            "no header-file step" =
+              !(lib.any (lib.hasInfix "grafana-vmauth-auth-header") (map toString (sc.ExecStartPre or [ ])));
+            "no restart helper" = !(services ? grafana-secret-restart);
+            "no path unit" = !(paths ? grafana-read-token-watch);
+          };
+          failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) checks);
+        in
+        if failed == [ ] then
+          "echo OK > $out"
+        else
+          throw "token plumbing rendered without a token file: ${builtins.toJSON failed}"
       );
 
   # The whole provisioning document the module hands to Grafana, spelled out: a
