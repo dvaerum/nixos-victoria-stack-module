@@ -38,24 +38,40 @@ while IFS= read -r hit; do
   rest=${hit#*:}
   line=${rest%%:*}
   match=${rest#*:}
-  tail=${match#docs/decisions/}
-  if [[ $tail == *.md ]] && [ ! -f "$match" ]; then
+  tail=${match#docs/}
+  tail=${tail#decisions/}
+  if [[ $tail == *.md ]] && [ ! -f "docs/decisions/$tail" ]; then
     fail "$file:$line: $match does not exist"
   fi
   for n in $(grep -oE '(^|/)[0-9]{4}' <<<"$tail" | tr -d /); do
     adr_exists "$n" || fail "$file:$line: no ADR numbered $n (from $match)"
   done
-done < <(grep -HnoE 'docs/decisions/[0-9]{4}(/[0-9]{4})*(-[a-z0-9-]+\.md)?' "${ref_files[@]}" || true)
+done < <(grep -HnoE '(docs/)?decisions/[0-9]{4}(/[0-9]{4})*(-[a-z0-9-]+\.md)?' "${ref_files[@]}" || true)
 
-# 2. "ADR NNNN" must name an ADR that exists.
+# 2. "ADR NNNN" must name an ADR that exists, and so must every further number
+#    of a list ("ADRs 0029 and 0030", "ADRs 0029/0030", "ADRs 0029, 0030").
 while IFS= read -r hit; do
-  n=$(grep -oE '[0-9]{4}' <<<"$hit" | tail -n1)
-  adr_exists "$n" || fail "${hit%%:*}: no ADR numbered $n (${hit#*:})"
-done < <(grep -HoE 'ADRs? [0-9]{4}' "${ref_files[@]}" || true)
+  while IFS= read -r n; do
+    adr_exists "$n" || fail "${hit%%:*}: no ADR numbered $n (${hit#*:})"
+  done < <(grep -oE '[0-9]{4}' <<<"${hit#*:}")
+done < <(grep -HoE 'ADRs? [0-9]{4}(( ?[,/&] ?| and | or |, and )[0-9]{4})*' "${ref_files[@]}" || true)
+
+# 2b. Every relative markdown link to a .md file must resolve from the linking
+#     file's own directory (`(0099-x.md)`, `(./0099-x.md)`, `(decisions/0099-x.md)`).
+for file in "${ref_files[@]}"; do
+  [[ $file == *.md ]] || continue
+  while IFS= read -r link; do
+    target=${link#\](}
+    target=${target%)}
+    target=${target%%#*}
+    [[ $target == *://* ]] && continue
+    [ -f "$(dirname "$file")/$target" ] || fail "$file: link target $target does not exist"
+  done < <(grep -oE '\]\([^)# ]+\.md(#[^) ]*)?\)' "$file" || true)
+done
 
 # 3. Change-narrative belongs in git history and the ADRs, not in comments and
 #    user-facing docs.
-if grep -HnE 'Phase [0-9]+|fresh[- ]agent' "${living_files[@]}"; then
+if grep -HniE 'phase [0-9]+|fresh[- ]agent' "${living_files[@]}"; then
   fail "phase/audit narrative in comments or docs (see lines above); keep only the causal fact"
 fi
 
