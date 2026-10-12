@@ -505,6 +505,36 @@ in
     };
   };
 
+  # ADR 0029: the token and vmauth requirements exist because Grafana provisions
+  # datasources; with no backend nothing is provisioned, so none of them applies.
+  # The converse is the same module with one backend switched on.
+  grafana-without-a-backend-needs-no-token = mkNoAssertionsFireCheck {
+    name = "grafana-without-a-backend-needs-no-token";
+    module = {
+      services.victoriaStack.grafana.enable = true;
+      services.grafana = {
+        enable = true;
+        settings.security.secret_key = "$__file{${secretKeyFixture}}";
+      };
+    };
+  };
+
+  grafana-with-a-backend-and-no-token-fires = mkAssertionFiresCheck {
+    name = "grafana-with-a-backend-and-no-token-fires";
+    expectMessageSubstring = "grafana.readTokenFile must be set";
+    module = {
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana.enable = true;
+        vmauth.readTokensFile = "/run/fake-read-tokens.yaml";
+      };
+      services.grafana = {
+        enable = true;
+        settings.security.secret_key = "$__file{${secretKeyFixture}}";
+      };
+    };
+  };
+
   backend-tls-cert-requires-key = mkAssertionFiresCheck {
     name = "backend-tls-cert-requires-key";
     expectMessageSubstring = "certFile and .keyFile";

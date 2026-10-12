@@ -208,6 +208,7 @@ let
     virtualisation.vlans = [ 1 ];
     imports = [
       module
+      testLib.testStartupTimeouts
       (tlsFilesFrom certStack)
     ];
     environment.systemPackages = tools;
@@ -421,13 +422,38 @@ in
 
   # --- assertions, collisions, extraFlags ownership, exposure warning ---
 
-  slot-requires-logs-enable-fires = mkAssertionFiresCheck {
-    name = "syslog-slot-requires-logs-enable-fires";
-    expectMessageSubstring = "services.victoriaStack.logs.syslog.tcp.enable requires";
-    module = {
-      services.victoriaStack.logs.syslog.tcp = slot "127.0.0.1" 5514;
+  # One row per slot: the tls slot once escaped the guard because it is
+  # listed separately from the plain ones.
+  slot-requires-logs-enable-fires =
+    let
+      failedFor =
+        name: slotCfg:
+        lib.any (lib.hasInfix "services.victoriaStack.logs.syslog.${name}.enable requires") (
+          map (a: a.message) (
+            builtins.filter (a: !a.assertion)
+              (evalWith {
+                services.victoriaStack.logs.syslog.${name} = slotCfg;
+              }).config.assertions
+          )
+        );
+    in
+    mkTableCheck "syslog-slot-requires-logs-enable-fires" {
+      "udp slot" = failedFor "udp" (slot "127.0.0.1" 5514);
+      "tcp slot" = failedFor "tcp" (slot "127.0.0.1" 5514);
+      "tls slot" = failedFor "tls" (tlsSlot "127.0.0.1" 6514);
+      "no assertion with logs.enable" =
+        !(lib.any (lib.hasInfix "enable requires") (
+          map (a: a.message) (
+            builtins.filter (a: !a.assertion)
+              (evalWith {
+                services.victoriaStack.logs = {
+                  enable = true;
+                  syslog.tls = tlsSlot "127.0.0.1" 6514;
+                };
+              }).config.assertions
+          )
+        ));
     };
-  };
 
   # Colliding listeners are named on both sides; udp never collides with a tcp
   # listener (measured: a udp socket on the HTTP port number binds fine).
@@ -681,6 +707,29 @@ in
           "-syslog.tlsCertFile=%d/syslog-tls-cert"
           "-syslog.tlsKeyFile=%d/syslog-tls-key"
         ];
+      # The tls arrays belong to the tcp transport only; the binary ignores
+      # surplus entries on udp, so only the rendered flags can tell.
+      "udp next to tcp and tls gets no tls array entries" =
+        let
+          flags = syslogFlags {
+            udp = slot "192.0.2.10" 514;
+            tcp = slot "192.0.2.10" 5514;
+            tls = tlsSlot "192.0.2.10" 6514;
+          };
+        in
+        lib.filter (lib.hasPrefix "-syslog.tls") flags == [
+          "-syslog.tls=false"
+          "-syslog.tls=true"
+          "-syslog.tlsCertFile="
+          "-syslog.tlsCertFile=%d/syslog-tls-cert"
+          "-syslog.tlsKeyFile="
+          "-syslog.tlsKeyFile=%d/syslog-tls-key"
+        ]
+        &&
+          lib.filter (lib.hasInfix ".udp") flags == [
+            "-syslog.listenAddr.udp=192.0.2.10:514"
+            ''-syslog.extraFields.udp={"source":"syslog"}''
+          ];
       "no tls flag without a tls slot" =
         lib.filter (lib.hasPrefix "-syslog.tls") (syslogFlags {
           tcp = slot "192.0.2.10" 5514;
@@ -797,6 +846,13 @@ in
         lib.filterAttrs (n: _: lib.hasPrefix "victorialogs-secret-watch-" n) (eval syslog).systemd.paths;
       withTls = watchers { tls = tlsSlot "192.0.2.10" 6514; };
       restart = (eval { tls = tlsSlot "192.0.2.10" 6514; }).systemd.services.victorialogs-secret-restart;
+      filesButOff = {
+        tcp = slot "192.0.2.10" 5514;
+        tls = {
+          certFile = "/run/fake-cert.pem";
+          keyFile = "/run/fake-key.pem";
+        };
+      };
     in
     mkTableCheck "syslog-tls-secret-watchers" {
       "one watcher per file" =
@@ -814,6 +870,13 @@ in
       "the helper try-restarts without blocking" =
         restart.serviceConfig.ExecStart
         == "${(eval { }).systemd.package}/bin/systemctl try-restart --no-block victorialogs.service";
+      # certFile/keyFile are set but the slot is off: LoadCredential= would name
+      # a file nothing asked for and the unit would fail to start.
+      "files with the slot disabled: no credential" =
+        !((logsUnit filesButOff).serviceConfig ? LoadCredential);
+      "files with the slot disabled: no watcher" = watchers filesButOff == { };
+      "files with the slot disabled: no helper" =
+        !((eval filesButOff).systemd.services ? victorialogs-secret-restart);
       "no watcher without a tls slot" = watchers { tcp = slot "192.0.2.10" 5514; } == { };
       "no helper without a tls slot" =
         !((eval { tcp = slot "192.0.2.10" 5514; }).systemd.services ? victorialogs-secret-restart);
@@ -1027,6 +1090,7 @@ in
     containers.main = {
       imports = [
         module
+        testLib.testStartupTimeouts
         (tlsFilesFrom certOne)
       ];
       environment.systemPackages = tools;
@@ -1041,6 +1105,7 @@ in
     containers.old = {
       imports = [
         module
+        testLib.testStartupTimeouts
         (tlsFilesFrom certOne)
       ];
       environment.systemPackages = tools;
@@ -1054,6 +1119,12 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       ${queryPython}
+      def refused(machine, cmd, needle):
+          # `fail` alone is satisfied by any error (a timeout, a missing port);
+          # the sender's traceback names the TLS error that actually refused it.
+          rc, out = machine.execute(cmd + " 2>&1")
+          assert rc != 0 and needle in out, (rc, needle, out)
+
       start_all()
       wait_active(main, "victorialogs.service")
       wait_active(old, "victorialogs.service")
@@ -1073,7 +1144,7 @@ in
       # Plaintext to the TLS port is not ingested; TLS to the plain port fails.
       main.succeed("${send} --proto tcp --port 6514 PLAINTOTLSMARK")
       main.wait_until_succeeds("journalctl -u victorialogs.service --no-pager | grep -F 'does not look like a TLS handshake'")
-      main.fail("${send} --proto tls --port 5514 --cacert ${certOne}/cert.pem TLSTOPLAINMARK")
+      refused(main, "${send} --proto tls --port 5514 --cacert ${certOne}/cert.pem TLSTOPLAINMARK", "do_handshake")
       # A later message proves the earlier ones had time to be stored.
       main.succeed("${send} --proto tls --port 6514 --cacert ${certOne}/cert.pem TLSAFTERMARK")
       rows(main, "TLSAFTERMARK")
@@ -1081,7 +1152,7 @@ in
           assert main.succeed(query_cmd("_msg:" + marker)).strip() == "", marker
 
       # TLS 1.2 is refused by default, accepted with -syslog.tlsMinVersion=TLS12.
-      main.fail("${send} --proto tls --tls-max 1.2 --port 6514 --cacert ${certOne}/cert.pem TLS12REFUSEDMARK")
+      refused(main, "${send} --proto tls --tls-max 1.2 --port 6514 --cacert ${certOne}/cert.pem TLS12REFUSEDMARK", "TLSV1_ALERT_PROTOCOL_VERSION")
       old.wait_for_open_port(6514)
       out = old.succeed("${send} --proto tls --tls-max 1.2 --port 6514 --cacert ${certOne}/cert.pem TLS12MARK")
       assert "TLSv1.2" in out, out
@@ -1097,6 +1168,7 @@ in
     containers.machine = {
       imports = [
         module
+        testLib.testStartupTimeouts
         (tlsFilesFrom certOne)
       ];
       environment.systemPackages = tools;
@@ -1146,6 +1218,7 @@ in
           virtualisation.vlans = [ 1 ];
           imports = [
             module
+            testLib.testStartupTimeouts
             (tlsFilesFrom certHosts)
           ];
           environment.systemPackages = tools;
@@ -1219,8 +1292,13 @@ in
       # so the absence above is the firewall.
       sealed.succeed("${send} --proto tcp --port 514 SEALEDLOCALMARK")
       rows(sealed, "SEALEDLOCALMARK")
-      for marker in ("SEALEDTCPMARK", "SEALEDTLSMARK", "SEALEDUDPMARK"):
-          assert sealed.succeed(query_cmd("_msg:" + marker)).strip() == "", marker
+      # Rows become searchable about a second after arriving, and a datagram can
+      # still be in flight: keep looking for a bounded while so the absence
+      # cannot come from checking too early.
+      for _ in range(10):
+          for marker in ("SEALEDTCPMARK", "SEALEDTLSMARK", "SEALEDUDPMARK"):
+              assert sealed.succeed(query_cmd("_msg:" + marker)).strip() == "", marker
+          time.sleep(1)
     '';
   };
 
@@ -1350,7 +1428,14 @@ in
       code = stack.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {url} -d 'query=*'").strip()
       assert code == "401", code
 
-      # The stack's own journal: nothing from the syslog listeners went wrong.
+      # The stack's own journal: first that it HAS syslog lines (every listener
+      # announced itself at both starts), or the negative grep below would pass
+      # on a journal that says nothing at all.
+      started = stack.succeed("journalctl -u victorialogs.service --no-pager | grep -F 'started accepting syslog messages'")
+      for listener in ('udp="0.0.0.0:514"', 'tcp="0.0.0.0:514"', 'tcp="0.0.0.0:6514"'):
+          n = started.count(f"-syslog.listenAddr.{listener}")
+          assert n == 2, f"{listener} announced {n} times, want 2 (start and restart): {started}"
+      # Then that nothing from the syslog listeners went wrong.
       stack.fail(
           "journalctl -u victorialogs.service --no-pager | grep -i syslog | grep -iE 'error|fatal|panic|cannot'"
       )
