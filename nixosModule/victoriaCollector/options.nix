@@ -92,13 +92,19 @@ in
     };
 
     writeEndpoint = mkOption {
-      type = types.str;
+      # nullOr so an unset value reaches assertions.nix, which says what to
+      # set, instead of NixOS's bare "accessed but has no value defined".
+      type = types.nullOr types.str;
+      default = null;
       example = "https://victoria-stack.example.com:8443";
       description = ''
         Base URL of the victoriaStack vmauth gateway's write/ingest paths.
         Carries its own scheme (http/https) -- not assumed here, since
         consumers differ (plain HTTP over a trusted LAN vs. HTTPS over a
-        tailnet).
+        tailnet). Must start with `http://` or `https://` and carry no
+        query string or fragment (`?`, `#`): the module appends its own paths.
+        Required whenever `metrics.enable` or `traces.enable` is set, and for
+        `logs.enable` unless `journaldWriteEndpoint` is set.
       '';
     };
 

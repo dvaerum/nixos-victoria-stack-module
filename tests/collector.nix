@@ -680,6 +680,63 @@ in
           throw "the auth block does not follow writeTokenFile"
       );
 
+  # A scheme-less endpoint passes eval and dies in `alloy run`; a query string or
+  # fragment lands in the middle of the request path. An unset one used to be
+  # NixOS's bare "accessed but has no value defined".
+  write-endpoint-is-validated = pkgs.runCommand "write-endpoint-is-validated" { } (
+    let
+      failing =
+        module:
+        ownFailed (evalWithCollector {
+          services.victoriaCollector = {
+            hostType = "server";
+          }
+          // module;
+        });
+      fires = sub: module: lib.any (lib.hasInfix sub) (failing module);
+      metrics = endpoint: {
+        metrics.enable = true;
+        writeEndpoint = endpoint;
+      };
+      logs = extra: { logs.enable = true; } // extra;
+
+      mustFire = [
+        (fires "writeEndpoint must start with" (metrics "host:8443"))
+        (fires "writeEndpoint must start with" (metrics "ftp://host:8443"))
+        (fires "writeEndpoint must start with" (metrics "//host:8443"))
+        (fires "writeEndpoint must not contain" (metrics "http://host:1?x=1"))
+        (fires "writeEndpoint must not contain" (metrics "http://host:1#frag"))
+        (fires "journaldWriteEndpoint must start with" (logs {
+          writeEndpoint = "http://host:1";
+          journaldWriteEndpoint = "host:1";
+        }))
+        (fires "journaldWriteEndpoint must not contain" (logs {
+          writeEndpoint = "http://host:1";
+          journaldWriteEndpoint = "http://host:1?x=1";
+        }))
+        (fires "writeEndpoint is required" { metrics.enable = true; })
+        (fires "writeEndpoint is required" { traces.enable = true; })
+        (fires "writeEndpoint is required" (logs { }))
+      ];
+      mustNotFire = [
+        (fires "writeEndpoint" (metrics "http://host:8443"))
+        (fires "writeEndpoint" (metrics "https://host"))
+        (fires "writeEndpoint" (metrics "HTTPS://host:8443/"))
+        (fires "writeEndpoint" (metrics "http://host:8443/base/path"))
+        # Logs alone only need the endpoint the uploader is pointed at.
+        (fires "writeEndpoint" (logs {
+          journaldWriteEndpoint = "http://host:1";
+        }))
+        # Nothing enabled: nothing needs an endpoint.
+        (fires "writeEndpoint" { })
+      ];
+    in
+    if lib.all (x: x) mustFire && !(lib.any (x: x) mustNotFire) then
+      "echo OK > $out"
+    else
+      throw "writeEndpoint validation wrong: mustFire=${builtins.toJSON mustFire} mustNotFire=${builtins.toJSON mustNotFire}"
+  );
+
   # Empty capability set everywhere, except the one oneshot that changes a file's
   # group (a real boot proves it needs CAP_CHOWN: "" made it fail).
   collector-oneshots-drop-capabilities = pkgs.runCommand "collector-oneshots-drop-capabilities" { } (

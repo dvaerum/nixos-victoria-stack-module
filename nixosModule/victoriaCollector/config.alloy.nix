@@ -3,7 +3,9 @@
 let
   common = import ./common.nix { inherit lib; };
   needsAlloyOtlp = common.needsAlloyOtlp cfg;
-  writeBase = common.stripTrailingSlashes cfg.writeEndpoint;
+  writeBase = common.stripTrailingSlashes (
+    if cfg.writeEndpoint == null then "" else cfg.writeEndpoint
+  );
 
   # Every interpolated string literal goes through JSON encoding: it escapes
   # quotes, backslashes and control characters, and Alloy accepts the result as a

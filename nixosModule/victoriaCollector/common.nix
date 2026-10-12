@@ -5,8 +5,16 @@ rec {
   needsAlloyOtlp = cfg: cfg.metrics.enable || cfg.traces.enable;
 
   # What systemd-journal-upload is actually pointed at.
+  # An unset endpoint is an assertion failure (assertions.nix); "" keeps the
+  # rest of the evaluation from tripping over null before that message shows.
   journaldEndpoint =
-    cfg: if cfg.journaldWriteEndpoint != null then cfg.journaldWriteEndpoint else cfg.writeEndpoint;
+    cfg:
+    if cfg.journaldWriteEndpoint != null then
+      cfg.journaldWriteEndpoint
+    else if cfg.writeEndpoint != null then
+      cfg.writeEndpoint
+    else
+      "";
 
   # Drops trailing slashes so `<base>/path` never becomes `<base>//path`.
   stripTrailingSlashes =
