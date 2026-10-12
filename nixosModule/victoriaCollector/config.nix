@@ -27,9 +27,12 @@ let
   # `..` is rejected by assertions.nix, so a plain prefix test is sound here.
   queueOutsideStateDir = !(lib.hasPrefix "/var/lib/alloy/" (toString cfg.queue.directory));
 
+  # Shared by both render oneshots below: validates the token file and sets $token.
+  readWriteToken = builtins.readFile ./read-write-token.sh;
+
   renderJournalUploadTokenHeader = pkgs.writeShellApplication {
     name = "victoria-collector-journal-upload-token-header";
-    text = ''
+    text = readWriteToken + ''
       # The directory keeps the default 755: the uploader's DynamicUser reaches the
       # file through the systemd-journal group and must be able to traverse it.
       mkdir -p /run/systemd/journal-upload.conf.d
@@ -39,7 +42,7 @@ let
       conf=/run/systemd/journal-upload.conf.d/50-write-token.conf
       {
         echo "[Upload]"
-        echo "Header=Authorization: Bearer $(cat "$CREDENTIALS_DIRECTORY/write-token")"
+        echo "Header=Authorization: Bearer $token"
       } > "$conf"
       # systemd-journal-upload.service runs as DynamicUser=yes with
       # SupplementaryGroups=systemd-journal: its per-boot UID can only read
@@ -68,9 +71,9 @@ let
   # default, not a necessity (docs/decisions/0015, 0020).
   renderAlloyWriteToken = pkgs.writeShellApplication {
     name = "victoria-collector-alloy-write-token";
-    text = ''
+    text = readWriteToken + ''
       env=/run/alloy-write-token/write-token.env
-      echo "VICTORIA_WRITE_TOKEN=$(cat "$CREDENTIALS_DIRECTORY/write-token")" > "$env"
+      echo "VICTORIA_WRITE_TOKEN=$token" > "$env"
       chmod 600 "$env"
     '';
   };

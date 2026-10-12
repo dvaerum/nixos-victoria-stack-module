@@ -2829,6 +2829,80 @@ in
       echo OK > $out
     '';
 
+  # Both render oneshots wrote whatever the token file held: an empty file gave an
+  # empty VICTORIA_WRITE_TOKEN, a YAML tokens file pasted by mistake gave
+  # `Header=Authorization: Bearer tokens:\n  - token: ...`. Runs the real scripts.
+  token-render-oneshots-validate-the-token-file =
+    let
+      e = evalWithCollector {
+        services.victoriaCollector = {
+          metrics.enable = true;
+          logs.enable = true;
+          writeEndpoint = "http://127.0.0.1:4204";
+          writeTokenFile = "/run/secrets/write-token";
+          hostType = "server";
+        };
+      };
+      alloyScript =
+        e.config.systemd.services.victoria-collector-alloy-write-token.serviceConfig.ExecStart;
+      journalScript =
+        e.config.systemd.services.victoria-collector-journal-upload-token.serviceConfig.ExecStart;
+    in
+    pkgs.runCommand "token-render-oneshots-validate-the-token-file" { } /* bash */ ''
+            fail() { echo "$1" >&2; exit 1; }
+            mkdir -p shims creds root/run/systemd rt
+            chmod 755 root/run/systemd
+            # chgrp to systemd-journal cannot succeed in the sandbox.
+            printf '#!${pkgs.runtimeShell}\nexit 0\n' > shims/chgrp
+            chmod +x shims/chgrp
+
+            sed "s|/run/alloy-write-token|$PWD/rt|g" ${alloyScript} > alloy.sh
+            sed "s|/run/systemd|$PWD/root/run/systemd|g" ${journalScript} > journal.sh
+            chmod +x alloy.sh journal.sh
+
+            alloy_out=rt/write-token.env
+            journal_out=root/run/systemd/journal-upload.conf.d/50-write-token.conf
+
+            # run <kind> <printf-format content>: leaves rc and err behind.
+            run() {
+              rm -f "$alloy_out" "$journal_out" err
+              printf "$2" > creds/write-token
+              set +e
+              PATH=$PWD/shims:$PATH CREDENTIALS_DIRECTORY=$PWD/creds ./$1.sh 2> err
+              rc=$?
+              set -e
+            }
+            ok() { # kind content expected-token
+              run "$1" "$2"
+              [ "$rc" = 0 ] || fail "$1: content '$2' was rejected: $(cat err)"
+              if [ "$1" = alloy ]; then
+                want="VICTORIA_WRITE_TOKEN=$3"; got=$(cat "$alloy_out")
+              else
+                want="[Upload]
+      Header=Authorization: Bearer $3"; got=$(cat "$journal_out")
+              fi
+              [ "$got" = "$want" ] || fail "$1: content '$2' rendered '$got', want '$want'"
+            }
+            bad() { # kind content
+              run "$1" "$2"
+              [ "$rc" != 0 ] || fail "$1: content '$2' was accepted"
+              grep -q 'services.victoriaCollector.writeTokenFile' err || fail "$1: message does not name the option: $(cat err)"
+              ! grep -q 'secret-token-one' err || fail "$1: message leaks the token"
+              [ ! -e "$alloy_out" ] && [ ! -e "$journal_out" ] || fail "$1: an output was written for '$2'"
+            }
+
+            for kind in alloy journal; do
+              ok $kind 'secret-token-one\n' secret-token-one # gitleaks:allow
+              ok $kind 'secret-token-one' secret-token-one # gitleaks:allow
+              bad $kind ""
+              bad $kind '\n'
+              bad $kind 'tokens:\n  - token: secret-token-one\n' # gitleaks:allow
+              bad $kind 'secret-token-one\n\n' # gitleaks:allow
+              bad $kind 'secret-token-one\nsecret-token-two' # gitleaks:allow
+            done
+            echo OK > $out
+    '';
+
   # URL schemes are case-insensitive, and a trailing slash on the endpoint
   # must not turn the uploader's URL into `//insert/journald`. Both used to
   # slip through: `lib.hasPrefix "https"` skipped the TLS settings and the CA
