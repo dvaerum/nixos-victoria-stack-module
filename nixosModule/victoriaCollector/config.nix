@@ -29,7 +29,8 @@ let
 
   queueOutsideStateDir = !(lib.hasPrefix "/var/lib/alloy/" (toString cfg.queue.directory));
 
-  # Shared by both render oneshots below: validates the token file and sets $token.
+  # Validates the token credential and sets $token; shared by the uploader's render
+  # oneshot and Alloy's pre-start check below.
   readWriteToken = builtins.readFile ./read-write-token.sh;
 
   renderJournalUploadTokenHeader = pkgs.writeShellApplication {
@@ -56,29 +57,24 @@ let
     '';
   };
 
-  # alloy.service's own preStart runs too late to populate an
-  # EnvironmentFile=: systemd resolves EnvironmentFile= for every exec in
-  # the unit -- including ExecStartPre= itself -- before that exec runs,
-  # so a file only created by the unit's own preStart never exists yet.
-  # Same trap ADR 0012 already avoids for journal-upload; fixed here the
-  # same way, a dedicated oneshot ordered strictly before alloy.service.
-  #
-  # Runs under its OWN DynamicUser, not root: per systemd.exec(5),
-  # EnvironmentFile= is read by the service manager itself (PID1), before
-  # the target process execs -- file ownership is irrelevant to that
-  # read, root bypasses normal permission checks regardless. Unlike
-  # journal-upload's oneshot (which writes under /run/systemd/, a
-  # root-owned 755 directory this unit has no write access to otherwise),
-  # there is no such requirement here -- running as root was an avoidable
-  # default, not a necessity (docs/decisions/0015, 0020).
-  renderAlloyWriteToken = pkgs.writeShellApplication {
-    name = "victoria-collector-alloy-write-token";
-    text = readWriteToken + ''
-      env=/run/alloy-write-token/write-token.env
-      echo "VICTORIA_WRITE_TOKEN=$token" > "$env"
-      chmod 600 "$env"
-    '';
+  # Alloy reads the credential itself; this only refuses a file it could not use
+  # as a bearer token, before Alloy starts.
+  checkAlloyWriteToken = pkgs.writeShellApplication {
+    name = "victoria-collector-alloy-write-token-check";
+    text = readWriteToken + "unset token\n";
   };
+
+  hasToken = cfg.writeTokenFile != null;
+  # Units that read the token at start: the path units below start and restart them.
+  tokenConsumers =
+    lib.optional needsAlloyOtlp "alloy.service"
+    ++ lib.optional cfg.logs.enable "systemd-journal-upload.service";
+  # What a changed file has to restart: the uploader gets the token through its
+  # render oneshot, whose restart carries over to it (Requires=).
+  tokenRestartUnits =
+    lib.optional needsAlloyOtlp "alloy.service"
+    ++ lib.optional cfg.logs.enable "victoria-collector-journal-upload-token.service";
+  systemctl = "${config.systemd.package}/bin/systemctl";
 in
 {
   config = lib.mkMerge [
@@ -146,22 +142,28 @@ in
         !cfg.alloy.dynamicUser && cfg.alloy.manageTmpfiles && queueOutsideStateDir
       ) "d ${toString cfg.queue.directory} 0750 alloy alloy - -";
 
+      # nixpkgs' alloy unit has Restart=always, RestartSec=2: a start that fails for
+      # the missing credential would repeat every ~2.3 s for as long as the file is
+      # absent (five starts take longer than the 10 s rate-limit window, so it never
+      # trips). A condition skips the start cleanly instead; the path unit below
+      # starts Alloy once the file exists.
+      systemd.services.alloy.unitConfig = lib.mkIf hasToken {
+        ConditionPathExists = cfg.writeTokenFile;
+      };
+
       # DynamicUser=yes implies this sandbox; DynamicUser=false drops it, so a
       # static user gets it spelled out. ReadWritePaths (below) keeps the queue
       # directory writable under ProtectSystem=strict.
       systemd.services.alloy.serviceConfig = lib.mkMerge [
         {
-          # The list-valued unit setting rather than services.alloy.environmentFile:
-          # that option holds one value, so an operator's own would conflict.
-          EnvironmentFile = lib.optional (
-            cfg.writeTokenFile != null
-          ) "/run/alloy-write-token/write-token.env";
-          # The CA bundle reaches Alloy's user as a systemd credential
-          # (config.alloy.nix points ca_file at it), so the file's owner and mode
-          # don't matter -- same rule as every other TLS/secret file here.
-          LoadCredential = lib.optional (
-            cfg.alloy.tlsCaFile != null
-          ) "tls-ca:${toString cfg.alloy.tlsCaFile}";
+          # The CA bundle and the write token reach Alloy's user as systemd
+          # credentials (config.alloy.nix reads both from the credentials
+          # directory), so the files' owner and mode don't matter -- same rule as
+          # every other TLS/secret file here.
+          LoadCredential =
+            lib.optional (cfg.alloy.tlsCaFile != null) "tls-ca:${toString cfg.alloy.tlsCaFile}"
+            ++ lib.optional hasToken "write-token:${cfg.writeTokenFile}";
+          ExecStartPre = lib.optional hasToken (lib.getExe checkAlloyWriteToken);
           # DynamicUser implies ProtectSystem=strict, which blocks writes anywhere
           # not allow-listed via StateDirectory=/ReadWritePaths=; the default
           # queue.directory sits inside alloy's own StateDirectory, anything
@@ -181,45 +183,6 @@ in
           RestrictSUIDSGID = true;
         })
       ];
-
-      # Rendered by victoria-collector-alloy-write-token (see above) --
-      # NOT this unit's own preStart, which runs too late to satisfy its
-      # own EnvironmentFile=.
-      # Requires=, not Wants=: only Requires= carries a restart of the oneshot
-      # over to alloy, whose EnvironmentFile= is read at start. With Wants=, a
-      # rotated token was rewritten to the env file but Alloy kept sending the
-      # old one.
-      systemd.services.alloy.requires = lib.mkIf (cfg.writeTokenFile != null) [
-        "victoria-collector-alloy-write-token.service"
-      ];
-
-      systemd.services.victoria-collector-alloy-write-token = lib.mkIf (cfg.writeTokenFile != null) {
-        description = "Render alloy's write-token EnvironmentFile=";
-        before = [ "alloy.service" ];
-        wantedBy = [ "alloy.service" ];
-        serviceConfig = {
-          Type = "oneshot";
-          RemainAfterExit = true;
-          LoadCredential = [ "write-token:${cfg.writeTokenFile}" ];
-          ExecStart = lib.getExe renderAlloyWriteToken;
-          CapabilityBoundingSet = "";
-
-          # Own RuntimeDirectory, deliberately not alloy.service's StateDirectory
-          # (two dynamic UIDs must not share one directory); see
-          # renderAlloyWriteToken for why root is not needed.
-          DynamicUser = true;
-          RuntimeDirectory = "alloy-write-token";
-          RuntimeDirectoryMode = "0700";
-
-          # Lighter hardening pass than the long-running services --
-          # this unit runs once per boot and exits, but the basics still
-          # cost nothing for a unit that handles a plaintext secret,
-          # however briefly (docs/decisions/0015).
-          NoNewPrivileges = true;
-          PrivateTmp = true;
-          ProtectHome = true;
-        };
-      };
     })
 
     (lib.mkIf cfg.logs.enable {
@@ -270,7 +233,10 @@ in
       # The write-token header drop-in: a dedicated, narrowly-scoped root
       # oneshot, NOT systemd-journal-upload.service's own preStart -- see
       # docs/decisions/0012 for why (that unit runs hardened/DynamicUser,
-      # with no write access to /run/systemd/ at all).
+      # with no write access to /run/systemd/ at all). The uploader cannot take
+      # the credential itself: Header= is read only from its config files (systemd
+      # 261 man page; the binary has no credential support), hence this render
+      # step (docs/decisions/0012).
       systemd.services.victoria-collector-journal-upload-token = lib.mkIf (cfg.writeTokenFile != null) {
         description = "Render systemd-journal-upload's write-token Header= drop-in";
         before = [ "systemd-journal-upload.service" ];
@@ -287,18 +253,15 @@ in
           CapabilityBoundingSet = [ "CAP_CHOWN" ];
 
           # Stays root: /run/systemd is root:root 755, so creating a
-          # subdirectory under it requires root (unlike the alloy write-token
-          # oneshot above). Same lighter hardening pass as that unit.
+          # subdirectory under it requires root. Lighter hardening pass than the
+          # long-running services (docs/decisions/0015).
           NoNewPrivileges = true;
           PrivateTmp = true;
           ProtectHome = true;
         };
       };
 
-      # Unlike the alloy write-token oneshot above (whose failure is
-      # self-enforcing: a missing EnvironmentFile= is a hard systemd
-      # failure for the consuming unit, per systemd.exec(5)), a drop-in
-      # config directory under /run/systemd/<unit>.conf.d/ with nothing
+      # A drop-in config directory under /run/systemd/<unit>.conf.d/ with nothing
       # in it is NOT inherently a failure -- systemd just falls back to
       # the base unit config. Without an explicit `requires`, a failed
       # token render here would let systemd-journal-upload.service start
@@ -328,6 +291,53 @@ in
       # rate is disabled"), confirmed a real top-level NixOS option, not
       # hidden in unitConfig.
       systemd.services.systemd-journal-upload.startLimitIntervalSec = 0;
+    })
+
+    # The consumers read a copy of the token file at start (LoadCredential=), so
+    # a file that appears late or changes has to be acted on by someone else:
+    # path units, event-driven (docs/decisions/0006).
+    (lib.mkIf (hasToken && tokenConsumers != [ ]) {
+      # A start whose credential is missing fails and is never retried. The helper
+      # is RemainAfterExit: while it stays active the path unit does not trigger
+      # it again, so an operator's deliberate `systemctl stop` is not undone by a
+      # later change to the file.
+      systemd.services.victoria-collector-write-token-appeared = {
+        description = "Start the collector units once the write-token file exists";
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = "${systemctl} start --no-block ${lib.concatStringsSep " " tokenConsumers}";
+          CapabilityBoundingSet = "";
+        };
+      };
+      systemd.paths.victoria-collector-write-token-appeared = {
+        description = "Wait for the write-token file";
+        wantedBy = [ "multi-user.target" ];
+        pathConfig = {
+          PathExists = cfg.writeTokenFile;
+          Unit = "victoria-collector-write-token-appeared.service";
+        };
+      };
+
+      # try-restart: a unit stopped on purpose stays stopped. --no-block: the path
+      # unit only re-arms once this helper finishes, so waiting for the restart
+      # would lose a file replaced meanwhile (same as the storage units' watchers).
+      systemd.services.victoria-collector-write-token-restart = {
+        description = "Restart the collector units after the write-token file changed";
+        serviceConfig = {
+          Type = "oneshot";
+          ExecStart = "${systemctl} try-restart --no-block ${lib.concatStringsSep " " tokenRestartUnits}";
+          CapabilityBoundingSet = "";
+        };
+      };
+      systemd.paths.victoria-collector-write-token-watch = {
+        description = "Watch the write-token file for replacement";
+        wantedBy = [ "multi-user.target" ];
+        pathConfig = {
+          PathChanged = cfg.writeTokenFile;
+          Unit = "victoria-collector-write-token-restart.service";
+        };
+      };
     })
   ];
 }

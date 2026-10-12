@@ -56,3 +56,12 @@ security hardening upstream deliberately put there. A separate,
 narrowly-scoped oneshot (root, ordered `Before=`/`WantedBy=` the real
 service, nothing else in its remit) does the one privileged thing needed
 without touching the hardened unit at all.
+
+## Why the oneshot remains (credential support)
+
+The owner principle is to load tokens with `LoadCredential=` whenever the
+service can read the credentials directory (docs/decisions/0006). The oneshot is
+itself fed by `LoadCredential=`, but `systemd-journal-upload` (systemd 261) cannot
+take `Header=` from a credential: it is read only from the config files, and the
+binary has no credential support. So the token is rendered into the drop-in at
+start, and a late or replaced file is handled by the shared path units.

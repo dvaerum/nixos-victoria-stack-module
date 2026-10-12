@@ -38,8 +38,9 @@ let
   writeTokenAFixture = pkgs.writeText "collector-test-write-token-a" "collector-test-write-token-a";
   writeTokenBFixture = pkgs.writeText "collector-test-write-token-b" "collector-test-write-token-b";
 
-  # A stand-in gateway: records every request's Authorization header, answers
-  # 200 so Alloy's exporter is satisfied.
+  # A stand-in gateway: records every request's Authorization header (/tmp/auth.log)
+  # and its path with the header (/tmp/requests.log), answers 200 so Alloy's exporter
+  # is satisfied.
   fakeGatewayModule =
     { pkgs, ... }:
     {
@@ -54,8 +55,11 @@ let
               def do_POST(self):
                   n = int(self.headers.get("Content-Length", 0))
                   self.rfile.read(n)
+                  auth = self.headers.get("Authorization", "NONE")
                   with open("/tmp/auth.log", "a") as f:
-                      f.write(self.headers.get("Authorization", "NONE") + "\n")
+                      f.write(auth + "\n")
+                  with open("/tmp/requests.log", "a") as f:
+                      f.write(self.path + " " + auth + "\n")
                   self.send_response(200)
                   self.send_header("Content-Length", "0")
                   self.end_headers()
@@ -753,7 +757,8 @@ in
         }).config.systemd.services;
       caps = n: units.${n}.serviceConfig.CapabilityBoundingSet;
       checks = {
-        "alloy token oneshot: none" = caps "victoria-collector-alloy-write-token" == "";
+        "token file start helper: none" = caps "victoria-collector-write-token-appeared" == "";
+        "token file restart helper: none" = caps "victoria-collector-write-token-restart" == "";
         "journal-upload token oneshot: only CAP_CHOWN" =
           caps "victoria-collector-journal-upload-token" == [ "CAP_CHOWN" ];
       };
@@ -1012,34 +1017,6 @@ in
           ''
       );
 
-  alloy-write-token-oneshot-does-not-run-as-root =
-    pkgs.runCommand "alloy-write-token-oneshot-does-not-run-as-root" { }
-      (
-        let
-          evaluated = evalWithCollector {
-            services.victoriaCollector = {
-              metrics.enable = true;
-              writeEndpoint = "http://127.0.0.1:4204";
-              hostType = "server";
-              writeTokenFile = "${writeTokenFixture}";
-            };
-          };
-          sc = evaluated.config.systemd.services.victoria-collector-alloy-write-token.serviceConfig;
-        in
-        if (sc.DynamicUser or false) == true then
-          "echo OK > $out"
-        else
-          throw ''
-            victoria-collector-alloy-write-token must run under its own
-            DynamicUser, not root -- EnvironmentFile= is read by the
-            service manager itself (systemd.exec(5)), not the target
-            process, so file ownership is irrelevant to alloy.service's
-            own EnvironmentFile= resolution. Unlike journal-upload's
-            oneshot (which genuinely needs root -- /run/systemd is
-            755 root:root), this one has no such requirement.
-          ''
-      );
-
   write-token-file-is-a-plain-string-not-a-nix-path =
     pkgs.runCommand "collector-write-token-file-is-a-plain-string" { }
       (
@@ -1047,8 +1024,8 @@ in
           # Same bug class as vmauth's adminPasswordFile/readTokensFile/
           # writeTokensFile (tests/vmauth.nix) -- the identical
           # LoadCredential="write-token:${cfg.writeTokenFile}" interpolation
-          # shape exists twice in config.nix (alloy's oneshot and
-          # journal-upload's oneshot). See docs/decisions/0020.
+          # shape exists twice in config.nix (alloy.service and journal-upload's
+          # oneshot). See docs/decisions/0020.
           actualType =
             httpsEvaluated.options.services.victoriaCollector.writeTokenFile.type.nestedTypes.elemType.name;
         in
@@ -1062,9 +1039,7 @@ in
           ''
       );
 
-  # Unlike the alloy write-token oneshot (whose failure is self-enforcing
-  # via a required EnvironmentFile=, confirmed via systemd.exec(5)), the
-  # journal-upload token oneshot renders a config drop-in directory,
+  # The journal-upload token oneshot renders a config drop-in directory,
   # which systemd treats as optional -- without an explicit `requires`,
   # systemd-journal-upload.service would start anyway on a failed render,
   # silently uploading unauthenticated.
@@ -1129,29 +1104,96 @@ in
           ''
       );
 
-  alloy-requires-its-token-render-oneshot =
-    pkgs.runCommand "alloy-requires-its-token-render-oneshot" { }
-      (
-        let
-          evaluated = evalWithCollector {
-            services.victoriaCollector = {
-              metrics.enable = true;
-              writeTokenFile = "${writeTokenFixture}";
-              hostType = "server";
-            };
+  # The token reaches Alloy as a systemd credential it reads itself; nothing renders
+  # an EnvironmentFile for it, and path units (not a unit dependency) deal with the
+  # file appearing late or changing.
+  write-token-delivery-unit-shapes =
+    let
+      evalFor =
+        module:
+        (evalWithCollector {
+          services.victoriaCollector = {
+            writeEndpoint = "http://127.0.0.1:4204";
+            writeTokenFile = "/run/secrets/write-token";
+            hostType = "server";
+          }
+          // module;
+        }).config;
+      both = evalFor {
+        metrics.enable = true;
+        logs.enable = true;
+      };
+      metricsOnly = evalFor { metrics.enable = true; };
+      logsOnly = evalFor { logs.enable = true; };
+      noToken =
+        (evalWithCollector {
+          services.victoriaCollector = {
+            metrics.enable = true;
+            logs.enable = true;
+            writeEndpoint = "http://127.0.0.1:4204";
+            hostType = "server";
           };
-          requires = evaluated.config.systemd.services.alloy.requires or [ ];
-        in
-        if lib.elem "victoria-collector-alloy-write-token.service" requires then
-          "echo OK > $out"
-        else
-          throw ''
-            alloy.service must `requires` victoria-collector-alloy-write-token:
-            a restart of the oneshot does not propagate over Wants=, so after a
-            token rotation Alloy would keep the old token (EnvironmentFile= is
-            only read at start) and every export would be a 401.
-          ''
-      );
+        }).config;
+      alloy = both.systemd.services.alloy;
+      appeared = both.systemd.services.victoria-collector-write-token-appeared.serviceConfig;
+      restarter = both.systemd.services.victoria-collector-write-token-restart.serviceConfig;
+      startOf = c: c.systemd.services.victoria-collector-write-token-appeared.serviceConfig.ExecStart;
+      restartOf = c: c.systemd.services.victoria-collector-write-token-restart.serviceConfig.ExecStart;
+      systemctl = "${both.systemd.package}/bin/systemctl";
+      text = both.environment.etc."alloy/config.alloy".text;
+      mentions = lib.hasInfix;
+      checks = {
+        "alloy loads the token as a credential" =
+          lib.elem "write-token:/run/secrets/write-token" alloy.serviceConfig.LoadCredential;
+        "alloy has no EnvironmentFile" = !(alloy.serviceConfig ? EnvironmentFile);
+        "alloy does not depend on a render oneshot" =
+          !(lib.any (mentions "write-token") (
+            (alloy.requires or [ ]) ++ (alloy.wants or [ ]) ++ (alloy.after or [ ])
+          ));
+        "no alloy render oneshot exists" = !(both.systemd.services ? victoria-collector-alloy-write-token);
+        "alloy validates the file before starting" = lib.length alloy.serviceConfig.ExecStartPre == 1;
+        "alloy start is skipped while the file is missing" =
+          alloy.unitConfig.ConditionPathExists == "/run/secrets/write-token";
+        "the config reads the credential, secret-typed" =
+          mentions ''filename  = "/run/credentials/alloy.service/write-token"'' text
+          && mentions "is_secret = true" text
+          && !(mentions "sys.env" text);
+        "start helper: path exists" =
+          both.systemd.paths.victoria-collector-write-token-appeared.pathConfig.PathExists
+          == "/run/secrets/write-token";
+        "start helper: stays active, so the path unit does not re-trigger" =
+          appeared.RemainAfterExit == true;
+        "start helper: starts both consumers without blocking" =
+          startOf both == "${systemctl} start --no-block alloy.service systemd-journal-upload.service";
+        "restart watcher: path changed" =
+          both.systemd.paths.victoria-collector-write-token-watch.pathConfig.PathChanged
+          == "/run/secrets/write-token";
+        "restart helper: try-restart, without blocking" =
+          restarter.ExecStart
+          == "${systemctl} try-restart --no-block alloy.service victoria-collector-journal-upload-token.service";
+        "metrics only: only alloy is started and restarted" =
+          startOf metricsOnly == "${systemctl} start --no-block alloy.service"
+          && restartOf metricsOnly == "${systemctl} try-restart --no-block alloy.service";
+        "logs only: only the uploader is started and restarted" =
+          startOf logsOnly == "${systemctl} start --no-block systemd-journal-upload.service"
+          &&
+            restartOf logsOnly
+            == "${systemctl} try-restart --no-block victoria-collector-journal-upload-token.service";
+        "no token file: no path units, no check" =
+          !(noToken.systemd.paths ? victoria-collector-write-token-appeared)
+          && !(noToken.systemd.paths ? victoria-collector-write-token-watch)
+          && (noToken.systemd.services.alloy.serviceConfig.ExecStartPre or [ ]) == [ ]
+          && !(noToken.systemd.services.alloy.unitConfig ? ConditionPathExists)
+          && !(noToken.systemd.services ? victoria-collector-write-token-appeared);
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    pkgs.runCommand "write-token-delivery-unit-shapes" { } (
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "write-token delivery unit shapes wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
 
   alloy-web-ui-does-not-expose-the-write-token = pkgs.testers.nixosTest {
     name = "victoria-collector-alloy-ui-hides-token";
@@ -1185,14 +1227,29 @@ in
       )
       assert "write_token" in ui, ui
       assert "collector-test-write-token" not in ui, ui  # gitleaks:allow
-      for comp in ["otelcol.auth.bearer.write_token", "otelcol.auth.headers.write_token"]:
+      for comp in [
+          "otelcol.auth.bearer.write_token",
+          "otelcol.auth.headers.write_token",
+          "local.file.write_token",
+      ]:
           detail = collector.succeed(
               f"su nobody -s /bin/sh -c 'curl -s http://127.0.0.1:12345/api/v0/web/components/{comp}'"
           )
           assert "collector-test-write-token" not in detail, detail  # gitleaks:allow
+      # The file component really is in the pipeline (its content shows as a secret).
+      assert "(secret)" in collector.succeed(
+          "su nobody -s /bin/sh -c 'curl -s http://127.0.0.1:12345/api/v0/web/components/local.file.write_token'"
+      )
+      # Not in the process arguments either, readable by any local user.
+      pid = collector.succeed("systemctl show -p MainPID --value alloy.service").strip()
+      cmdline = collector.succeed(f"su nobody -s /bin/sh -c 'cat /proc/{pid}/cmdline'")
+      assert "collector-test-write-token" not in cmdline, cmdline  # gitleaks:allow
     '';
   };
 
+  # Rotation is a restart, not a live swap: LoadCredential= hands each unit a copy
+  # taken at its start. The path unit must notice an in-place write, a rename, and a
+  # second replacement landing while the first restart is still running.
   alloy-picks-up-a-rotated-write-token = pkgs.testers.nixosTest {
     name = "victoria-collector-alloy-token-rotation";
 
@@ -1201,12 +1258,19 @@ in
         collectorModule
         fakeGatewayModule
       ];
-      # Rewritable at runtime, unlike a store path.
-      environment.etc."rotating-token".text = "rotation-old-token\n"; # gitleaks:allow
+      systemd.tmpfiles.rules = [
+        "d /var/lib/rotation 0700 root root -"
+        "f /var/lib/rotation/token 0600 root root - rotation-token-one\\n" # gitleaks:allow
+      ];
+      # Keeps the first restart in progress long enough to replace the file again.
+      systemd.services.alloy.serviceConfig.ExecStartPre = lib.mkAfter [
+        "${pkgs.coreutils}/bin/sleep 8"
+      ];
       services.victoriaCollector = {
         metrics.enable = true;
+        logs.enable = true;
         writeEndpoint = "http://127.0.0.1:4210";
-        writeTokenFile = "/etc/rotating-token";
+        writeTokenFile = "/var/lib/rotation/token";
         hostType = "server";
       };
     };
@@ -1216,24 +1280,211 @@ in
       start_all()
       collector.wait_for_unit("fake-gateway.service")
       wait_active(collector, "alloy.service")
+      wait_active(collector, "systemd-journal-upload.service", timeout=120, max_restarts=None)
+      collector.wait_for_unit("victoria-collector-write-token-watch.path")
+
+      def wait_delivered(path_prefix, token):
+          # The uploader only sends when there is something new to send.
+          collector.wait_until_succeeds(
+              f"logger -t rotation-test tick; grep -q '^{path_prefix}.* Bearer {token}$' /tmp/requests.log",
+              timeout=120,
+          )
+
+      wait_delivered("/opentelemetry/v1/metrics", "rotation-token-one")  # gitleaks:allow
+      wait_delivered("/insert/journald", "rotation-token-one")  # gitleaks:allow
+
+      def invocation():
+          return collector.succeed("systemctl show -p InvocationID --value alloy.service").strip()
+
+      first = invocation()
+      # In place, the way a secret manager that rewrites its file does it.
+      collector.succeed("printf 'rotation-token-two\\n' > /var/lib/rotation/token")  # gitleaks:allow
       collector.wait_until_succeeds(
-          "grep -qx 'Bearer rotation-old-token' /tmp/auth.log", timeout=120  # gitleaks:allow
+          "systemctl show -p ActiveState --value alloy.service | grep -qx activating", timeout=60
       )
-      # What sops-nix's restartUnits does after replacing the secret file.
-      collector.succeed("rm /etc/rotating-token; echo rotation-new-token > /etc/rotating-token")  # gitleaks:allow
-      collector.succeed("systemctl restart victoria-collector-alloy-write-token.service")
-      # A restart propagated over Requires= is queued behind the oneshot's own
-      # job, so poll instead of assuming Alloy is already the new process.
+      assert invocation() != first, "Alloy was not restarted by the in-place write"
+      # The first restart is still running: replace by rename (a second generation).
+      collector.succeed(
+          "printf 'rotation-token-three\\n' > /var/lib/rotation/token.new"  # gitleaks:allow
+          " && mv /var/lib/rotation/token.new /var/lib/rotation/token"
+      )
+      wait_active(collector, "alloy.service", timeout=120)
+      collector.succeed("rm /tmp/requests.log")
+      wait_delivered("/opentelemetry/v1/metrics", "rotation-token-three")  # gitleaks:allow
+      wait_delivered("/insert/journald", "rotation-token-three")  # gitleaks:allow
+      # The last file written wins everywhere; nothing still sends an older one.
+      collector.fail("grep -E 'rotation-token-(one|two)' /tmp/requests.log")
+    '';
+  };
+
+  # The pre-start check, through the real unit: an unusable token file fails the start
+  # with a message naming the option (and never the content), and a corrected file
+  # heals it through the path unit.
+  invalid-write-token-file-fails-alloy-start-clearly = pkgs.testers.nixosTest {
+    name = "victoria-collector-invalid-write-token-file";
+
+    containers.collector = {
+      imports = [
+        collectorModule
+        fakeGatewayModule
+      ];
+      systemd.tmpfiles.rules = [
+        "d /var/lib/invalid 0700 root root -"
+        "f /var/lib/invalid/token 0600 root root - tokens:\\n  - token: invalid-token-one\\n" # gitleaks:allow
+      ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        writeEndpoint = "http://127.0.0.1:4210";
+        writeTokenFile = "/var/lib/invalid/token";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      collector.wait_for_unit("fake-gateway.service")
       collector.wait_until_succeeds(
-          "tr '\\0' '\\n' < /proc/$(systemctl show -p MainPID --value alloy.service)/environ"
-          " | grep -qx VICTORIA_WRITE_TOKEN=rotation-new-token",  # gitleaks:allow
+          "journalctl -b -u alloy.service --no-pager | grep -q 'services.victoriaCollector.writeTokenFile must hold exactly one line'",
           timeout=60,
       )
-      collector.succeed("rm /tmp/auth.log")
-      collector.wait_until_succeeds(
-          "grep -qx 'Bearer rotation-new-token' /tmp/auth.log", timeout=120  # gitleaks:allow
+      collector.sleep(10)
+      collector.fail("systemctl is-active alloy.service")
+      # The message names the option and never the file's content.
+      collector.fail("journalctl -b --no-pager | grep -q invalid-token-one")  # gitleaks:allow
+
+      # Alloy retries the failed start (nixpkgs: Restart=always) until the file is
+      # fixed; the watcher's try-restart reaches it between retries.
+      collector.succeed("printf 'invalid-token-two\\n' > /var/lib/invalid/token")  # gitleaks:allow
+      wait_active(collector, "alloy.service", timeout=120, max_restarts=None)
+      collector.wait_until_succeeds("grep -q 'Bearer invalid-token-two' /tmp/auth.log", timeout=120)  # gitleaks:allow
+    '';
+  };
+
+  # A unit the operator stopped on purpose is not the path units' to start again:
+  # the file watcher only restarts what is already running (try-restart), and the
+  # start helper is a RemainAfterExit oneshot, so an existing file never re-triggers it.
+  deliberate-stop-survives-token-file-changes = pkgs.testers.nixosTest {
+    name = "victoria-collector-deliberate-stop-survives-token-changes";
+
+    containers.collector = {
+      imports = [
+        collectorModule
+        fakeGatewayModule
+      ];
+      systemd.tmpfiles.rules = [
+        "d /var/lib/rotation 0700 root root -"
+        "f /var/lib/rotation/token 0600 root root - stop-token-one\\n" # gitleaks:allow
+      ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        logs.enable = true;
+        writeEndpoint = "http://127.0.0.1:4210";
+        writeTokenFile = "/var/lib/rotation/token";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      collector.wait_for_unit("fake-gateway.service")
+      wait_active(collector, "alloy.service", timeout=120)
+      wait_active(collector, "systemd-journal-upload.service", timeout=120, max_restarts=None)
+      collector.wait_for_unit("victoria-collector-write-token-watch.path")
+      collector.wait_for_unit("victoria-collector-write-token-appeared.path")
+
+      def prop(unit, name):
+          return collector.succeed(f"systemctl show -p {name} --value {unit}").strip()
+
+      appeared = "victoria-collector-write-token-appeared.service"
+      restarter = "victoria-collector-write-token-restart.service"
+      appeared_invocation = prop(appeared, "InvocationID")
+
+      collector.succeed("systemctl stop alloy.service systemd-journal-upload.service")
+
+      # Every kind of change: in place, rename, delete and recreate.
+      collector.succeed("printf 'stop-token-two\\n' > /var/lib/rotation/token")  # gitleaks:allow
+      collector.wait_until_succeeds(f"test -n \"$(systemctl show -p InvocationID --value {restarter})\"")
+      collector.succeed(
+          "printf 'stop-token-three\\n' > /var/lib/rotation/token.new"  # gitleaks:allow
+          " && mv /var/lib/rotation/token.new /var/lib/rotation/token"
       )
-      collector.fail("grep -q 'rotation-old-token' /tmp/auth.log")
+      collector.succeed("rm /var/lib/rotation/token")
+      collector.succeed("printf 'stop-token-four\\n' > /var/lib/rotation/token")  # gitleaks:allow
+      # Let the watcher settle: its helper has to finish after the last change.
+      collector.wait_until_succeeds(f"systemctl show -p ActiveState --value {restarter} | grep -qx inactive")
+      collector.sleep(5)
+      for unit in ["alloy.service", "systemd-journal-upload.service"]:
+          state = prop(unit, "ActiveState")
+          assert state == "inactive", f"{unit} was started again after a file change: {state}"
+      assert prop(appeared, "InvocationID") == appeared_invocation, (
+          "the start helper ran again although the file existed all along"
+      )
+    '';
+  };
+
+  # The secret manager delivers the file after boot: the consumers fail their first
+  # start, and the path unit starts them once, without polling and without a restart
+  # loop. Start attempts are counted from the journal.
+  late-write-token-starts-alloy-and-the-uploader = pkgs.testers.nixosTest {
+    name = "victoria-collector-late-write-token";
+
+    containers.collector = {
+      imports = [
+        collectorModule
+        fakeGatewayModule
+      ];
+      systemd.tmpfiles.rules = [ "d /var/lib/late 0700 root root -" ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        logs.enable = true;
+        writeEndpoint = "http://127.0.0.1:4210";
+        writeTokenFile = "/var/lib/late/token";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      collector.wait_for_unit("fake-gateway.service")
+      # About ten seconds after boot the file appears.
+      collector.sleep(10)
+      collector.fail("systemctl is-active alloy.service")
+      collector.fail("systemctl is-active systemd-journal-upload.service")
+      # Alloy's start is skipped (nixpkgs' Restart=always would otherwise retry
+      # every couple of seconds), the uploader's token render failed once.
+      collector.succeed("test \"$(systemctl show -p ConditionResult --value alloy.service)\" = no")
+      starts = lambda unit: int(collector.succeed(
+          f"journalctl -b -u {unit} -o cat --no-pager | awk '/^(Started|Finished|Failed to start) /{{n++}} END{{print n+0}}'"
+      ))
+      assert starts("alloy.service") == 0, "Alloy was started without its token file"
+      assert starts("victoria-collector-journal-upload-token.service") == 1
+      collector.succeed("printf 'late-token-one\\n' > /var/lib/late/token")  # gitleaks:allow
+
+      wait_active(collector, "alloy.service", timeout=120, max_restarts=None)
+      wait_active(collector, "systemd-journal-upload.service", timeout=120, max_restarts=None)
+      def wait_delivered(path_prefix, token):
+          # The uploader only sends when there is something new to send.
+          try:
+              collector.wait_until_succeeds(
+                  f"logger -t late-test tick; grep -q '^{path_prefix}.* Bearer {token}$' /tmp/requests.log",
+                  timeout=120,
+              )
+          except Exception:
+              print(collector.execute("sort /tmp/requests.log | uniq -c | head -20")[1])
+              raise
+
+      wait_delivered("/opentelemetry/v1/metrics", "late-token-one")  # gitleaks:allow
+      wait_delivered("/insert/journald", "late-token-one")  # gitleaks:allow
+
+      # No loop: completed start attempts per unit (journal "Started"/"Finished"/"Failed to start" lines) stay small.
+      for unit in ["alloy.service", "systemd-journal-upload.service"]:
+          n = starts(unit)
+          print(f"start attempts of {unit}: {n}")
+          assert n <= 3, f"{unit} was started {n} times"
+      assert starts("victoria-collector-journal-upload-token.service") <= 3
     '';
   };
 
@@ -2829,9 +3080,10 @@ in
       echo OK > $out
     '';
 
-  # Both render oneshots wrote whatever the token file held: an empty file gave an
-  # empty VICTORIA_WRITE_TOKEN, a YAML tokens file pasted by mistake gave
-  # `Header=Authorization: Bearer tokens:\n  - token: ...`. Runs the real scripts.
+  # An empty token file would have given Alloy an empty token, and a YAML tokens
+  # file pasted by mistake `Header=Authorization: Bearer tokens:\n  - token: ...`.
+  # Alloy's pre-start check and the uploader's render oneshot refuse both. Runs the
+  # real scripts.
   token-render-oneshots-validate-the-token-file =
     let
       e = evalWithCollector {
@@ -2843,29 +3095,27 @@ in
           hostType = "server";
         };
       };
-      alloyScript =
-        e.config.systemd.services.victoria-collector-alloy-write-token.serviceConfig.ExecStart;
+      alloyScript = builtins.head e.config.systemd.services.alloy.serviceConfig.ExecStartPre;
       journalScript =
         e.config.systemd.services.victoria-collector-journal-upload-token.serviceConfig.ExecStart;
     in
     pkgs.runCommand "token-render-oneshots-validate-the-token-file" { } /* bash */ ''
             fail() { echo "$1" >&2; exit 1; }
-            mkdir -p shims creds root/run/systemd rt
+            mkdir -p shims creds root/run/systemd
             chmod 755 root/run/systemd
             # chgrp to systemd-journal cannot succeed in the sandbox.
             printf '#!${pkgs.runtimeShell}\nexit 0\n' > shims/chgrp
             chmod +x shims/chgrp
 
-            sed "s|/run/alloy-write-token|$PWD/rt|g" ${alloyScript} > alloy.sh
+            cp ${alloyScript} alloy.sh
             sed "s|/run/systemd|$PWD/root/run/systemd|g" ${journalScript} > journal.sh
             chmod +x alloy.sh journal.sh
 
-            alloy_out=rt/write-token.env
             journal_out=root/run/systemd/journal-upload.conf.d/50-write-token.conf
 
             # run <kind> <printf-format content>: leaves rc and err behind.
             run() {
-              rm -f "$alloy_out" "$journal_out" err
+              rm -f "$journal_out" err
               printf "$2" > creds/write-token
               set +e
               PATH=$PWD/shims:$PATH CREDENTIALS_DIRECTORY=$PWD/creds ./$1.sh 2> err
@@ -2875,20 +3125,19 @@ in
             ok() { # kind content expected-token
               run "$1" "$2"
               [ "$rc" = 0 ] || fail "$1: content '$2' was rejected: $(cat err)"
-              if [ "$1" = alloy ]; then
-                want="VICTORIA_WRITE_TOKEN=$3"; got=$(cat "$alloy_out")
-              else
+              # The Alloy check reads the file in place; only the uploader renders.
+              if [ "$1" = journal ]; then
                 want="[Upload]
       Header=Authorization: Bearer $3"; got=$(cat "$journal_out")
+                [ "$got" = "$want" ] || fail "$1: content '$2' rendered '$got', want '$want'"
               fi
-              [ "$got" = "$want" ] || fail "$1: content '$2' rendered '$got', want '$want'"
             }
             bad() { # kind content
               run "$1" "$2"
               [ "$rc" != 0 ] || fail "$1: content '$2' was accepted"
               grep -q 'services.victoriaCollector.writeTokenFile' err || fail "$1: message does not name the option: $(cat err)"
               ! grep -q 'secret-token-one' err || fail "$1: message leaks the token"
-              [ ! -e "$alloy_out" ] && [ ! -e "$journal_out" ] || fail "$1: an output was written for '$2'"
+              [ ! -e "$journal_out" ] || fail "$1: an output was written for '$2'"
             }
 
             for kind in alloy journal; do
@@ -2980,6 +3229,8 @@ in
 
   # services.alloy.environmentFile is single-valued, so the module setting it
   # made an operator's own definition a "conflicting definition values" error.
+  # The module sets no EnvironmentFile at all now (the token is a credential), so an
+  # operator's own is the only one.
   alloy-environment-file-merges-with-the-operators =
     pkgs.runCommand "alloy-environment-file-merges-with-the-operators" { }
       (
@@ -2998,10 +3249,9 @@ in
                 }
                 extra
               ];
-            }).config.systemd.services.alloy.serviceConfig.EnvironmentFile;
+            }).config.systemd.services.alloy.serviceConfig.EnvironmentFile or [ ];
           both = evalFor { services.alloy.environmentFile = "/run/operator/alloy.env"; };
           alone = evalFor { };
-          tokenEnv = "/run/alloy-write-token/write-token.env";
           noToken =
             (evalWithCollector {
               services.victoriaCollector = {
@@ -3011,14 +3261,7 @@ in
               };
             }).config.systemd.services.alloy.serviceConfig.EnvironmentFile or [ ];
         in
-        if
-          lib.sort lib.lessThan both == [
-            tokenEnv
-            "/run/operator/alloy.env"
-          ]
-          && alone == [ tokenEnv ]
-          && noToken == [ ]
-        then
+        if both == [ "/run/operator/alloy.env" ] && alone == [ ] && noToken == [ ] then
           "echo OK > $out"
         else
           throw "EnvironmentFile wrong: both=${builtins.toJSON both} alone=${builtins.toJSON alone} noToken=${builtins.toJSON noToken}"

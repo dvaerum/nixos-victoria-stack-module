@@ -14,26 +14,31 @@ let
   str = builtins.toJSON;
 
   # Shared bearer-token auth handler for whichever OTLP exporters are
-  # enabled -- the token itself never appears in this rendered text (it's
-  # read purely via sys.env() at Alloy's own runtime, from an environment
-  # variable supplied by the systemd unit's EnvironmentFile=, which points
-  # at a sops-rendered, non-store path -- docs/decisions/0006). Only
-  # emitted when at least one OTLP exporter needs it; logs' write path
-  # goes through systemd-journal-upload instead, which doesn't use Alloy
-  # at all (docs/decisions/0005).
+  # enabled -- the token itself never appears in this rendered text: Alloy
+  # reads the write-token systemd credential (LoadCredential=, docs/decisions/0006)
+  # itself. Only emitted when at least one OTLP exporter needs it; logs' write
+  # path goes through systemd-journal-upload instead, which doesn't use Alloy at
+  # all (docs/decisions/0005).
   #
   # otelcol.auth.bearer, not otelcol.auth.headers: Alloy's web UI shows a
   # plain-string argument (the evaluated "Bearer <token>") to any local user,
   # while this component's `token` is secret-typed ("(secret)"). It adds the
-  # "Bearer " prefix itself; VICTORIA_WRITE_TOKEN holds the raw token.
+  # "Bearer " prefix itself. is_secret keeps local.file's content hidden in the
+  # UI too; the trim drops the file's trailing newline, which would make the
+  # header value invalid.
   authBlock = ''
+    local.file "write_token" {
+      filename  = "/run/credentials/alloy.service/write-token"
+      is_secret = true
+    }
+
     otelcol.auth.bearer "write_token" {
-      token = sys.env("VICTORIA_WRITE_TOKEN")
+      token = string.trim_space(convert.nonsensitive(local.file.write_token.content))
     }
   '';
 
-  # Without a token file VICTORIA_WRITE_TOKEN is unset, and a bearer-auth
-  # block fed by it passes `alloy validate` but panics Alloy at its first
+  # Without a token file there is no credential to read, and a bearer-auth
+  # block fed by nothing passes `alloy validate` but panics Alloy at its first
   # export; an open gateway needs no auth anyway.
   hasToken = cfg.writeTokenFile != null;
   authLine = lib.optionalString hasToken "auth     = otelcol.auth.bearer.write_token.handler";
