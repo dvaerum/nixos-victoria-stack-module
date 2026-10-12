@@ -54,20 +54,35 @@ let
       url = "${vmauthUrl}/traces/select/jaeger";
       isDefault = false;
     };
+
+  defaultDatasources = lib.filter (d: d.isDefault or false) (
+    config.services.grafana.provision.datasources.settings.datasources or [ ]
+  );
 in
 {
   config = lib.mkIf cfg.enable {
     # Datasource provisioning is all this option adds over plain
     # services.grafana.enable, so with no backend enabled it does nothing.
     # Grafana still starts fine, hence a warning, not an assertion.
-    warnings = lib.optional (datasourceSpecs == [ ]) ''
-      services.victoriaStack.grafana.enable is set, but none of
-      metrics/logs/traces.enable is -- this leaves datasourceSpecs empty,
-      so no datasource is actually provisioned into Grafana. The only
-      thing services.victoriaStack.grafana.enable does beyond plain
-      services.grafana.enable is this auto-wiring; with no backend
-      enabled there is nothing for it to wire up.
-    '';
+    warnings =
+      lib.optional (datasourceSpecs == [ ]) ''
+        services.victoriaStack.grafana.enable is set, but none of
+        metrics/logs/traces.enable is -- this leaves datasourceSpecs empty,
+        so no datasource is actually provisioned into Grafana. The only
+        thing services.victoriaStack.grafana.enable does beyond plain
+        services.grafana.enable is this auto-wiring; with no backend
+        enabled there is nothing for it to wire up.
+      ''
+      # A warning, not an assertion: Grafana rejects this at provisioning on
+      # the versions we know, but that is Grafana's call, not ours.
+      ++ lib.optional (lib.length defaultDatasources > 1) ''
+        services.victoriaStack.grafana.enable provisions a default datasource,
+        but services.grafana.provision.datasources.settings.datasources has
+        more than one with isDefault = true
+        (${lib.concatStringsSep ", " (lib.sort lib.lessThan (map (d: d.name) defaultDatasources))}).
+        Grafana normally refuses to provision more than one default: set
+        isDefault = false on all but one (README, "Escape hatches").
+      '';
 
     # Neither VictoriaMetrics nor VictoriaLogs is what Grafana's built-in
     # "prometheus"/"loki" datasource types actually expect on the wire

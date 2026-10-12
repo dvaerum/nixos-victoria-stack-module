@@ -39,6 +39,26 @@ let
     };
   };
 
+  metricsGrafanaBase = {
+    services.victoriaStack = {
+      metrics.enable = true;
+      grafana.enable = true;
+    };
+    services.grafana.enable = true;
+  };
+
+  extraDatasource = isDefault: {
+    services.grafana.provision.datasources.settings.datasources = [
+      {
+        name = "MyOwnPrometheus";
+        type = "prometheus";
+        uid = "my-own-ds";
+        url = "http://127.0.0.1:9090";
+        inherit isDefault;
+      }
+    ];
+  };
+
   # The remaining 4 of the 2^3 - 1 = 7 non-empty backend combinations
   # (all-3, metrics-only, and logs+traces-without-metrics below already
   # cover 3) -- each is a genuinely different datasourceSpecs permutation
@@ -441,6 +461,30 @@ in
         grafana.enable = true;
       };
       services.grafana.enable = true;
+    };
+  };
+
+  # The README says an extra datasource "merges cleanly"; a second default
+  # next to the module's own VictoriaMetrics default does not (Grafana refuses
+  # two defaults), so evaluation names both.
+  extra-default-datasource-warns-naming-both = mkWarningFiresCheck {
+    name = "extra-default-datasource-warns-naming-both";
+    expectMessageSubstring = "MyOwnPrometheus, VictoriaMetrics";
+    module = {
+      imports = [
+        metricsGrafanaBase
+        (extraDatasource true)
+      ];
+    };
+  };
+
+  extra-non-default-datasource-does-not-warn = mkNoWarningsCheck {
+    name = "extra-non-default-datasource-does-not-warn";
+    module = {
+      imports = [
+        metricsGrafanaBase
+        (extraDatasource false)
+      ];
     };
   };
 
