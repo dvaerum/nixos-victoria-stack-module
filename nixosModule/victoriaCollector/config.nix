@@ -94,7 +94,6 @@ in
         # config.alloy.nix) is still "Public preview" upstream -- this
         # flag is what those blocks actually need to be honored at all.
         extraFlags = [ "--stability.level=public-preview" ] ++ cfg.alloy.extraFlags;
-        environmentFile = lib.mkIf (cfg.writeTokenFile != null) "/run/alloy-write-token/write-token.env";
       };
 
       environment.etc."alloy/config.alloy".text = configAlloyText;
@@ -152,6 +151,11 @@ in
       # directory writable under ProtectSystem=strict.
       systemd.services.alloy.serviceConfig = lib.mkMerge [
         {
+          # The list-valued unit setting rather than services.alloy.environmentFile:
+          # that option holds one value, so an operator's own would conflict.
+          EnvironmentFile = lib.optional (
+            cfg.writeTokenFile != null
+          ) "/run/alloy-write-token/write-token.env";
           # The CA bundle reaches Alloy's user as a systemd credential
           # (config.alloy.nix points ca_file at it), so the file's owner and mode
           # don't matter -- same rule as every other TLS/secret file here.

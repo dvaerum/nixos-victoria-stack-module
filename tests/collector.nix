@@ -2978,6 +2978,52 @@ in
     '';
   };
 
+  # services.alloy.environmentFile is single-valued, so the module setting it
+  # made an operator's own definition a "conflicting definition values" error.
+  alloy-environment-file-merges-with-the-operators =
+    pkgs.runCommand "alloy-environment-file-merges-with-the-operators" { }
+      (
+        let
+          evalFor =
+            extra:
+            (evalWithCollector {
+              imports = [
+                {
+                  services.victoriaCollector = {
+                    metrics.enable = true;
+                    writeEndpoint = "http://127.0.0.1:4204";
+                    writeTokenFile = "/run/secrets/write-token";
+                    hostType = "server";
+                  };
+                }
+                extra
+              ];
+            }).config.systemd.services.alloy.serviceConfig.EnvironmentFile;
+          both = evalFor { services.alloy.environmentFile = "/run/operator/alloy.env"; };
+          alone = evalFor { };
+          tokenEnv = "/run/alloy-write-token/write-token.env";
+          noToken =
+            (evalWithCollector {
+              services.victoriaCollector = {
+                metrics.enable = true;
+                writeEndpoint = "http://127.0.0.1:4204";
+                hostType = "server";
+              };
+            }).config.systemd.services.alloy.serviceConfig.EnvironmentFile or [ ];
+        in
+        if
+          lib.sort lib.lessThan both == [
+            tokenEnv
+            "/run/operator/alloy.env"
+          ]
+          && alone == [ tokenEnv ]
+          && noToken == [ ]
+        then
+          "echo OK > $out"
+        else
+          throw "EnvironmentFile wrong: both=${builtins.toJSON both} alone=${builtins.toJSON alone} noToken=${builtins.toJSON noToken}"
+      );
+
   # URL schemes are case-insensitive, and a trailing slash on the endpoint
   # must not turn the uploader's URL into `//insert/journald`. Both used to
   # slip through: `lib.hasPrefix "https"` skipped the TLS settings and the CA
