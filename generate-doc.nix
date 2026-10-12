@@ -26,8 +26,34 @@ let
     ];
   };
 
+  # Declarations must not embed the store path of this checkout: it changes
+  # on every commit, which made CI regenerate docs/options.md on every push.
+  repoRoot = toString ./. + "/";
+  nixpkgsRev = (lib.importJSON ./flake.lock).nodes.nixpkgs.locked.rev;
+
   optionsDoc = nixosOptionsDoc {
-    inherit (eval) options;
+    # `_module` is the module system's own plumbing, not part of this API.
+    options = removeAttrs eval.options [ "_module" ];
+    # The locked revision makes any nixpkgs declaration link resolve.
+    revision = nixpkgsRev;
+    transformOptions =
+      opt:
+      opt
+      // {
+        declarations = map (
+          d:
+          let
+            rel = lib.removePrefix repoRoot (toString d);
+          in
+          if lib.hasPrefix repoRoot (toString d) then
+            {
+              name = rel;
+              url = "https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/${rel}";
+            }
+          else
+            d
+        ) opt.declarations;
+      };
   };
 in
 runCommand "options-doc.md" { } ''
