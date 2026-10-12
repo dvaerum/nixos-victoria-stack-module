@@ -780,14 +780,13 @@ vmauth’s own ` writeTokensFile ` list on the gateway side)
 authorizing this host’s write traffic\. Required whenever the
 gateway’s own ` requireAuthForWrites ` is ` true ` (the default)\.
 
-Rotation: replacing the file’s content only takes effect once
-` victoria-collector-alloy-write-token.service ` (which renders it for
-Alloy) and ` victoria-collector-journal-upload-token.service ` (for the
-log uploader) are restarted; restarting them restarts the services that
-require them, so Alloy and systemd-journal-upload send the new token\. With
-sops-nix, list both units in the secret’s ` restartUnits `\. If a render
-unit fails, the services that require it stop rather than keep sending
-a stale or missing token\.
+The file may appear after boot: Alloy and the log uploader fail their
+first start without it, and a path unit starts them once it exists\.
+Replacing the file restarts them the same way (a unit stopped on purpose
+stays stopped), because each reads a copy taken at its start\. Unsent data
+waits in the disk queue meanwhile\. No ` restartUnits ` entry is needed\.
+A file that is empty or has several lines fails the start with a message
+naming this option\.
 
 
 
