@@ -5,10 +5,15 @@
 # telemetry to it over the network. Contrast with examples/default.nix,
 # where one host is both (collecting its own data over loopback).
 #
-# Returns two plain NixOS modules, not a nixosTest -- tests/collector.nix
+# This file is a function returning { gateway; collector; }, not a module:
+# `imports = [ ./fleet.nix ]` fails. Call it (`import ./fleet.nix { }`), then
+# import `gateway` on the stack host and `collector { ... }` on every other
+# host. Both are plain NixOS modules, not a nixosTest -- tests/collector.nix
 # is where the fleet is exercised for real (and evaluates this file, so it
-# can't drift). Import `gateway` on the stack host and
-# `collector { ... }` on every other host.
+# can't drift).
+#
+# The gateway sets no read tokens and no admin password, so nobody can query
+# it until you add vmauth.readTokensFile and/or vmauth.adminPasswordFile.
 #
 # Secret file paths are placeholders; docs/decisions/0008 -- this module
 # doesn't care how they get there.

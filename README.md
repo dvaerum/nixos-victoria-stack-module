@@ -33,8 +33,10 @@ The smallest valid configuration:
 }
 ```
 
-That alone gives you a VictoriaMetrics instance listening on loopback with
-no auth gateway, no Grafana, nothing else — "just the backend." A fuller,
+That alone gives you a VictoriaMetrics instance listening on loopback, plus
+vmauth, which starts by default whenever a backend is on (also on loopback, with
+no users configured). No Grafana, no nginx,
+no collector. A fuller,
 realistic single-host setup (metrics + logs + traces + vmauth with both
 credential tiers + Grafana + nginx + MCP, plus the host collecting its own
 data) is in [`examples/default.nix`](./examples/default.nix) — this is the
@@ -96,15 +98,29 @@ read but not write or delete (ADR 0029). Give Grafana its own read token and
 list the same token in vmauth's read tokens:
 
 ```nix
-services.victoriaStack.grafana = {
-  enable = true;
-  readTokenFile = "/run/secrets/grafana-read-token";  # one bearer token, plain text
-};
-services.victoriaStack.vmauth.readTokensFile = "/run/secrets/vmauth-read-tokens.yaml";
-# ...whose `tokens:` list contains an entry with that same token.
+{
+  # This module provisions datasources into your Grafana; it does not enable one.
+  services.grafana = {
+    enable = true;
+    settings.security.secret_key = "$__file{/run/secrets/grafana-secret-key}";
+  };
+  services.victoriaStack = {
+    metrics.enable = true;   # datasources are provisioned for the enabled backends
+    grafana = {
+      enable = true;
+      readTokenFile = "/run/secrets/grafana-read-token";  # one bearer token, plain text
+    };
+    vmauth.readTokensFile = "/run/secrets/vmauth-read-tokens.yaml";
+    # ...whose `tokens:` list contains an entry with that same token.
+  };
+}
 ```
 
-`grafana.enable` needs `vmauth.enable` (the default whenever a backend is on).
+`grafana.readTokenFile` needs a matching token in `vmauth.readTokensFile`
+(this module does not add it), and is required only when at least one backend
+is enabled. `grafana.enable` also needs `services.grafana.enable` and
+`vmauth.enable` (the default whenever a backend is on). With no backend enabled
+the module has nothing to provision and only warns.
 
 ### Where collectors write
 
@@ -162,13 +178,70 @@ One gateway host running `victoriaStack`, N other hosts running
 [`examples/fleet.nix`](./examples/fleet.nix) (evaluated by
 `tests/collector.nix`, so it stays in sync with the real options).
 
+The file is a function returning `{ gateway; collector; }`, not a module, so
+`imports = [ ./fleet.nix ]` fails. Import it first and use its parts as modules:
+
+```nix
+let fleet = import ./fleet.nix { }; in
+{
+  # gateway host
+  imports = [ fleet.gateway ];
+  # every other host: imports = [ (fleet.collector { hostType = "server"; writeTokenFile = "..."; }) ];
+}
+```
+
+The gateway sets no read tokens and no admin password, so nobody can query it
+until you add `vmauth.readTokensFile` and/or `vmauth.adminPasswordFile`.
+
 ## Secrets
 
 Every credential option is a plain file-path (`...File`) option -- this
-module has no opinion about how the file got there. It composes cleanly with
+module has no opinion about how the file got there. Secret `*File` options are
+plain strings, never Nix path literals: a path literal is copied into the
+world-readable Nix store at build time. Public material, such as the CA bundle
+`vmauth.backendTls.caFile`, may be a path (see
+[`vmauth.writeTokensFile`](./docs/options.md) for the full rule). It composes cleanly with
 sops-nix's own native "one encrypted file, many individually-addressed
 secrets" support (`sops.secrets."group/key".path`), or agenix, or anything
 else -- see `docs/decisions/0008-agnostic-secrets-file-options.md`.
+
+## Coexisting with your own Alloy / journald-upload config
+
+The collector takes over a few things; everything else on those services stays yours.
+
+- **Alloy** (when `metrics` or `traces` is enabled): sets `services.alloy.enable`,
+  `package` (default), `extraFlags` (appends to yours) and `environmentFile` (when
+  `writeTokenFile` is set). The generated pipeline is written to
+  `environment.etc."alloy/config.alloy".text`, a text option whose definitions are
+  concatenated with any text you add there. Block labels must be unique across the
+  combined file, so a clash (the same `otelcol.*` or `prometheus.*` label in yours and
+  ours) is only caught when Alloy loads the config at run time, not at build time.
+- **systemd-journal-upload** (when `logs` is enabled): sets
+  `services.journald.upload.enable` and `settings.Upload.URL` (plus the three TLS keys
+  for an `https://` endpoint), so your own `Upload.URL` conflicts with it. The write token reaches the uploader through the drop-in
+  `/run/systemd/journal-upload.conf.d/50-write-token.conf`, rendered at boot.
+
+## Upgrading / breaking changes
+
+What changed incompatibly, and what to do:
+
+- **Ports renumbered** ([0017](./docs/decisions/0017-port-renumbering.md)):
+  services now default to `:4201`-`:4207`. Check firewalls and anything that dialled
+  `:8428`/`:9428`/`:10428`/`:8880`, or pin the old ports through each `listenAddress`.
+- **Writes no longer go through nginx**
+  ([0025](./docs/decisions/0025-vmauth-public-write-doors.md)): point collectors'
+  `writeEndpoint` at vmauth's own door (`vmauth.https` or `vmauth.http`).
+- **Grafana needs a read token**
+  ([0029](./docs/decisions/0029-grafana-datasources-through-vmauth-read-tier.md)):
+  set `grafana.readTokenFile` and list the same token in `vmauth.readTokensFile`.
+- **Entries that grant no access are skipped**
+  ([0030](./docs/decisions/0030-vmauth-token-entries-warn-dont-break.md)):
+  `backends: []` now means no access (it used to mean all), and an empty token or
+  admin password creates no user. Read the vmauth journal for the warnings.
+- **`vmauth.extraFlags` is shell-escaped**
+  ([0028](./docs/decisions/0028-vmauth-extra-flags-are-escaped.md)): one list
+  element is one argument; remove any extra quoting you added to work around the
+  old splitting.
 
 ## Escape hatches for things this module deliberately doesn't wrap
 
@@ -198,7 +271,9 @@ mechanism here would just be a worse version of something you already have:
   entries (VictoriaMetrics/VictoriaLogs/VictoriaTraces) needs
   `lib.mkForce` on the whole `datasources` list, since list-typed options
   don't merge per-entry -- reconstruct all three yourself if you go this
-  route.
+  route. A new datasource must not set `isDefault = true` while the module's
+  VictoriaMetrics one is also default: Grafana refuses two defaults, and
+  evaluation warns naming both.
 
 - **nginx TLS/HTTPS** (`services.victoriaStack.nginx.enable = true`):
   this module has no ACME/TLS option of its own -- `nginx`'s own real
@@ -211,6 +286,10 @@ mechanism here would just be a worse version of something you already have:
   services.nginx.virtualHosts."victoria-stack" = {
     forceSSL = true;   # or addSSL = true to keep plain HTTP available too
     enableACME = true; # or sslCertificate/sslCertificateKey/useACMEHost
+  };
+  security.acme = {  # needed by enableACME
+    acceptTerms = true;
+    defaults.email = "admin@example.com";
   };
   ```
 
