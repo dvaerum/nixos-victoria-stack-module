@@ -65,6 +65,22 @@ rec {
   # Exact names: `syslog.tls` as a prefix would also own -syslog.tlsMinVersion.
   ownedNames = syslog: lib.optional (onTransport syslog "tcp" != [ ]) "syslog.tls";
 
+  # The tcp and tls slots share the tcp arrays: an array flag of the tcp
+  # transport (and the tls cipher list, which follows the tcp listeners) that the
+  # module does not render itself. The owned arrays are refused instead.
+  isSharedTcpArray =
+    name:
+    (lib.hasPrefix "syslog." name && lib.hasSuffix ".tcp" name)
+    && !(lib.hasPrefix "syslog.listenAddr." name || lib.hasPrefix "syslog.extraFields." name)
+    || name == "syslog.tlsCipherSuites";
+
+  bothTcpSlots =
+    syslog:
+    lib.all (n: lib.any (s: s.name == n) (onTransport syslog "tcp")) [
+      "tcp"
+      "tls"
+    ];
+
   needsLowPort = syslog: lib.any (s: s.slot.port < 1024) (active syslog);
 
   # A listener reachable from the network, unless its warning is suppressed.

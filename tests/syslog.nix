@@ -564,6 +564,8 @@ in
       "tls cert file with a tcp slot" = rejected tcp "-syslog.tlsCertFile=/run/fake-cert.pem";
       "tls key file, double dash" = rejected tcp "--syslog.tlsKeyFile=/run/fake-key.pem";
       "tls array with only a tls slot" = rejected tlsOnly "-syslog.tls=true";
+      "tls cert file with only a tls slot" = rejected tlsOnly "-syslog.tlsCertFile=/run/fake-cert.pem";
+      "tls key file with only a tls slot" = rejected tlsOnly "--syslog.tlsKeyFile=/run/fake-key.pem";
       "tcp listenAddr with only a tls slot" = rejected tlsOnly "-syslog.listenAddr.tcp=:7514";
       "tlsMinVersion is free with a tls slot" = free tlsOnly "-syslog.tlsMinVersion=TLS12";
       "udp listenAddr with a udp slot" = rejected udp "-syslog.listenAddr.udp=:6514";
@@ -668,6 +670,178 @@ in
         tcp = slot "0.0.0.0" 514;
       });
     };
+
+  # The tcp and tls slots share VictoriaLogs' tcp arrays, so one `-syslog.<knob>.tcp`
+  # flag in extraFlags lands on the first tcp listener (the tcp slot) only and
+  # the tls slot silently keeps the default. The flags stay allowed; the
+  # combination warns.
+  shared-tcp-arrays-warn-when-both-slots-are-on =
+    let
+      both = {
+        tcp = slot "127.0.0.1" 5514;
+        tls = tlsSlot "127.0.0.1" 6514;
+      };
+      warningsFor =
+        {
+          syslog,
+          flags,
+          logs ? true,
+        }:
+        lib.filter (lib.hasInfix "extraFlags") (
+          lib.filter (lib.hasInfix "services.victoriaStack.logs") (
+            (evalWith {
+              services.victoriaStack.logs = {
+                enable = logs;
+                inherit syslog;
+                extraFlags = flags;
+              };
+            }).config.warnings
+          )
+        );
+      warns = args: warningsFor args != [ ];
+      knobs = [
+        "tenantID"
+        "streamFields"
+        "compressMethod"
+        "ignoreFields"
+        "decolorizeFields"
+        "useLocalTimestamp"
+        "useRemoteIP"
+      ];
+      perKnob = lib.listToAttrs (
+        map (
+          k:
+          lib.nameValuePair "-syslog.${k}.tcp warns" (warns {
+            syslog = both;
+            flags = [ "-syslog.${k}.tcp=x" ];
+          })
+        ) knobs
+      );
+      text = lib.concatStringsSep "\n" (warningsFor {
+        syslog = both;
+        flags = [ "-syslog.tenantID.tcp=1:0" ];
+      });
+    in
+    mkTableCheck "syslog-shared-tcp-arrays-warn" (
+      perKnob
+      // {
+        "double dash" = warns {
+          syslog = both;
+          flags = [ "--syslog.streamFields.tcp=host" ];
+        };
+        "no value" = warns {
+          syslog = both;
+          flags = [ "-syslog.useLocalTimestamp.tcp" ];
+        };
+        "the cipher suite array is tcp-positional too" = warns {
+          syslog = both;
+          flags = [ "-syslog.tlsCipherSuites=x" ];
+        };
+        "the order of the slots in the config does not matter" = warns {
+          syslog = {
+            tls = tlsSlot "127.0.0.1" 6514;
+            tcp = slot "127.0.0.1" 5514;
+          };
+          flags = [ "-syslog.tenantID.tcp=1:0" ];
+        };
+        "the warning names the flag" = lib.hasInfix "-syslog.tenantID.tcp=1:0" text;
+        "the warning explains the positions" =
+          lib.hasInfix "first tcp listener" text && lib.hasInfix "second" text;
+        "the warning says how to give the second entry" = lib.hasInfix "twice" text;
+        "one warning for several flags" =
+          lib.length (warningsFor {
+            syslog = both;
+            flags = [
+              "-syslog.tenantID.tcp=1:0"
+              "-syslog.streamFields.tcp=host"
+            ];
+          }) == 1;
+        # Controls: everything that does not combine the two slots with such a flag.
+        "tcp slot alone" =
+          !(warns {
+            syslog.tcp = slot "127.0.0.1" 5514;
+            flags = [ "-syslog.tenantID.tcp=1:0" ];
+          });
+        "tls slot alone" =
+          !(warns {
+            syslog.tls = tlsSlot "127.0.0.1" 6514;
+            flags = [ "-syslog.tenantID.tcp=1:0" ];
+          });
+        "tcp and udp" =
+          !(warns {
+            syslog = {
+              tcp = slot "127.0.0.1" 5514;
+              udp = slot "127.0.0.1" 5514;
+            };
+            flags = [ "-syslog.tenantID.tcp=1:0" ];
+          });
+        "tls and udp" =
+          !(warns {
+            syslog = {
+              tls = tlsSlot "127.0.0.1" 6514;
+              udp = slot "127.0.0.1" 5514;
+            };
+            flags = [ "-syslog.tenantID.tcp=1:0" ];
+          });
+        "both slots, no such flag" =
+          !(warns {
+            syslog = both;
+            flags = [ ];
+          });
+        "both slots, the udp array" =
+          !(warns {
+            syslog = both;
+            flags = [ "-syslog.tenantID.udp=1:0" ];
+          });
+        "both slots, the unix array" =
+          !(warns {
+            syslog = both;
+            flags = [ "-syslog.tenantID.unix=1:0" ];
+          });
+        "both slots, a scalar flag" =
+          !(warns {
+            syslog = both;
+            flags = [
+              "-syslog.timezone=UTC"
+              "-syslog.tlsMinVersion=TLS12"
+            ];
+          });
+        "both slots, an unrelated flag" =
+          !(warns {
+            syslog = both;
+            flags = [ "-search.maxUniqueTimeseries=1" ];
+          });
+        "a disabled tls slot" =
+          !(warns {
+            syslog = {
+              tcp = slot "127.0.0.1" 5514;
+              tls = (tlsSlot "127.0.0.1" 6514) // {
+                enable = false;
+              };
+            };
+            flags = [ "-syslog.tenantID.tcp=1:0" ];
+          });
+        "logs disabled" =
+          !(warns {
+            syslog = both;
+            flags = [ "-syslog.tenantID.tcp=1:0" ];
+            logs = false;
+          });
+        "the flag stays allowed (no assertion)" =
+          lib.filter (lib.hasInfix "services.victoriaStack") (
+            map (a: a.message) (
+              builtins.filter (a: !a.assertion)
+                (evalWith {
+                  services.victoriaStack.logs = {
+                    enable = true;
+                    syslog = both;
+                    extraFlags = [ "-syslog.tenantID.tcp=1:0" ];
+                  };
+                }).config.assertions
+            )
+          ) == [ ];
+      }
+    );
 
   # --- tls slot ---
 

@@ -65,6 +65,10 @@ after they arrive.
   arrays are positional, so a stray entry shifts every slot after it. The unix
   transport and the scalar flags (`-syslog.timezone`, `-syslog.tlsMinVersion`) stay
   free; `-syslog.tls` is owned by exact name for that reason.
+- The other `-syslog.<name>.tcp` arrays (`tenantID`, `streamFields`, ...) stay
+  allowed, but with both the `tcp` and `tls` slots enabled one entry reaches the
+  first tcp listener only (the `tcp` slot), so evaluation **warns**: give the flag
+  twice, the `tcp` slot's value first.
 
 ## TLS
 

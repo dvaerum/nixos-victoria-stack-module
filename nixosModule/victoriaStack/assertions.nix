@@ -346,6 +346,21 @@ let
     '';
   }) addressOptions;
 
+  # Positional arrays: a single entry reaches the first tcp listener only.
+  syslogSharedArrayWarnings =
+    let
+      shared = lib.filter (f: syslogLib.isSharedTcpArray (flagName f)) cfg.logs.extraFlags;
+    in
+    lib.optional (cfg.logs.enable && syslogLib.bothTcpSlots cfg.logs.syslog && shared != [ ]) ''
+      services.victoriaStack.logs.extraFlags contains ${lib.concatStringsSep ", " shared}, an
+      array flag of VictoriaLogs' tcp listeners, while both the tcp and the tls
+      syslog slots are enabled. The array is positional: the tcp slot is the
+      first tcp listener and the tls slot the second, so one entry applies to the
+      tcp slot only and the tls slot keeps the default. Give the flag twice, the
+      tcp slot's value first and the tls slot's second (a blank value means the
+      default), or enable only one of the two slots (docs/decisions/0031).
+    '';
+
   moduleAssertions =
     extraFlagsAssertions
     ++ syslogAssertions
@@ -409,6 +424,7 @@ in
         ) services;
       in
       syslogWarnings
+      ++ syslogSharedArrayWarnings
       ++ map (svc: ''
         services.victoriaStack.${svc.name}.extraFlags contains -pushmetrics.*
         flags, but services.victoriaStack.${svc.name}.selfMonitoring.enable is
