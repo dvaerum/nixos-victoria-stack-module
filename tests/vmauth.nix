@@ -2364,6 +2364,7 @@ in
                 backends: ["trackers"]
               - token: write-good-token # gitleaks:allow
               - token:
+              - token: ""
           ''}";
           # Whitespace only (and a newline): no admin user, no empty-password login.
           adminPasswordFile = "${pkgs.writeText "blank-admin-password" "  \t \n"}";
@@ -2390,6 +2391,9 @@ in
           "writeTokensFile entry #1 has no valid backend",
           "writeTokensFile entry #2 names unknown backend(s): trackers",
           "writeTokensFile entry #4 has an empty token",
+          # An empty token in BOTH tiers is not "the same token in both": it is
+          # no token at all, so vmauth must still start.
+          "writeTokensFile entry #5 has an empty token",
           "adminPasswordFile is empty or only whitespace",
       ]:
           assert expected in journal, (expected, journal)
