@@ -76,3 +76,13 @@ above are rejected. `read-tier-url-map-is-a-closed-allow-list-not-a-wildcard`
 pins the literal `src_paths` shape via eval-only check, so a future
 accidental widening back toward a wildcard is caught immediately, not just
 "the specific endpoints tested still happen to work."
+
+## MCP tools sit outside this allow-list
+
+The `/mcp/{metrics,logs,traces}` routes are in the read tier's url map, but
+each MCP server then calls its backend directly on loopback
+([0023](./0023-mcp-trust-boundary-extends-grafana.md)), so the endpoints a
+tool reaches are not limited to the list above. A tool whose backend
+endpoint is off the list would hand a read-token holder that endpoint, so
+those tools are disabled by default
+(`mcp.enabledTools` lifts them; see 0023 for which ones and why).

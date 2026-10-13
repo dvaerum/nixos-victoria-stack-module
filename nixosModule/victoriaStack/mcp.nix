@@ -34,7 +34,19 @@ let
       # no such default. Passing any value replaces it, so it is unioned in
       # below. See the `disabledTools` option text for why.
       upstreamDefaultDisabledTools ? [ ],
+      # Tools whose backend endpoint is outside vmauth's read-tier allow-list
+      # or exposes other users' query text (docs/decisions/0023). Unlike
+      # upstreamDefaultDisabledTools, the operator can lift these through
+      # `mcp.enabledTools`.
+      moduleDefaultDisabledTools ? [ ],
     }:
+    let
+      disabledTools = lib.unique (
+        upstreamDefaultDisabledTools
+        ++ lib.subtractLists serviceCfg.mcp.enabledTools moduleDefaultDisabledTools
+        ++ serviceCfg.mcp.disabledTools
+      );
+    in
     {
       config = lib.mkIf serviceCfg.mcp.enable {
         systemd.services."mcp-victoria${name}" = {
@@ -66,11 +78,9 @@ let
             // lib.optionalAttrs (serviceCfg.mcp.logFormat != null) {
               MCP_LOG_FORMAT = serviceCfg.mcp.logFormat;
             }
-            // lib.optionalAttrs (upstreamDefaultDisabledTools != [ ] || serviceCfg.mcp.disabledTools != [ ]) {
-              # Union, so a user's list never drops upstreamDefaultDisabledTools.
-              MCP_DISABLED_TOOLS = lib.concatStringsSep "," (
-                lib.unique (upstreamDefaultDisabledTools ++ serviceCfg.mcp.disabledTools)
-              );
+            // lib.optionalAttrs (disabledTools != [ ]) {
+              # Union, so a user's list never drops the upstream defaults.
+              MCP_DISABLED_TOOLS = lib.concatStringsSep "," disabledTools;
             }
           );
 
@@ -156,6 +166,13 @@ in
         "retention_filters_debug"
         "test_rules"
       ];
+      # active_queries/top_queries show other users' query text; tsdb_status
+      # reads /api/v1/status/tsdb. None is on vmauth's read allow-list.
+      moduleDefaultDisabledTools = [
+        "active_queries"
+        "top_queries"
+        "tsdb_status"
+      ];
     })
     (mkMcpService {
       name = "logs";
@@ -164,6 +181,8 @@ in
       packagePath = "mcp-victorialogs";
       binaryName = "mcp-victorialogs";
       backendUnit = "victorialogs.service";
+      # `flags` reads /flags, outside vmauth's /logs/select/ allow-list.
+      moduleDefaultDisabledTools = [ "flags" ];
     })
     (mkMcpService {
       name = "traces";

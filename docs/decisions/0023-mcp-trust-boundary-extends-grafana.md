@@ -27,3 +27,34 @@ as for the raw read API.
 
 This previously lived only as a code comment in `mcp.nix`; it is an ADR
 now because it is a real design decision with the same weight as 0010.
+
+## MCP tools sit behind the read tier but outside its endpoint allow-list
+
+vmauth's `/mcp/*` routes require a read-tier credential, but the MCP
+server calls its backend straight over loopback, so the endpoint allow-list
+of [0021](./0021-vmauth-read-tier-allow-list.md) does not apply to what a
+tool can reach. Every tool is read-only (`readOnlyHint`), so there is no
+write path; the leak is reads beyond the allow-list. The module therefore
+disables, by default, the tools that go beyond it or show other users'
+query text (tool names verified by listing the pinned binaries' tools over
+MCP JSON-RPC):
+
+| Server | Disabled by default | Why |
+| --- | --- | --- |
+| logs | `flags` | reads `/flags`, outside `/logs/select/*` |
+| metrics | `active_queries`, `top_queries` | other users' query text |
+| metrics | `tsdb_status` | reads `/api/v1/status/tsdb`, not on the allow-list |
+| traces | none | every tool calls `/select/*` |
+
+mcp-victoriametrics' own defaults (`export`, `flags`, debug tools,
+`test_rules`) stay off as before. Left on deliberately: `alerts`/`rules`
+(`/vmalert/*`; this module wires no vmalert, so they only answer if the
+operator proxies one), `metric_statistics` and `metrics_metadata`. An
+operator who wants a disabled tool back sets `mcp.enabledTools` (for
+example `[ "flags" ]` on logs); only these module defaults can be lifted.
+
+The logs and traces tools take a `tenant` argument. It selects the
+tenant (`AccountID:ProjectID`) on the same `/select/*` endpoints the read
+tier already allows, so it widens nothing; all data is tenant `0:0` today.
+
+A separate MCP credential tier is not part of this decision.

@@ -160,13 +160,13 @@ in
           checks = {
             "MCP_LOG_LEVEL absent when unset" = !(envUnset ? MCP_LOG_LEVEL);
             "MCP_LOG_FORMAT absent when unset" = !(envUnset ? MCP_LOG_FORMAT);
-            # logs has no upstream-default-disabled set of its own
-            # (unlike metrics, see below) -- stays absent when unset.
-            "MCP_DISABLED_TOOLS absent when unset" = !(envUnset ? MCP_DISABLED_TOOLS);
+            # Only the module's own default (flags) when the option is unset.
+            "MCP_DISABLED_TOOLS is just the module default when unset" =
+              (envUnset.MCP_DISABLED_TOOLS or null) == "flags";
             "MCP_LOG_LEVEL present when set" = (envSet.MCP_LOG_LEVEL or null) == "warn";
             "MCP_LOG_FORMAT present when set" = (envSet.MCP_LOG_FORMAT or null) == "text";
             "MCP_DISABLED_TOOLS joined with commas when set" =
-              (envSet.MCP_DISABLED_TOOLS or null) == "documentation,some-other-tool";
+              (envSet.MCP_DISABLED_TOOLS or null) == "flags,documentation,some-other-tool";
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
@@ -235,9 +235,9 @@ in
       );
 
   # Control: logs/traces have no upstream-default-disabled set of their
-  # own (confirmed from their own sources, no such hardcoded fallback),
-  # so disabledTools stays a plain, unmodified passthrough there -- the
-  # metrics-specific union above must not leak into the other two.
+  # own (confirmed from their own sources, no such hardcoded fallback), so
+  # the metrics-specific upstream union above must not leak into them:
+  # traces stays a plain passthrough, logs adds only its own module default.
   mcp-logs-and-traces-disabled-tools-stay-a-plain-passthrough =
     pkgs.runCommand "mcp-logs-and-traces-disabled-tools-plain-passthrough" { }
       (
@@ -259,7 +259,7 @@ in
           logsVal = evaluated.config.systemd.services.mcp-victorialogs.environment.MCP_DISABLED_TOOLS;
           tracesVal = evaluated.config.systemd.services.mcp-victoriatraces.environment.MCP_DISABLED_TOOLS;
           checks = {
-            "logs disabledTools stays a plain passthrough" = logsVal == "documentation";
+            "logs disabledTools adds only the module default (flags)" = logsVal == "flags,documentation";
             "traces disabledTools stays a plain passthrough" = tracesVal == "documentation";
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
@@ -269,6 +269,214 @@ in
         else
           throw "logs/traces disabledTools unexpectedly unioned with something: ${builtins.toJSON (builtins.attrNames failed)}"
       );
+
+  # The MCP servers call their backend directly, outside vmauth's read-tier
+  # endpoint allow-list (docs/decisions/0021, 0023), so tools whose backend
+  # endpoint is not on that list are off by default.
+  mcp-leaky-tools-are-disabled-by-default =
+    pkgs.runCommand "mcp-leaky-tools-disabled-by-default" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              metrics.mcp.enable = true;
+              logs.enable = true;
+              logs.mcp.enable = true;
+              traces.enable = true;
+              traces.mcp.enable = true;
+            };
+          };
+          tools =
+            unit:
+            lib.splitString "," (
+              evaluated.config.systemd.services.${unit}.environment.MCP_DISABLED_TOOLS or ""
+            );
+          checks = {
+            "logs disables flags" = lib.elem "flags" (tools "mcp-victorialogs");
+            "metrics disables active_queries" = lib.elem "active_queries" (tools "mcp-victoriametrics");
+            "metrics disables top_queries" = lib.elem "top_queries" (tools "mcp-victoriametrics");
+            "metrics disables tsdb_status" = lib.elem "tsdb_status" (tools "mcp-victoriametrics");
+            "metrics keeps the upstream defaults" = lib.all (t: lib.elem t (tools "mcp-victoriametrics")) [
+              "export"
+              "flags"
+              "test_rules"
+            ];
+            "metrics does not disable query tools" = !(lib.elem "query" (tools "mcp-victoriametrics"));
+            "traces has nothing to disable" =
+              !(evaluated.config.systemd.services.mcp-victoriatraces.environment ? MCP_DISABLED_TOOLS);
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "MCP default-disabled tools wrong: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # enabledTools lifts a module default; the operator's disabledTools still adds.
+  mcp-enabled-tools-lifts-a-module-default =
+    pkgs.runCommand "mcp-enabled-tools-lifts-a-module-default" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack = {
+              metrics.enable = true;
+              metrics.mcp = {
+                enable = true;
+                enabledTools = [ "tsdb_status" ];
+                disabledTools = [ "documentation" ];
+              };
+              logs.enable = true;
+              logs.mcp = {
+                enable = true;
+                enabledTools = [ "flags" ];
+              };
+            };
+          };
+          tools =
+            unit:
+            lib.splitString "," (
+              evaluated.config.systemd.services.${unit}.environment.MCP_DISABLED_TOOLS or ""
+            );
+          checks = {
+            "logs flags re-enabled (variable absent)" =
+              !(evaluated.config.systemd.services.mcp-victorialogs.environment ? MCP_DISABLED_TOOLS);
+            "metrics tsdb_status re-enabled" = !(lib.elem "tsdb_status" (tools "mcp-victoriametrics"));
+            "metrics other module defaults stay" =
+              lib.elem "active_queries" (tools "mcp-victoriametrics")
+              && lib.elem "top_queries" (tools "mcp-victoriametrics");
+            "metrics upstream defaults stay" = lib.elem "test_rules" (tools "mcp-victoriametrics");
+            "metrics disabledTools still added" = lib.elem "documentation" (tools "mcp-victoriametrics");
+          };
+          failed = lib.filterAttrs (_: ok: !ok) checks;
+        in
+        if failed == { } then
+          "echo OK > $out"
+        else
+          throw "MCP enabledTools wrong: ${builtins.toJSON (builtins.attrNames failed)}"
+      );
+
+  # Real binaries over JSON-RPC through vmauth: the disabled tools are gone
+  # from tools/list and refused on tools/call, query tools still answer, and
+  # enabledTools brings a tool back.
+  mcp-leaky-tools-refused-through-vmauth = pkgs.testers.nixosTest {
+    name = "victoria-stack-mcp-leaky-tools";
+
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        metrics.mcp.enable = true;
+        logs.enable = true;
+        logs.mcp.enable = true;
+        traces.enable = true;
+        traces.mcp.enable = true;
+        vmauth.adminPasswordFile = "${pkgs.writeText "mcp-test-admin-password" "mcp-test-admin-password-value"}";
+      };
+    };
+
+    containers.reenabled = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack = {
+        logs.enable = true;
+        logs.mcp = {
+          enable = true;
+          enabledTools = [ "flags" ];
+        };
+        vmauth.adminPasswordFile = "${pkgs.writeText "mcp-test-admin-password" "mcp-test-admin-password-value"}";
+      };
+    };
+
+    testScript = ''
+      import json
+      ${testLib.waitActivePython}
+
+      AUTH = "-u admin:mcp-test-admin-password-value"  # gitleaks:allow
+      HDRS = "-H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream'"
+
+
+      def post(node, route, body, session=None):
+          sess = f"-H 'Mcp-Session-Id: {session}' " if session else ""
+          return node.succeed(
+              f"curl -sf -D - {AUTH} {HDRS} {sess}"
+              f"-X POST 'http://127.0.0.1:4204/mcp/{route}' -d '{json.dumps(body)}'"
+          )
+
+
+      def parse(out):
+          head, _, payload = out.replace("\r\n", "\n").partition("\n\n")
+          sid = next((l.split(":", 1)[1].strip() for l in head.splitlines()
+                      if l.lower().startswith("mcp-session-id:")), None)
+          data = "".join(l[5:] for l in payload.splitlines() if l.startswith("data:")) or payload
+          return sid, (json.loads(data) if data.strip() else None)
+
+
+      def open_session(node, route):
+          out = post(node, route, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+              "protocolVersion": "2024-11-05", "capabilities": {},
+              "clientInfo": {"name": "victoria-stack-test", "version": "1.0"}}})
+          sid, _ = parse(out)
+          post(node, route, {"jsonrpc": "2.0", "method": "notifications/initialized"}, sid)
+          return sid
+
+
+      def rpc(node, route, sid, method, params):
+          _, r = parse(post(node, route, {"jsonrpc": "2.0", "id": 2, "method": method, "params": params}, sid))
+          return r
+
+
+      def tool_names(node, route):
+          sid = open_session(node, route)
+          r = rpc(node, route, sid, "tools/list", {})
+          return sid, {t["name"] for t in r["result"]["tools"]}
+
+
+      def refused(r):
+          return "error" in r or r.get("result", {}).get("isError", False)
+
+
+      start_all()
+      for unit in ("mcp-victoriametrics", "mcp-victorialogs", "mcp-victoriatraces", "vmauth"):
+          wait_active(machine, f"{unit}.service")
+      machine.wait_for_open_port(4204)
+      wait_active(reenabled, "mcp-victorialogs.service")
+      wait_active(reenabled, "vmauth.service")
+      reenabled.wait_for_open_port(4204)
+
+      sid, names = tool_names(machine, "logs")
+      assert "flags" not in names, f"logs: flags must be disabled, got {sorted(names)}"
+      assert "query" in names, f"logs: query must stay, got {sorted(names)}"
+      assert refused(rpc(machine, "logs", sid, "tools/call", {"name": "flags", "arguments": {}})), \
+          "logs: flags call must be refused"
+      ok = rpc(machine, "logs", sid, "tools/call", {"name": "query", "arguments": {"query": "*", "limit": 1, "start": "2000-01-01T00:00:00Z"}})
+      assert not refused(ok), f"logs: query must still work: {ok!r}"
+
+      sid, names = tool_names(machine, "metrics")
+      for gone in ("active_queries", "top_queries", "tsdb_status", "flags", "export", "test_rules"):
+          assert gone not in names, f"metrics: {gone} must be disabled, got {sorted(names)}"
+      for kept in ("query", "labels", "series", "metrics_metadata"):
+          assert kept in names, f"metrics: {kept} must stay, got {sorted(names)}"
+      assert refused(rpc(machine, "metrics", sid, "tools/call", {"name": "tsdb_status", "arguments": {}})), \
+          "metrics: tsdb_status call must be refused"
+      ok = rpc(machine, "metrics", sid, "tools/call", {"name": "labels", "arguments": {}})
+      assert not refused(ok), f"metrics: labels must still work: {ok!r}"
+
+      sid, names = tool_names(machine, "traces")
+      assert "services" in names and "traces" in names, f"traces: query tools missing: {sorted(names)}"
+
+      sid, names = tool_names(reenabled, "logs")
+      assert "flags" in names, f"enabledTools = [ flags ] must bring flags back, got {sorted(names)}"
+      ok = rpc(reenabled, "logs", sid, "tools/call", {"name": "flags", "arguments": {}})
+      assert not refused(ok), f"re-enabled flags must work: {ok!r}"
+    '';
+  };
 
   mcp-reachable-only-through-vmauth = pkgs.testers.nixosTest {
     name = "victoria-stack-mcp-through-vmauth";
