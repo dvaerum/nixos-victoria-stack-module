@@ -170,6 +170,13 @@ in
                     "-storageDataPath=${toString cfg.dataDir}"
                     "-httpListenAddr=${cfg.listenAddress}"
                   ]
+                  ++ listen.tcp6Flags {
+                    addrs = [
+                      cfg.listenAddress
+                    ]
+                    ++ lib.optionals supportsSyslog (syslog.listenAddrs cfg.syslog);
+                    inherit (cfg) extraFlags;
+                  }
                   ++ lib.optionals (cfg.retentionPeriod != null) [ "-retentionPeriod=${cfg.retentionPeriod}" ]
                   # Exist only on logs/traces (options.nix), hence `or null`.
                   ++ selfMonitoring.mkFlags {

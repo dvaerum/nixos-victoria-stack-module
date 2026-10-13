@@ -599,6 +599,10 @@ in
           # listener 0, which is why, whenever any listener uses TLS, those
           # arrays are written out in full and keep a plain first entry.
           ++ [ (escape "-httpInternalListenAddr=${cfg.internalListenAddress}") ]
+          ++ listen.tcp6Flags {
+            addrs = map (l: l.addr) listeners ++ [ cfg.internalListenAddress ];
+            inherit (cfg) extraFlags;
+          }
           ++ lib.optionals anyTls (
             map (l: "-tls=${lib.boolToString l.tls}") listeners
             ++ map (l: "-tlsCertFile=${lib.optionalString l.tls "%d/https-cert"}") listeners

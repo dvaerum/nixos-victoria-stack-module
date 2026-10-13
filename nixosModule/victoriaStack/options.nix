@@ -121,7 +121,8 @@ let
           Address the listener binds; required once the slot is enabled, with no
           default so that nothing opens by accident. `0.0.0.0` or `::` accept
           syslog from every network the host is on. An IPv6 address (contains
-          `:`) is bracketed automatically.
+          `:`) is bracketed automatically and the unit is started with
+          `-enableTCP6`.
 
           VictoriaLogs' syslog ingestion has NO authentication: anyone who can
           reach the port can write log lines, claim any hostname or program name,
@@ -286,7 +287,10 @@ let
           `services.victoriaStack.vmauth` is the sanctioned way to reach it
           from outside this host. Override to `0.0.0.0:<port>` to bypass
           vmauth entirely and expose it directly, if that's deliberately
-          what you want.
+          what you want. An IPv6 address (`[::1]:4201`) works: the unit is
+          then started with `-enableTCP6`, which the binary needs to bind
+          IPv6 at all (an operator-supplied `-enableTCP6` in `extraFlags` is
+          not repeated). `:port` binds IPv4 only without that flag.
         '';
       };
 
@@ -749,7 +753,7 @@ in
         ipAddress = mkOption {
           type = types.str;
           default = "0.0.0.0";
-          description = "Address the HTTPS listener binds. An IPv6 address (contains `:`) is bracketed automatically.";
+          description = "Address the HTTPS listener binds. An IPv6 address (contains `:`) is bracketed automatically and vmauth is started with `-enableTCP6`; `::` accepts IPv4 too.";
         };
 
         port = mkOption {
@@ -810,7 +814,7 @@ in
         ipAddress = mkOption {
           type = types.str;
           default = "0.0.0.0";
-          description = "Address the plain-HTTP listener binds. `127.0.0.1` keeps it local (a place for `tailscale serve` to forward into). An IPv6 address is bracketed automatically.";
+          description = "Address the plain-HTTP listener binds. `127.0.0.1` keeps it local (a place for `tailscale serve` to forward into). An IPv6 address is bracketed automatically and vmauth is started with `-enableTCP6`.";
         };
 
         port = mkOption {

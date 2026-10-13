@@ -6,6 +6,10 @@
 # A wildcard address (`:port`, `0.0.0.0:port`, `[::]:port`) is a legitimate
 # -httpListenAddr but not something to connect to: probing the wildcard address
 # as a destination is unreliable across kernels, so callers dial loopback.
+#
+# The VictoriaMetrics binaries bind IPv4 only unless started with -enableTCP6
+# (an IPv6 -httpListenAddr is otherwise a fatal startup error); `tcp6Flags`
+# below is the one place that adds it.
 { lib }:
 rec {
   split =
@@ -61,8 +65,29 @@ rec {
     else
       "${ip}:${toString port}";
 
+  # Is this listen value (`host:port`, or a bare host) IPv6? An IPv4 address
+  # or a hostname never contains `:`, a bare IPv6 literal has at least two, a
+  # bracketed one has `[`. `:port` (wildcard host) is NOT IPv6.
+  isIpv6Addr = addr: lib.hasInfix "[" addr || lib.length (lib.splitString ":" addr) > 2;
+
+  # `-enableTCP6` for a unit whose listen values include an IPv6 one, unless
+  # the operator already passes it in extraFlags (their value then stands; a
+  # second copy would only repeat it).
+  tcp6Flags =
+    {
+      addrs,
+      extraFlags ? [ ],
+    }:
+    lib.optional (
+      lib.any isIpv6Addr addrs
+      && !lib.any (f: lib.hasPrefix "-enableTCP6" f || lib.hasPrefix "--enableTCP6" f) extraFlags
+    ) "-enableTCP6";
+
   # Does the wildcard host `wild` also accept a connection addressed to `other`?
-  # `:port` and `[::]` are dual-stack; `0.0.0.0` only covers IPv4 addresses.
+  # `0.0.0.0` only covers IPv4 addresses. `:port` and `[::]` are modelled as
+  # covering everything, which is exact only with -enableTCP6 (`[::]` is then
+  # dual-stack; without it `:port` binds IPv4 only), so collisions are never
+  # under-reported.
   covers =
     wild: other: wild == "" || isIpv6Wildcard wild || (wild == "0.0.0.0" && !(lib.hasPrefix "[" other));
 

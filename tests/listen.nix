@@ -36,6 +36,55 @@ in
   # The one helper that decides how a configured listen address is DIALLED and when
   # two addresses cannot both be bound. It replaces three copies of the same
   # wildcard logic.
+  # -enableTCP6 comes from the one helper, for every unit with an IPv6 listen value.
+  tcp6-flag-table =
+    let
+      execStart =
+        unit: cfg:
+        (evalWith ({
+          services.victoriaStack = cfg;
+        })).config.systemd.services.${unit}.serviceConfig.ExecStart;
+      count =
+        unit: cfg:
+        lib.length (lib.filter (lib.hasInfix "-enableTCP6") (lib.splitString " " (execStart unit cfg)));
+    in
+    mkTableCheck "listen-tcp6-flag-table" {
+      "IPv4 address: none" = !(listen.isIpv6Addr "127.0.0.1:4201");
+      "wildcard :port is not IPv6" = !(listen.isIpv6Addr ":4201");
+      "bracketed is IPv6" = listen.isIpv6Addr "[::1]:4201";
+      "bracketed wildcard is IPv6" = listen.isIpv6Addr "[::]:4201";
+      "bare :: is IPv6" = listen.isIpv6Addr "::";
+      "storage on IPv6 gets it once" =
+        count "victoriametrics" {
+          metrics.enable = true;
+          metrics.listenAddress = "[::1]:4201";
+        } == 1;
+      "storage on IPv4 does not" = count "victoriametrics" { metrics.enable = true; } == 0;
+      "operator -enableTCP6 in extraFlags is not duplicated" =
+        count "victoriametrics" {
+          metrics.enable = true;
+          metrics.listenAddress = "[::1]:4201";
+          metrics.extraFlags = [ "-enableTCP6" ];
+        } == 1;
+      "logs: an IPv6 syslog listener alone enables it" =
+        count "victorialogs" {
+          logs.enable = true;
+          logs.syslog.udp = {
+            enable = true;
+            ipAddress = "::1";
+          };
+        } == 1;
+      "vmauth: IPv6 on the https/http door alone enables it" =
+        count "vmauth" {
+          metrics.enable = true;
+          vmauth.http = {
+            enable = true;
+            ipAddress = "::";
+          };
+        } == 1;
+      "vmauth on IPv4 does not" = count "vmauth" { metrics.enable = true; } == 0;
+    };
+
   helper-table = mkTableCheck "listen-helper-table" {
     "empty host is a wildcard" = listen.isWildcard ":4201";
     "0.0.0.0 is a wildcard" = listen.isWildcard "0.0.0.0:4201";

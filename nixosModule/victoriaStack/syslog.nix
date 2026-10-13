@@ -40,6 +40,9 @@ rec {
   # A slot with no address is reported by an assertion, not rendered.
   active = syslog: lib.filter (s: s.slot.enable && s.slot.ipAddress != null) (slotsOf syslog);
 
+  # `host:port` of every rendered listener.
+  listenAddrs = syslog: map (s: listen.hostPort s.slot.ipAddress s.slot.port) (active syslog);
+
   onTransport = syslog: transport: lib.filter (s: s.transport == transport) (active syslog);
 
   # extraFlags the module's own arrays would be misaligned by: the arrays of a

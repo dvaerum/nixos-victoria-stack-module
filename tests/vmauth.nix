@@ -580,6 +580,56 @@ in
 
   # --- container-boot ---
 
+  # The string tests above only compare the rendered flags; the binaries bind
+  # IPv4 only unless started with -enableTCP6 (an IPv6 -httpListenAddr is a
+  # fatal startup error otherwise), so this boots them and talks IPv6.
+  ipv6-listeners-serve-over-ipv6 = pkgs.testers.nixosTest {
+    name = "victoria-stack-ipv6-listeners-serve-over-ipv6";
+
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack = {
+        metrics = {
+          enable = true;
+          listenAddress = "[::1]:4201";
+          mcp = {
+            enable = true;
+            listenAddress = "[::1]:4205";
+          };
+        };
+        vmauth = {
+          listenAddress = "[::1]:4204";
+          internalListenAddress = "[::1]:4208";
+          # The IPv6 wildcard: dual-stack once -enableTCP6 is passed.
+          http = {
+            enable = true;
+            ipAddress = "::";
+            port = 8080;
+          };
+        };
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmauth.service")
+      wait_active(machine, "mcp-victoriametrics.service")
+
+      machine.succeed("curl -sf 'http://[::1]:4201/ping'")
+      machine.succeed("curl -sf 'http://[::1]:4208/health'")
+      machine.succeed("curl -sf 'http://[::1]:4205/health/readiness'")
+      # No credential: vmauth answers 401 itself, which is all that is asserted here.
+      for url in ("http://[::1]:4204/", "http://[::1]:8080/", "http://127.0.0.1:8080/"):
+          code = machine.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' '{url}'").strip()
+          assert code == "401", f"{url} answered {code!r}, expected vmauth's 401"
+    '';
+  };
+
   write-paths-open-when-auth-disabled = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-write-paths-open-when-auth-disabled";
 
