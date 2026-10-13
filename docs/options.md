@@ -1474,10 +1474,15 @@ The minimum is 1 day: a shorter value (` 1h `, ` 23h `, ` 0 `) makes
 victoria-logs refuse to start, and evaluation warns about it\. A bare
 number means months, so ` 1 ` is one month, not one day\.
 
+The maximum is 1200 months (a month counts as 31 days): a longer
+value (` 1201 `, ` 37231d `) makes victoria-logs refuse to start, and
+evaluation warns about it\. At most 10 digits before and 9 after the
+decimal point are accepted\.
+
 
 
 *Type:*
-null or string matching the pattern \[0-9]+(\\\.\[0-9]+)?\[shdwMy]?|(\[0-9]+(\\\.\[0-9]+)?\[shdw])+
+null or string matching the pattern \[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdwMy]?|(\[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdw])+
 
 
 
@@ -1617,7 +1622,7 @@ separate ` vmbackup ` tool, which this option does not wire up\.
 
 
 *Type:*
-null or string matching the pattern \[0-9]+(\\\.\[0-9]+)?\[shdwMy]?|(\[0-9]+(\\\.\[0-9]+)?\[shdw])+
+null or string matching the pattern \[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdwMy]?|(\[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdw])+
 
 
 
@@ -1678,12 +1683,13 @@ process is waited for: a process that exits during start fails the
 start at once, whatever this is set to\.
 
 Format: one or more whole numbers with a unit of ` s `, ` m ` or ` h `
-(` 90s `, ` 5m `, ` 1h30m `); zero is not allowed\.
+(` 90s `, ` 5m `, ` 1h30m `) of at most 6 digits each; zero is not
+allowed\.
 
 
 
 *Type:*
-string matching the pattern (\[0-9]+\[smh])+
+string matching the pattern (\[0-9]{1,6}\[smh])+
 
 
 
@@ -2874,10 +2880,15 @@ The minimum is 1 day: a shorter value (` 1h `, ` 23h `, ` 0 `) makes
 victoria-metrics refuse to start, and evaluation warns about it\. A bare
 number means months, so ` 1 ` is one month, not one day\.
 
+The maximum is 1200 months (a month counts as 31 days): a longer
+value (` 1201 `, ` 37231d `) makes victoria-metrics refuse to start, and
+evaluation warns about it\. At most 10 digits before and 9 after the
+decimal point are accepted\.
+
 
 
 *Type:*
-null or string matching the pattern \[0-9]+(\\\.\[0-9]+)?\[shdwMy]?|(\[0-9]+(\\\.\[0-9]+)?\[shdw])+
+null or string matching the pattern \[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdwMy]?|(\[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdw])+
 
 
 
@@ -3017,7 +3028,7 @@ separate ` vmbackup ` tool, which this option does not wire up\.
 
 
 *Type:*
-null or string matching the pattern \[0-9]+(\\\.\[0-9]+)?\[shdwMy]?|(\[0-9]+(\\\.\[0-9]+)?\[shdw])+
+null or string matching the pattern \[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdwMy]?|(\[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdw])+
 
 
 
@@ -3078,12 +3089,13 @@ process is waited for: a process that exits during start fails the
 start at once, whatever this is set to\.
 
 Format: one or more whole numbers with a unit of ` s `, ` m ` or ` h `
-(` 90s `, ` 5m `, ` 1h30m `); zero is not allowed\.
+(` 90s `, ` 5m `, ` 1h30m `) of at most 6 digits each; zero is not
+allowed\.
 
 
 
 *Type:*
-string matching the pattern (\[0-9]+\[smh])+
+string matching the pattern (\[0-9]{1,6}\[smh])+
 
 
 
@@ -3830,10 +3842,15 @@ The minimum is 1 day: a shorter value (` 1h `, ` 23h `, ` 0 `) makes
 victoria-traces refuse to start, and evaluation warns about it\. A bare
 number means months, so ` 1 ` is one month, not one day\.
 
+The maximum is 1200 months (a month counts as 31 days): a longer
+value (` 1201 `, ` 37231d `) makes victoria-traces refuse to start, and
+evaluation warns about it\. At most 10 digits before and 9 after the
+decimal point are accepted\.
+
 
 
 *Type:*
-null or string matching the pattern \[0-9]+(\\\.\[0-9]+)?\[shdwMy]?|(\[0-9]+(\\\.\[0-9]+)?\[shdw])+
+null or string matching the pattern \[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdwMy]?|(\[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdw])+
 
 
 
@@ -3973,7 +3990,7 @@ separate ` vmbackup ` tool, which this option does not wire up\.
 
 
 *Type:*
-null or string matching the pattern \[0-9]+(\\\.\[0-9]+)?\[shdwMy]?|(\[0-9]+(\\\.\[0-9]+)?\[shdw])+
+null or string matching the pattern \[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdwMy]?|(\[0-9]{1,10}(\\\.\[0-9]{1,9})?\[shdw])+
 
 
 
@@ -4034,12 +4051,13 @@ process is waited for: a process that exits during start fails the
 start at once, whatever this is set to\.
 
 Format: one or more whole numbers with a unit of ` s `, ` m ` or ` h `
-(` 90s `, ` 5m `, ` 1h30m `); zero is not allowed\.
+(` 90s `, ` 5m `, ` 1h30m `) of at most 6 digits each; zero is not
+allowed\.
 
 
 
 *Type:*
-string matching the pattern (\[0-9]+\[smh])+
+string matching the pattern (\[0-9]{1,6}\[smh])+
 
 
 
