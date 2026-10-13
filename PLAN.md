@@ -813,3 +813,17 @@ Follow-ups after syslog:
   keep a fixed 90-second probe, now with an explicit `TimeoutStartSec` of
   150 seconds (before it, systemd's 90-second default expired together with the
   probe).
+
+Later review batches and restart backoff:
+- The readiness probe is event-driven and process-aware (`$MAINPID` +
+  `kill -0`), so a broken unit fails in about 4-6 seconds.
+- The collector loads its token through `LoadCredential` (Alloy reads it via
+  `local.file`, marked secret), with path units for a late or rotated file.
+- Module-owned auto-restart units (storage, vmauth, MCP, Alloy) back off with
+  `RestartSteps=3` / `RestartMaxDelaySec=30` (shared `restart-backoff.nix`,
+  ADR 0015). Limitation, accepted: systemd never resets the growth after a
+  healthy run, so the cap is kept low.
+- Open, unconfirmed: whether a second `map $http_upgrade` in the nginx
+  config clashes (`nginx -t` accepts duplicates; override behaviour untested),
+  and whether a changed unit file at `switch` re-runs the late-token start
+  helper.

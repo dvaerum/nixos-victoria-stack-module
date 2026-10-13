@@ -11,7 +11,7 @@ would grant no access as a warning, not an error:
   ignored; the token keeps its other valid backends.
 - A valid backend that is not enabled on this host gives no routes: warning, no
   access. It used to be a render error.
-- An entry with an empty `token:` is skipped with a warning.
+- An entry with an empty or whitespace-only `token:` is skipped with a warning.
 - An empty or whitespace-only admin password creates no admin user, with a
   warning.
 

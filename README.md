@@ -139,7 +139,9 @@ services.victoriaStack.vmauth = {
 };
 ```
 
-Collectors then use `writeEndpoint = "https://host:8443"`. See
+Collectors then use `writeEndpoint = "https://host:8443"`. The module opens no
+firewall port by default; set `https.openFirewall = true` (or `http.openFirewall`)
+to open exactly the configured port. See
 [`docs/decisions/0025`](./docs/decisions/0025-vmauth-public-write-doors.md).
 
 ### Syslog from devices
@@ -164,9 +166,11 @@ services.victoriaStack.logs.syslog = {
 
 VictoriaLogs' syslog ingestion has **no authentication** (TLS only encrypts):
 anyone who can reach a port can write logs and create streams, so bind a
-specific address and restrict who can reach it. Evaluation warns about a plain
-(udp or tcp) listener on a non-loopback address until you set that slot's
-`suppressExposureWarning`. Ports below 1024 give the
+specific address and restrict who can reach it. Evaluation warns about a
+listener on a non-loopback address until you set that slot's
+`suppressExposureWarning` (a plain udp or tcp listener lets anyone write logs;
+the `tls` slot is encrypted but still unauthenticated, so its warning says so).
+Ports below 1024 give the
 VictoriaLogs unit `CAP_NET_BIND_SERVICE` and nothing else. Anything beyond the
 three slots (unix sockets, tenants, stream fields) goes through `logs.extraFlags`;
 see [`docs/decisions/0031`](./docs/decisions/0031-victorialogs-syslog-listeners.md).
@@ -236,8 +240,8 @@ What changed incompatibly, and what to do:
   set `grafana.readTokenFile` and list the same token in `vmauth.readTokensFile`.
 - **Entries that grant no access are skipped**
   ([0030](./docs/decisions/0030-vmauth-token-entries-warn-dont-break.md)):
-  `backends: []` now means no access (it used to mean all), and an empty token or
-  admin password creates no user. Read the vmauth journal for the warnings.
+  `backends: []` now means no access (it used to mean all), and an empty or
+  whitespace-only token or admin password creates no user. Read the vmauth journal for the warnings.
 - **`vmauth.extraFlags` is shell-escaped**
   ([0028](./docs/decisions/0028-vmauth-extra-flags-are-escaped.md)): one list
   element is one argument; remove any extra quoting you added to work around the
