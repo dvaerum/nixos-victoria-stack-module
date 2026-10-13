@@ -715,5 +715,80 @@ in
       else
         throw "address validation wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
     );
+
+  # dataDir is written into tmpfiles rules, ReadWritePaths, RequiresMountsFor and
+  # -storageDataPath, where a space, `%` or quote changes the meaning; only a
+  # plain absolute path may pass, and only for an enabled service.
+  datadir-accepts-only-plain-absolute-paths =
+    let
+      services = [
+        "metrics"
+        "logs"
+        "traces"
+      ];
+      setup = enabled: svc: value: {
+        services.victoriaStack.${svc} = {
+          enable = enabled;
+          dataDir = value;
+        };
+      };
+      namedFor =
+        enabled: svc: value:
+        lib.any (lib.hasInfix "services.victoriaStack.${svc}.dataDir = ") (
+          map (a: a.message) (
+            builtins.filter (a: !a.assertion) (testLib.evalWith (setup enabled svc value)).config.assertions
+          )
+        );
+      rejected = [
+        "/srv/my data/100%"
+        "/srv/a b"
+        "/srv/100%"
+        "/srv/a\nb"
+        "/srv/\"q\""
+        "/srv/'q'"
+        "/srv/a;b"
+        "/srv/$x"
+        "/srv/*"
+        "/srv/a:b"
+        "/srv/a\\b"
+        "/srv/é"
+        "/srv/a\tb"
+      ];
+      accepted = [
+        "/var/lib/victoria-metrics"
+        "/var/lib/victoria-logs"
+        "/var/lib/victoria-traces"
+        "/srv/victoria-metrics"
+        "/data/vm_1.2-x"
+        "/a"
+      ];
+      verdicts =
+        wantNamed: value:
+        lib.listToAttrs (
+          map (svc: {
+            name = "${svc} ${builtins.toJSON value}";
+            value = namedFor true svc value == wantNamed;
+          }) services
+        );
+      # A disabled service never renders the unit, so it must not fail the build.
+      disabled = lib.listToAttrs (
+        map (svc: {
+          name = "disabled ${svc}";
+          value = !namedFor false svc "/srv/my data/100%";
+        }) services
+      );
+      checks = lib.foldl' (a: b: a // b) disabled (
+        map (verdicts true) rejected ++ map (verdicts false) accepted
+      );
+    in
+    pkgs.runCommand "datadir-accepts-only-plain-absolute-paths" { } (
+      let
+        failed = lib.filterAttrs (_: ok: !ok) checks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "dataDir validation wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
 }
 // extraFlagsChecks

@@ -231,6 +231,10 @@ let
           `suppressDynamicUserWarning` and
           docs/decisions/0009-dynamicuser-warning-not-assertion.md for why
           this is a warning, not a hard assertion.
+
+          Only letters, digits and `. _ / -` are allowed (an absolute path
+          with no space, `%` or quote); anything else fails the build for
+          an enabled service, since the path is written into unit files.
         '';
       };
 

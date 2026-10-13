@@ -346,6 +346,30 @@ let
     '';
   }) addressOptions;
 
+  # dataDir lands in a tmpfiles rule, ReadWritePaths, RequiresMountsFor (space-separated
+  # lists, `%` is a specifier) and -storageDataPath; a space or `%` splits or rewrites the
+  # path in some of them but not others, so the directory is never created and
+  # ProtectSystem=strict leaves the real path read-only.
+  dataDirAssertions =
+    map
+      (svc: {
+        assertion = lib.match "/[A-Za-z0-9._/-]+" (toString cfg.${svc}.dataDir) != null;
+        message = ''
+          services.victoriaStack.${svc}.dataDir = ${builtins.toJSON (toString cfg.${svc}.dataDir)} is not
+          a plain absolute path: it may contain only letters, digits and . _ / - and
+          must start with /. The value is written into tmpfiles rules, systemd
+          path lists and the -storageDataPath flag, where a space, `%` or quote splits
+          or rewrites it, so the directory would never be created.
+        '';
+      })
+      (
+        lib.filter (svc: cfg.${svc}.enable) [
+          "metrics"
+          "logs"
+          "traces"
+        ]
+      );
+
   # Positional arrays: a single entry reaches the first tcp listener only.
   syslogSharedArrayWarnings =
     let
@@ -367,6 +391,7 @@ let
     ++ syslogTlsFiles
     ++ syslogRequiresLogs
     ++ addressAssertions
+    ++ dataDirAssertions
     ++ domainAssertions;
 in
 {
