@@ -555,13 +555,31 @@ in
 
   grafana-enabled-with-zero-backends-warns = mkWarningFiresCheck {
     name = "grafana-enabled-with-zero-backends-warns";
-    expectMessageSubstring = "datasourceSpecs empty";
+    expectMessageSubstring = "no datasource is actually provisioned";
     module = {
       services.victoriaStack.grafana.enable = true;
       services.grafana.enable = true;
       # metrics/logs/traces all deliberately left disabled.
     };
   };
+
+  # An operator cannot act on a module-internal name, so the warning must not
+  # contain one.
+  grafana-zero-backends-warning-has-no-internal-identifier =
+    pkgs.runCommand "grafana-zero-backends-warning-has-no-internal-identifier" { }
+      (
+        let
+          evaluated = evalWith {
+            services.victoriaStack.grafana.enable = true;
+            services.grafana.enable = true;
+          };
+          leaking = lib.filter (lib.hasInfix "datasourceSpecs") evaluated.config.warnings;
+        in
+        if leaking == [ ] then
+          "touch $out"
+        else
+          throw "warning names the internal identifier datasourceSpecs: ${builtins.toJSON leaking}"
+      );
 
   # Control: any one backend enabled alongside grafana.enable -- no
   # warning should fire.

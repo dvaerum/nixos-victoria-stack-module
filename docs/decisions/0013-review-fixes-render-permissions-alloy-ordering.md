@@ -43,7 +43,8 @@ constraint there.
 
 Since changed: the journal-upload oneshot still runs as root but now does
 `chgrp systemd-journal` + `chmod 640`, writing under `umask 027`; the Alloy
-oneshot moved to its own `DynamicUser` (ADR 0015).
+oneshot moved to its own `DynamicUser` (ADR 0015). The Alloy oneshot is gone
+altogether: see [0006](./0006-alloy-write-token-via-sys-env.md).
 
 ## Other findings fixed in the same pass
 

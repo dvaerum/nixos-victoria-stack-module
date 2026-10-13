@@ -1,6 +1,13 @@
 # 0015: Systemd hardening baseline + wait4x readiness, extended beyond
 storage
 
+## Status
+
+The last paragraph before "Why" (the Alloy write-token oneshot with
+`EnvironmentFile=`, its `DynamicUser` and `RuntimeDirectory`) is superseded by
+[0006](./0006-alloy-write-token-via-sys-env.md): that oneshot no longer exists and
+Alloy gets the token as a systemd credential. The rest of this ADR still holds.
+
 ## Decision
 
 `metrics.nix`/`logs.nix`/`traces.nix` now carry the exact hardening

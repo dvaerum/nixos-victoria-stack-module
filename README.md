@@ -185,14 +185,31 @@ One gateway host running `victoriaStack`, N other hosts running
 `tests/collector.nix`, so it stays in sync with the real options).
 
 The file is a function returning `{ gateway; collector; }`, not a module, so
-`imports = [ ./fleet.nix ]` fails. Import it first and use its parts as modules:
+`imports = [ ./fleet.nix ]` fails. Import it first and use its parts as modules.
+The parts do not import the module itself; add it as shown:
 
 ```nix
+# gateway host
 let fleet = import ./fleet.nix { }; in
 {
-  # gateway host
-  imports = [ fleet.gateway ];
-  # every other host: imports = [ (fleet.collector { hostType = "server"; writeTokenFile = "..."; }) ];
+  imports = [
+    victoria-stack-module.nixosModules.victoriaStack
+    fleet.gateway
+  ];
+}
+```
+
+```nix
+# every other host
+let fleet = import ./fleet.nix { }; in
+{
+  imports = [
+    victoria-stack-module.nixosModules.victoriaCollector
+    (fleet.collector {
+      hostType = "server";
+      writeTokenFile = "/run/secrets/victoria-collector-write-token";
+    })
+  ];
 }
 ```
 
@@ -216,8 +233,8 @@ else -- see `docs/decisions/0008-agnostic-secrets-file-options.md`.
 The collector takes over a few things; everything else on those services stays yours.
 
 - **Alloy** (when `metrics` or `traces` is enabled): sets `services.alloy.enable`,
-  `package` (default), `extraFlags` (appends to yours) and `environmentFile` (when
-  `writeTokenFile` is set). The generated pipeline is written to
+  `package` (default), `extraFlags` (appends to yours) and, when `writeTokenFile` is set,
+  the unit's `LoadCredential=` (the token never goes through `environmentFile`). The generated pipeline is written to
   `environment.etc."alloy/config.alloy".text`, a text option whose definitions are
   concatenated with any text you add there. Block labels must be unique across the
   combined file, so a clash (the same `otelcol.*` or `prometheus.*` label in yours and

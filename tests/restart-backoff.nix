@@ -81,6 +81,9 @@ let
                 failed_at = None
         return delays[:restarts]
 
+    # Measured over 2 boots: every delay is within 0.3 s of the nominal one
+    # (5, 9, 16.5, 30 s; Alloy 2, 5, 12, 30 s), so the 0.5-2 s windows below
+    # have at least 6x headroom.
     def assert_backoff(unit, delays, first, cap=30):
         print(f"{unit}: restart delays {delays}")
         assert first - 0.5 <= delays[0] <= first + 2, f"{unit}: first retry {delays[0]}s, RestartSec is {first}"

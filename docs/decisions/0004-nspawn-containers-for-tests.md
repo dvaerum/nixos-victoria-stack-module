@@ -8,6 +8,12 @@ Every `nixosTest` in this project uses `pkgs.testers.nixosTest`'s
 `victoriaCollector` -> `victoriaStack` test, which needs two containers to
 talk to each other over the network.
 
+**Update:** three tests are the exception and use `nodes.machine` (a QEMU VM),
+because `switch-to-configuration` and specialisations need a full boot:
+`config-change-reloads-alloy-in-place-not-a-full-restart` and
+`switch-keeps-deliberate-stop` in `tests/collector.nix`, and
+`storage-dynamicuser-switch-needs-manual-migration` in `tests/storage.nix`.
+
 ## Why
 
 None of these scenarios need a kernel of their own, SUID binaries, or

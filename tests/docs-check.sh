@@ -19,8 +19,8 @@ mapfile -t ref_files < <(
     \( -name '*.md' -o -name '*.nix' \) ! -path docs/options.md
 )
 mapfile -t living_files < <(
-  find README.md docs/architecture.md examples nixosModule tests -type f \
-    \( -name '*.md' -o -name '*.nix' \)
+  find README.md docs/architecture.md docs/runbooks examples nixosModule tests -type f \
+    \( -name '*.md' -o -name '*.nix' -o -name '*.sh' \)
 )
 
 adr_exists() {
@@ -71,7 +71,7 @@ done
 
 # 3. Change-narrative belongs in git history and the ADRs, not in comments and
 #    user-facing docs.
-if grep -HniE 'phase [0-9]+|fresh[- ]agent' "${living_files[@]}"; then
+if grep -HniE 'phase[ -]?[0-9]+|fresh[- ]?agent' "${living_files[@]}"; then
   fail "phase/audit narrative in comments or docs (see lines above); keep only the causal fact"
 fi
 

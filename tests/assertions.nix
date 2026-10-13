@@ -160,8 +160,8 @@ in
 
   # vmauth.enable = true alone is not sufficient: vmauth.nix's own config
   # block only activates when a backend is also enabled, so this
-  # configuration previously passed the (pre-Phase-36) assertion while
-  # producing no actual vmauth service for nginx to reverse-proxy to.
+  # configuration used to pass this assertion while producing no actual vmauth
+  # service for nginx to reverse-proxy to.
   nginx-requires-vmauth-with-a-real-backend = mkAssertionMessagesAreCheck {
     name = "nginx-requires-vmauth-with-a-real-backend";
     expected = [

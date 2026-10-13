@@ -67,8 +67,8 @@ in
     warnings =
       lib.optional (datasourceSpecs == [ ]) ''
         services.victoriaStack.grafana.enable is set, but none of
-        metrics/logs/traces.enable is -- this leaves datasourceSpecs empty,
-        so no datasource is actually provisioned into Grafana. The only
+        services.victoriaStack.metrics/logs/traces.enable is, so
+        no datasource is actually provisioned into Grafana. The only
         thing services.victoriaStack.grafana.enable does beyond plain
         services.grafana.enable is this auto-wiring; with no backend
         enabled there is nothing for it to wire up.
