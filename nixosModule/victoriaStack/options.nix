@@ -247,6 +247,13 @@ let
           externally-managed mount (e.g. a ZFS dataset) -- confirmed on two
           independent real deployments. Set this to `false` whenever
           `dataDir` is not the default `/var/lib/${name}` path.
+
+          Changing this on a host that already holds data strands that data:
+          under `DynamicUser` it lives in the root-only
+          `/var/lib/private/<unit>`, which the static user cannot reach, and
+          this module does not move it. Follow
+          docs/runbooks/dynamicuser-migration.md before or right after the
+          switch.
         '';
       };
 

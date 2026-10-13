@@ -619,6 +619,81 @@ in
     '';
   };
 
+  # docs/runbooks/dynamicuser-migration.md: the two-way switch, run through
+  # switch-to-configuration (a VM, because specialisations need a full boot).
+  storage-dynamicuser-switch-needs-manual-migration = pkgs.testers.nixosTest {
+    name = "victoria-stack-storage-dynamicuser-switch-needs-manual-migration";
+
+    nodes.machine =
+      { lib, ... }:
+      {
+        imports = [
+          module
+          testLib.testStartupTimeouts
+        ];
+        services.victoriaStack.metrics.enable = true;
+        specialisation.static.configuration = {
+          services.victoriaStack.metrics.dynamicUser = lib.mkForce false;
+        };
+      };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      machine.start()
+      wait_active(machine, "victoriametrics.service")
+      machine.wait_until_succeeds("curl -sf http://127.0.0.1:4201/health")
+      machine.succeed(
+          "curl -sf -X POST --data-binary "
+          "'victoria_stack_migration_probe{label=\"kept\"} 42' "
+          "'http://127.0.0.1:4201/api/v1/import/prometheus'"
+      )
+      query = (
+          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_migration_probe' "
+          "| grep -q '\"value\":\\[.*,\"42\"\\]'"
+      )
+      machine.wait_until_succeeds(query)
+      # Stopping flushes the in-memory samples to disk, so they survive the flip.
+      machine.succeed("systemctl stop victoriametrics.service")
+      assert machine.succeed("test -L /var/lib/victoriametrics && readlink -f /var/lib/victoriametrics").strip() == "/var/lib/private/victoriametrics"
+
+      # Flip dynamicUser to false and switch, without migrating.
+      machine.execute(
+          "/run/current-system/specialisation/static/bin/switch-to-configuration test 2>&1"
+      )
+      # The unit auto-restarts, so it is never steadily "failed"; wait for the
+      # binary's own error instead.
+      machine.wait_until_succeeds(
+          "journalctl -u victoriametrics.service --no-pager | grep -i 'permission denied'"
+      )
+      machine.fail("systemctl is-active victoriametrics.service")
+      # The tmpfiles rule leaves the symlink to the root-only private dir alone.
+      assert machine.succeed("test -L /var/lib/victoriametrics && readlink -f /var/lib/victoriametrics").strip() == "/var/lib/private/victoriametrics"
+      print(machine.succeed("journalctl -u victoriametrics.service --no-pager | tail -n 15"))
+
+      # The runbook, step for step.
+      machine.succeed("systemctl stop victoriametrics.service")
+      machine.succeed("rm /var/lib/victoriametrics")
+      machine.succeed("mv /var/lib/private/victoriametrics /var/lib/victoriametrics")
+      machine.succeed("chown -R victoriametrics:victoriametrics /var/lib/victoriametrics")
+      machine.succeed("systemctl reset-failed victoriametrics.service")
+      machine.succeed("systemctl start victoriametrics.service")
+      wait_active(machine, "victoriametrics.service")
+      machine.wait_until_succeeds("curl -sf http://127.0.0.1:4201/health")
+      user = machine.succeed("systemctl show -p User --value victoriametrics.service").strip()
+      assert user == "victoriametrics", f"expected the static user, got {user!r}"
+      machine.wait_until_succeeds(query)
+
+      # Rollback direction: probe what systemd does with a real directory.
+      machine.succeed("systemctl stop victoriametrics.service")
+      machine.succeed("/run/booted-system/bin/switch-to-configuration test 2>&1")
+      wait_active(machine, "victoriametrics.service")
+      machine.wait_until_succeeds("curl -sf http://127.0.0.1:4201/health")
+      print(machine.succeed("ls -ld /var/lib/victoriametrics /var/lib/private/victoriametrics"))
+      assert machine.succeed("test -L /var/lib/victoriametrics && readlink -f /var/lib/victoriametrics").strip() == "/var/lib/private/victoriametrics"
+      machine.wait_until_succeeds(query)
+    '';
+  };
+
   metrics-package-override-takes-effect =
     let
       overridePackage = pkgs.symlinkJoin {

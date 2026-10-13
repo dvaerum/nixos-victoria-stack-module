@@ -19,7 +19,9 @@ modules hardcode their storage path and `DynamicUser`, which conflicts with a
 pre-mounted dataset (e.g. ZFS) and has no first-class `retentionPeriod` on
 `victorialogs` at all. This module builds each service from scratch instead,
 with `dataDir` and `dynamicUser` as real, independent options — see
-`docs/decisions/0001-victoria-stack-built-from-scratch.md`.
+`docs/decisions/0001-victoria-stack-built-from-scratch.md`. Switching an
+existing host's `dynamicUser` needs a manual data move:
+[runbook](./docs/runbooks/dynamicuser-migration.md).
 
 ## Quick start
 
