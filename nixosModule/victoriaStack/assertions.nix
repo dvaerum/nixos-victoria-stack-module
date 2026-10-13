@@ -151,10 +151,10 @@ let
       name = "logs";
       active = cfg.logs.enable;
       inherit (cfg.logs) extraFlags;
-      ownedPrefixes = storageOwnedPrefixes ++ syslogLib.ownedPrefixes cfg.logs.syslog;
-      ownedNames = syslogLib.ownedNames cfg.logs.syslog;
+      ownedPrefixes = storageOwnedPrefixes;
+      ownedNames = [ ];
       snapshotKeyFlags = [ "partitionManageAuthKey" ];
-      alternative = "put nginx in front of the service (for the -syslog.* flags the syslog.udp / syslog.tcp options own, use those)";
+      alternative = "put nginx in front of the service";
     }
     {
       name = "traces";
@@ -229,6 +229,42 @@ let
     }
   ) flagServices;
 
+  # The syslog flags the slots own (syslog.nix decides which); they get their own
+  # message because the generic one gives the wrong reason.
+  isSyslogOwned =
+    n:
+    lib.any (p: lib.hasPrefix p n) (syslogLib.ownedPrefixes cfg.logs.syslog)
+    || lib.elem n (syslogLib.ownedNames cfg.logs.syslog);
+  syslogOwnedFlags = lib.optionals cfg.logs.enable (
+    lib.filter (f: isSyslogOwned (flagName f)) cfg.logs.extraFlags
+  );
+  # -syslog.tls* belong to the tls slot; the tcp arrays are shared by tcp and tls.
+  syslogSlotFor =
+    f:
+    let
+      n = flagName f;
+    in
+    if lib.hasSuffix ".udp" n then
+      "services.victoriaStack.logs.syslog.udp"
+    else if lib.hasSuffix ".tcp" n then
+      "services.victoriaStack.logs.syslog.tcp or services.victoriaStack.logs.syslog.tls"
+    else
+      "services.victoriaStack.logs.syslog.tls";
+
+  syslogFlagAssertions = [
+    {
+      assertion = syslogOwnedFlags == [ ];
+      message = ''
+        services.victoriaStack.logs.extraFlags contains ${
+          lib.concatMapStringsSep ", " (f: "`${f}` (use ${syslogSlotFor f})") syslogOwnedFlags
+        }. The -syslog.* arrays are positional per transport: the module renders
+        its own syslog listeners into them, so a hand-written entry would
+        misalign them. Configure the listener through the matching slot option
+        (services.victoriaStack.logs.syslog.udp, .tcp or .tls) instead.
+      '';
+    }
+  ];
+
   syslogSlotNames = [
     "udp"
     "tcp"
@@ -252,8 +288,9 @@ let
         && (!cfg.logs.syslog.tls.enable || cfg.logs.syslog.tls.certFile != null);
       message = ''
         services.victoriaStack.logs.syslog.tls needs a certificate: set BOTH
-        services.victoriaStack.logs.syslog.tls.certFile and .keyFile, and set them
-        whenever the slot is enabled; one file alone is not a usable pair.
+        services.victoriaStack.logs.syslog.tls.certFile and .keyFile, or neither;
+        one file alone is not a usable pair. This applies
+        even while the slot is disabled (tls.enable = false), and an enabled slot needs both.
       '';
     }
   ];
@@ -468,6 +505,7 @@ let
   moduleAssertions =
     extraFlagsAssertions
     ++ snapshotKeyAssertions
+    ++ syslogFlagAssertions
     ++ syslogAssertions
     ++ syslogTlsFiles
     ++ syslogRequiresLogs

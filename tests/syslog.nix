@@ -545,6 +545,18 @@ in
         );
       rejected = syslog: flag: lib.any (lib.hasInfix "`${flag}`") (messages syslog [ flag ]);
       free = syslog: flag: messages syslog [ flag ] == [ ];
+      # The message of a syslog flag explains the positional arrays and names
+      # the slot option, not the generic "addressed or authenticated" reason.
+      explains =
+        syslog: flag: options:
+        let
+          m = messages syslog [ flag ];
+        in
+        lib.length m == 1
+        && lib.hasInfix "positional" (lib.head m)
+        && !(lib.hasInfix "addressed or authenticated" (lib.head m))
+        && !(lib.hasInfix "self-push" (lib.head m))
+        && lib.all (o: lib.hasInfix "services.victoriaStack.logs.syslog.${o}" (lib.head m)) options;
       tcp = {
         tcp = slot "192.0.2.10" 5514;
       };
@@ -584,6 +596,18 @@ in
       "tlsCipherSuites is free with slots" = free tcp "-syslog.tlsCipherSuites=TLS_AES_128_GCM_SHA256";
       "streamFields of a slot's transport is free" = free tcp ''-syslog.streamFields.tcp=["hostname"]'';
       "a plain TLS flag is still rejected" = rejected { } "-tlsCertFile=/run/fake-cert.pem";
+      "udp flag message names the udp slot" = explains udp "-syslog.extraFields.udp={}" [ "udp" ];
+      "tcp flag message names the tcp and tls slots" = explains tcp "-syslog.listenAddr.tcp=:6514" [
+        "tcp"
+        "tls"
+      ];
+      "tls flag message names the tls slot" = explains tlsOnly "-syslog.tlsCertFile=/run/fake-cert.pem" [
+        "tls"
+      ];
+      "tls array message names the tls slot" = explains tcp "--syslog.tls=true" [ "tls" ];
+      "a plain TLS flag keeps the generic message" = lib.any (lib.hasInfix "addressed or authenticated") (
+        messages { } [ "-tlsCertFile=/run/fake-cert.pem" ]
+      );
     };
 
   # The exposure warning: a listener that is reachable from the network and not
@@ -992,6 +1016,13 @@ in
             keyFile = "/run/fake-key.pem";
           };
         } != [ ];
+      "the pair message says it applies while the slot is disabled" =
+        lib.any (lib.hasInfix "even while the slot is disabled")
+          (failed {
+            tls = {
+              certFile = "/run/fake-cert.pem";
+            };
+          });
       "files without an enabled slot are fine" = failed { tls = files; } == [ ];
       "one file without an enabled slot fires" =
         failed {
