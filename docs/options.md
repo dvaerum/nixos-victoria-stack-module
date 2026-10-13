@@ -1026,6 +1026,13 @@ Flags that change addressing or auth (` -http.pathPrefix* `, ` -tls* `,
 check and self-push use plain http on the known address and path\.
 Put nginx in front of the service instead\.
 
+While ` snapshots.enable ` is true, the flag that makes the snapshot
+endpoint demand a key (` -snapshotAuthKey ` on VictoriaMetrics,
+` -partitionManageAuthKey ` on VictoriaLogs and VictoriaTraces) is
+rejected at build time too: the snapshot timer sends no key, so it
+would fail every run\. Drop the flag, or disable ` snapshots.enable ` and
+take snapshots yourself\.
+
 The ` syslog.udp ` / ` syslog.tcp ` options own the ` -syslog.listenAddr.* `
 and ` -syslog.extraFields.* ` arrays of their transport (and the
 ` -syslog.tls `, ` -syslog.tlsCertFile ` and ` -syslog.tlsKeyFile ` arrays
@@ -2536,6 +2543,13 @@ Flags that change addressing or auth (` -http.pathPrefix* `, ` -tls* `,
 check and self-push use plain http on the known address and path\.
 Put nginx in front of the service instead\.
 
+While ` snapshots.enable ` is true, the flag that makes the snapshot
+endpoint demand a key (` -snapshotAuthKey ` on VictoriaMetrics,
+` -partitionManageAuthKey ` on VictoriaLogs and VictoriaTraces) is
+rejected at build time too: the snapshot timer sends no key, so it
+would fail every run\. Drop the flag, or disable ` snapshots.enable ` and
+take snapshots yourself\.
+
 
 
 *Type:*
@@ -3426,6 +3440,13 @@ Flags that change addressing or auth (` -http.pathPrefix* `, ` -tls* `,
 ` -httpAuth.* `) are rejected at build time: the module’s readiness
 check and self-push use plain http on the known address and path\.
 Put nginx in front of the service instead\.
+
+While ` snapshots.enable ` is true, the flag that makes the snapshot
+endpoint demand a key (` -snapshotAuthKey ` on VictoriaMetrics,
+` -partitionManageAuthKey ` on VictoriaLogs and VictoriaTraces) is
+rejected at build time too: the snapshot timer sends no key, so it
+would fail every run\. Drop the flag, or disable ` snapshots.enable ` and
+take snapshots yourself\.
 
 
 
