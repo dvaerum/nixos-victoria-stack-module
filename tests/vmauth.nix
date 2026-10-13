@@ -72,6 +72,8 @@ let
       tier, # "read" | "write"
       yaml,
       expectInJournal,
+      # Further fragments that must all appear (each its own grep).
+      alsoExpectInJournal ? [ ],
       # Secrets must never reach the journal: the file holds them.
       expectNotInJournal ? null,
       # Content for the OTHER tier's file, for cross-file checks.
@@ -105,6 +107,11 @@ let
         machine.succeed(
             "journalctl -u vmauth.service --no-pager | grep -qF ${lib.escapeShellArg expectInJournal}"
         )
+        ${lib.concatMapStrings (frag: ''
+          machine.succeed(
+              "journalctl -u vmauth.service --no-pager | grep -qF ${lib.escapeShellArg frag}"
+          )
+        '') alsoExpectInJournal}
         ${lib.optionalString (expectNotInJournal != null) ''
           machine.fail(
               "journalctl -u vmauth.service --no-pager | grep -qF ${lib.escapeShellArg expectNotInJournal}"
@@ -2379,6 +2386,69 @@ in
         - backends: ["metrics"]
     '';
     expectInJournal = "a string `token` key";
+  };
+
+  non-string-numeric-token-names-the-entry-and-says-to-quote-it = mkBadTokensFileTest {
+    name = "non-string-numeric-token";
+    tier = "read";
+    yaml = ''
+      tokens:
+        - token: fine-token-value
+        - token: 1234567890123456
+    '';
+    expectInJournal = "entry #2: token must be a string, got number";
+    alsoExpectInJournal = [ "quote it in YAML" ];
+    expectNotInJournal = "1234567890123456";
+  };
+
+  non-string-float-looking-token-names-the-entry-and-says-to-quote-it = mkBadTokensFileTest {
+    name = "non-string-float-looking-token";
+    tier = "read";
+    yaml = ''
+      tokens:
+        - token: fine-token-value
+        - token: 12e45
+    '';
+    expectInJournal = "entry #2: token must be a string, got number";
+    alsoExpectInJournal = [ "quote it in YAML" ];
+    expectNotInJournal = "12e45";
+  };
+
+  non-string-boolean-token-names-the-entry-and-says-to-quote-it = mkBadTokensFileTest {
+    name = "non-string-boolean-token";
+    tier = "read";
+    yaml = ''
+      tokens:
+        - token: fine-token-value
+        - token: true
+    '';
+    expectInJournal = "entry #2: token must be a string, got boolean";
+    alsoExpectInJournal = [ "quote it in YAML" ];
+  };
+
+  scalar-backends-names-the-entry-and-the-key = mkBadTokensFileTest {
+    name = "scalar-backends";
+    tier = "write";
+    yaml = ''
+      tokens:
+        - token: fine-token-value
+        - token: other-token-value
+          backends: metrics
+    '';
+    expectInJournal = "entry #2: backends must be a list, got string";
+    expectNotInJournal = "other-token-value";
+  };
+
+  non-string-backends-item-names-the-entry-and-the-key = mkBadTokensFileTest {
+    name = "non-string-backends-item";
+    tier = "read";
+    yaml = ''
+      tokens:
+        - token: other-token-value
+          backends: [1]
+    '';
+    expectInJournal = "entry #1: backends must be a list of strings, got an item of type number";
+    expectNotInJournal = "other-token-value";
   };
 
   # Entries that grant no access are warned about and left out of config.json;

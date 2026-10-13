@@ -309,10 +309,26 @@ let
           echo "vmauth-render-config: $label lists tokens as bare strings, the old format -- each entry must now be an object: '- token: <value>' (optionally with 'backends: [metrics, logs, traces]' to scope it to those backends)" >&2
           exit 1
         fi
-        if ! jq -e 'type == "array" and all(.[]; type == "object" and has("token") and (.token | type == "string" or . == null) and ((.backends // []) | type == "array" and all(.[]; type == "string")))' <<<"$tokens_json" >/dev/null; then
+        if ! jq -e 'type == "array"' <<<"$tokens_json" >/dev/null; then
           # Reports only the JSON type, never the contents: the file holds
           # secrets and this lands in the journal.
           echo "vmauth-render-config: $label must contain a top-level 'tokens:' key whose value is a YAML list of objects, each with a string \`token\` key and an optional \`backends\` list of strings (optionally with inline '#' comments) -- got a value of type: $(jq -r type <<<"$tokens_json")" >&2
+          exit 1
+        fi
+        # Per-entry shape errors name the entry and the offending key and only
+        # ever the JSON TYPE of the value (a token can be a number in YAML --
+        # `token: 1234567890123456` -- and must not be echoed).
+        local shape_errors
+        shape_errors=$(jq -r '
+          [to_entries[] | (.key + 1) as $n | .value as $e
+          | if ($e | type) != "object" then "entry #\($n) must be an object with a `token` key, got \($e | type)"
+            elif ($e | has("token") | not) then "entry #\($n) has no `token` key (each entry needs a string `token` key)"
+            elif ($e.token | type) as $t | $t != "string" and $t != "null" then "entry #\($n): token must be a string, got \($e.token | type); quote it in YAML (token: \"...\")"
+            elif ($e.backends // [] | type) != "array" then "entry #\($n): backends must be a list, got \($e.backends | type)"
+            elif ($e.backends // [] | map(select(type != "string")) | length) > 0 then "entry #\($n): backends must be a list of strings, got an item of type \($e.backends | map(select(type != "string"))[0] | type)"
+            else empty end] | join("; ")' <<<"$tokens_json")
+        if [ -n "$shape_errors" ]; then
+          echo "vmauth-render-config: $label is malformed: $shape_errors" >&2
           exit 1
         fi
         local bad
