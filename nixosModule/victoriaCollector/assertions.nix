@@ -36,6 +36,21 @@ in
     ++ endpointChecks "journaldWriteEndpoint" cfg.journaldWriteEndpoint
     ++ [
       {
+        # A relative path makes both path units refuse to load and the
+        # credential is then looked up in the credential store; `:` breaks
+        # LoadCredential's ID:PATH split and `%` is a systemd specifier.
+        assertion =
+          cfg.writeTokenFile == null
+          || (lib.hasPrefix "/" cfg.writeTokenFile && lib.match "[^[:space:]%:]+" cfg.writeTokenFile != null);
+        message = ''
+          services.victoriaCollector.writeTokenFile must be an absolute path
+          (starting with "/") without whitespace, "%" or ":" (got
+          "${toString cfg.writeTokenFile}"): a relative path keeps the systemd
+          path units from loading, "%" is a systemd specifier and ":" breaks
+          the LoadCredential= ID:PATH split.
+        '';
+      }
+      {
         # A zero-length interval makes Alloy exit at start, like a timeout longer
         # than the interval does (config.alloy.nix handles that one).
         assertion = cfg.metrics.scrapeInterval == null || common.durationNs cfg.metrics.scrapeInterval > 0;

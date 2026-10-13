@@ -741,6 +741,46 @@ in
       throw "writeEndpoint validation wrong: mustFire=${builtins.toJSON mustFire} mustNotFire=${builtins.toJSON mustNotFire}"
   );
 
+  # A relative path makes both path units refuse to load ("path is not absolute")
+  # and the credential is looked up in the credential store, so nothing starts the
+  # consumers and nothing says why. `:` breaks LoadCredential's ID:PATH split and
+  # `%` is a systemd specifier.
+  write-token-file-must-be-an-absolute-path =
+    pkgs.runCommand "write-token-file-must-be-an-absolute-path" { }
+      (
+        let
+          failing =
+            value:
+            ownFailed (evalWithCollector {
+              services.victoriaCollector = {
+                hostType = "server";
+                writeTokenFile = value;
+              };
+            });
+          fires =
+            value: lib.any (lib.hasInfix "services.victoriaCollector.writeTokenFile must") (failing value);
+          mustFire = map fires [
+            "token"
+            "./token"
+            ""
+            "/run/secrets/a:b"
+            "/run/s/cert %h"
+            "/run/secrets/a b"
+            "/run/secrets/a\nb"
+            "/run/secrets/a\tb"
+          ];
+          mustNotFire = map fires [
+            null
+            "/run/secrets/write-token"
+            "/run/secrets/my_write-token.v2"
+          ];
+        in
+        if lib.all (x: x) mustFire && !(lib.any (x: x) mustNotFire) then
+          "echo OK > $out"
+        else
+          throw "writeTokenFile validation wrong: mustFire=${builtins.toJSON mustFire} mustNotFire=${builtins.toJSON mustNotFire}"
+      );
+
   # Empty capability set everywhere, except the one oneshot that changes a file's
   # group (a real boot proves it needs CAP_CHOWN: "" made it fail).
   collector-oneshots-drop-capabilities = pkgs.runCommand "collector-oneshots-drop-capabilities" { } (
