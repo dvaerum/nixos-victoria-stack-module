@@ -43,7 +43,11 @@ both without polling (details in the unit definitions):
 - `PathChanged=` runs `try-restart --no-block` (a stopped unit stays stopped; the
   path unit only re-arms once its helper ends, so waiting would lose a file
   replaced meanwhile). A live swap is not possible with `LoadCredential=`; the
-  restart is the accepted cost, and unsent data waits in the disk queue.
+  restart is the accepted cost, and unsent data waits in the disk queue. When
+  the uploader's render oneshot is `failed` (a file that was unusable at first
+  start leaves the uploader inactive, "dependency failed", with no `Restart=`),
+  the same helper also runs `start --no-block` on the uploader. A deliberate
+  stop leaves the oneshot `inactive`, so it stays stopped.
 
 The uploader's write-token oneshot is covered by the same units
 (docs/decisions/0012).

@@ -1169,16 +1169,20 @@ in
           both.systemd.paths.victoria-collector-write-token-watch.pathConfig.PathChanged
           == "/run/secrets/write-token";
         "restart helper: try-restart, without blocking" =
-          restarter.ExecStart
+          lib.head (lib.toList restarter.ExecStart)
           == "${systemctl} try-restart --no-block alloy.service victoria-collector-journal-upload-token.service";
+        "restart helper: starts the uploader when its token render failed" =
+          lib.length (lib.toList restarter.ExecStart) == 2
+          && lib.length (lib.toList (restartOf metricsOnly)) == 1;
         "metrics only: only alloy is started and restarted" =
           startOf metricsOnly == "${systemctl} start --no-block alloy.service"
-          && restartOf metricsOnly == "${systemctl} try-restart --no-block alloy.service";
+          && restartOf metricsOnly == [ "${systemctl} try-restart --no-block alloy.service" ];
         "logs only: only the uploader is started and restarted" =
           startOf logsOnly == "${systemctl} start --no-block systemd-journal-upload.service"
           &&
-            restartOf logsOnly
-            == "${systemctl} try-restart --no-block victoria-collector-journal-upload-token.service";
+            lib.head (lib.toList (restartOf logsOnly))
+            == "${systemctl} try-restart --no-block victoria-collector-journal-upload-token.service"
+          && lib.length (lib.toList (restartOf logsOnly)) == 2;
         "no token file: no path units, no check" =
           !(noToken.systemd.paths ? victoria-collector-write-token-appeared)
           && !(noToken.systemd.paths ? victoria-collector-write-token-watch)
@@ -1334,6 +1338,7 @@ in
       ];
       services.victoriaCollector = {
         metrics.enable = true;
+        logs.enable = true;
         writeEndpoint = "http://127.0.0.1:4210";
         writeTokenFile = "/var/lib/invalid/token";
         hostType = "server";
@@ -1358,6 +1363,64 @@ in
       collector.succeed("printf 'invalid-token-two\\n' > /var/lib/invalid/token")  # gitleaks:allow
       wait_active(collector, "alloy.service", timeout=120, max_restarts=None)
       collector.wait_until_succeeds("grep -q 'Bearer invalid-token-two' /tmp/auth.log", timeout=120)  # gitleaks:allow
+      # The uploader's render oneshot failed too, which left the uploader dead
+      # ("dependency failed", no Restart=): the restart helper brings it back.
+      wait_active(collector, "systemd-journal-upload.service", timeout=120, max_restarts=None)
+      collector.wait_until_succeeds(
+          "logger -t invalid-test tick; grep -q '^/insert/journald.* Bearer invalid-token-two$' /tmp/requests.log",  # gitleaks:allow
+          timeout=120,
+      )
+    '';
+  };
+
+  # Logs only, no Alloy: a token file that exists but is unusable at boot fails the
+  # render oneshot, so the uploader never starts. Only the restart helper can heal
+  # that (the start helper already ran); a unit stopped on purpose must stay stopped.
+  logs-uploader-heals-after-a-bad-token-file = pkgs.testers.nixosTest {
+    name = "victoria-collector-uploader-heals-bad-token";
+
+    containers.collector = {
+      imports = [
+        collectorModule
+        fakeGatewayModule
+      ];
+      systemd.tmpfiles.rules = [
+        "d /var/lib/heal 0700 root root -"
+        "f /var/lib/heal/token 0600 root root - tokens:\\n  - token: bad\\n" # gitleaks:allow
+      ];
+      services.victoriaCollector = {
+        logs.enable = true;
+        writeEndpoint = "http://127.0.0.1:4210";
+        writeTokenFile = "/var/lib/heal/token";
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      collector.wait_for_unit("fake-gateway.service")
+      collector.wait_for_unit("victoria-collector-write-token-watch.path")
+      collector.wait_until_succeeds(
+          "systemctl show -p ActiveState --value victoria-collector-journal-upload-token.service | grep -qx failed",
+          timeout=60,
+      )
+      collector.fail("systemctl is-active systemd-journal-upload.service")
+
+      collector.succeed("printf 'heal-token-one\\n' > /var/lib/heal/token")  # gitleaks:allow
+      wait_active(collector, "systemd-journal-upload.service", timeout=120, max_restarts=None)
+      collector.wait_until_succeeds(
+          "logger -t heal-test tick; grep -q '^/insert/journald.* Bearer heal-token-one$' /tmp/requests.log",  # gitleaks:allow
+          timeout=120,
+      )
+
+      # Stopped on purpose (inactive, not failed): a later file change leaves it stopped.
+      restarter = "victoria-collector-write-token-restart.service"
+      collector.succeed("systemctl stop systemd-journal-upload.service")
+      collector.succeed("printf 'heal-token-two\\n' > /var/lib/heal/token")  # gitleaks:allow
+      collector.wait_until_succeeds(f"systemctl show -p ActiveState --value {restarter} | grep -qx inactive")
+      collector.sleep(5)
+      state = collector.succeed("systemctl show -p ActiveState --value systemd-journal-upload.service").strip()
+      assert state == "inactive", f"the uploader was started again after a file change: {state}"
     '';
   };
 

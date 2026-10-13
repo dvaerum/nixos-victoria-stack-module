@@ -65,6 +65,12 @@ let
     text = readWriteToken + "unset token\n";
   };
 
+  startUploaderIfTokenFailed = pkgs.writeShellApplication {
+    name = "victoria-collector-start-uploader-if-token-failed";
+    runtimeInputs = [ config.systemd.package ];
+    text = builtins.readFile ./start-uploader-if-token-failed.sh;
+  };
+
   hasToken = cfg.writeTokenFile != null;
   # Units that read the token at start: the path units below start and restart them.
   tokenConsumers =
@@ -327,11 +333,15 @@ in
       # try-restart: a unit stopped on purpose stays stopped. --no-block: the path
       # unit only re-arms once this helper finishes, so waiting for the restart
       # would lose a file replaced meanwhile (same as the storage units' watchers).
+      # The second ExecStart heals an uploader left dead by an unusable first file.
       systemd.services.victoria-collector-write-token-restart = {
         description = "Restart the collector units after the write-token file changed";
         serviceConfig = {
           Type = "oneshot";
-          ExecStart = "${systemctl} try-restart --no-block ${lib.concatStringsSep " " tokenRestartUnits}";
+          ExecStart = [
+            "${systemctl} try-restart --no-block ${lib.concatStringsSep " " tokenRestartUnits}"
+          ]
+          ++ lib.optional cfg.logs.enable (lib.getExe startUploaderIfTokenFailed);
           CapabilityBoundingSet = "";
         };
       };

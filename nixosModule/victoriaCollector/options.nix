@@ -143,7 +143,8 @@ in
         stays stopped), because each reads a copy taken at its start. Unsent data
         waits in the disk queue meanwhile. No `restartUnits` entry is needed.
         A file that is empty or has several lines fails the start with a message
-        naming this option.
+        naming this option; correcting the file starts Alloy and the log
+        uploader again.
       '';
     };
 
