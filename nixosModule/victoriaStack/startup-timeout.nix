@@ -7,7 +7,9 @@
 # zero timeout means "no timeout" to wait4x.
 { lib }:
 rec {
-  grammar = "([0-9]+[smh])+";
+  # At most 6 digits per part (999999h is over a century): keeps the
+  # integer conversion in `seconds` from overflowing and aborting evaluation.
+  grammar = "([0-9]{1,6}[smh])+";
 
   seconds =
     s:
@@ -26,7 +28,7 @@ rec {
           h = 3600;
         }
         .${unit}
-    ) 0 (builtins.filter builtins.isList (builtins.split "([0-9]+)([smh])" s));
+    ) 0 (builtins.filter builtins.isList (builtins.split "([0-9]{1,6})([smh])" s));
 
   type = lib.types.addCheck (lib.types.strMatching grammar) (s: seconds s > 0);
 

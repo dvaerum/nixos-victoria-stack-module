@@ -10,8 +10,15 @@ let
   # The binaries' own duration grammar: a number with one optional unit (s, h,
   # d, w, M, y; a bare number is months), or several s/h/d/w parts. A
   # lower-case `m` (minutes) is refused by them, "30days" dies at start.
-  # Shared by -retentionPeriod and -snapshotsMaxAge, which parse alike.
-  durationRegex = "[0-9]+(\\.[0-9]+)?[shdwMy]?|([0-9]+(\\.[0-9]+)?[shdw])+";
+  # Shared by -retentionPeriod and -snapshotsMaxAge, which parse alike. At most
+  # 10 integer digits (3216758399s is the largest the binaries take, in seconds)
+  # and 9 fraction digits keep the module's own number conversion from
+  # overflowing and aborting the whole evaluation.
+  durationRegex =
+    let
+      n = "[0-9]{1,10}(\\.[0-9]{1,9})?";
+    in
+    "${n}[shdwMy]?|(${n}[shdw])+";
 
   startupTimeout = import ./startup-timeout.nix { inherit lib; };
 
@@ -335,6 +342,11 @@ let
           The minimum is 1 day: a shorter value (`1h`, `23h`, `0`) makes
           ${binaryName} refuse to start, and evaluation warns about it. A bare
           number means months, so `1` is one month, not one day.
+
+          The maximum is 1200 months (a month counts as 31 days): a longer
+          value (`1201`, `37231d`) makes ${binaryName} refuse to start, and
+          evaluation warns about it. At most 10 digits before and 9 after the
+          decimal point are accepted.
         '';
       };
 
@@ -355,7 +367,8 @@ let
           start at once, whatever this is set to.
 
           Format: one or more whole numbers with a unit of `s`, `m` or `h`
-          (`90s`, `5m`, `1h30m`); zero is not allowed.
+          (`90s`, `5m`, `1h30m`) of at most 6 digits each; zero is not
+          allowed.
         '';
       };
 

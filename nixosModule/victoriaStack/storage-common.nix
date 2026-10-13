@@ -47,6 +47,10 @@ let
   # -retentionPeriod in seconds, per the binaries' grammar (options.nix
   # durationRegex). A bare number and `M` are months of 31 days, `y` is 365
   # days -- the lengths the binaries' own minimum check uses (measured).
+  # Always a float: the regex caps every number's digits, so no conversion here
+  # can overflow.
+  monthSeconds = 31 * 86400;
+  maxRetentionMonths = 1200;
   retentionSeconds =
     let
       number =
@@ -58,12 +62,12 @@ let
         lib.toIntBase10 (builtins.head parts)
         + lib.toIntBase10 frac / builtins.foldl' (a: _: a * 10.0) 1.0 (lib.stringToCharacters frac);
       unitSeconds = {
-        "" = 31 * 86400;
+        "" = monthSeconds;
         s = 1;
         h = 3600;
         d = 86400;
         w = 7 * 86400;
-        M = 31 * 86400;
+        M = monthSeconds;
         y = 365 * 86400;
       };
       parts = builtins.filter builtins.isList (
@@ -74,6 +78,14 @@ let
       acc: m: acc + number (builtins.elemAt m 0) * unitSeconds.${builtins.elemAt m 2}
     ) 0 parts;
   minRetentionSeconds = 86400;
+  # The binaries refuse more than 1200 months (measured): a bare number or `M`
+  # as written (1200.5 is refused), any other unit by the whole months of 31
+  # days it spans (37230d starts, 37231d does not).
+  retentionAboveMaximum =
+    if builtins.match "[0-9.]+M?" cfg.retentionPeriod != null then
+      retentionSeconds > maxRetentionMonths * monthSeconds
+    else
+      retentionSeconds >= (maxRetentionMonths + 1) * monthSeconds;
 
   inherit (import ./exec-escape.nix { inherit lib; }) escape escapeEnvironment;
 in
@@ -126,6 +138,12 @@ in
             services.victoriaStack.${name}.retentionPeriod ("${cfg.retentionPeriod}") is
             shorter than the minimum of 1 day; ${binaryName} refuses to start with
             "-retentionPeriod cannot be smaller than a day". A bare number means months.
+          ''
+          ++ lib.optional (cfg.retentionPeriod != null && retentionAboveMaximum) ''
+            services.victoriaStack.${name}.retentionPeriod ("${cfg.retentionPeriod}") is
+            longer than the maximum of ${toString maxRetentionMonths} months (31 days each);
+            ${binaryName} refuses to start with "duration must be smaller than
+            ${toString maxRetentionMonths} months". A bare number means months.
           '';
       }
 

@@ -287,6 +287,38 @@ let
     "0.15w"
   ];
 
+  # Real maximum of -retentionPeriod, measured on all three binaries: the value
+  # in months of 31 days (a bare number and `M` as written, 1200.5 refused;
+  # every other unit as the whole months it spans, 37230d starts / 37231d is
+  # "approx 1201 months") must not exceed 1200.
+  retentionAboveMaximum = [
+    "1201"
+    "1200.5"
+    "1201M"
+    "1200.9M"
+    "103y"
+    "37231d"
+    "5319w"
+    "893544h"
+    "3216758400s"
+    "37230d1d"
+    "9999999999"
+    "9999999999y"
+  ];
+  retentionAtOrBelowMaximum = [
+    "1200"
+    "1200.0"
+    "1200M"
+    "102y"
+    "37230d"
+    "5318w"
+    "893543h"
+    "3216758399s"
+    "30d"
+    "1y"
+    "12"
+  ];
+
   mkShortRetentionWarningCheck =
     svc:
     pkgs.runCommand "${svc}-short-retention-warning" { } (
@@ -327,6 +359,49 @@ let
               (evalWith { }).options.services.victoriaStack.${svc}.retentionPeriod.description
             )
           ) "option description does not state the 1 day minimum";
+      in
+      if problems == [ ] then "echo OK > $out" else throw (lib.concatStringsSep "\n" problems)
+    );
+
+  mkLongRetentionWarningCheck =
+    svc:
+    pkgs.runCommand "${svc}-long-retention-warning" { } (
+      let
+        optionName = "services.victoriaStack.${svc}.retentionPeriod";
+        warningsFor =
+          retentionPeriod:
+          lib.filter (lib.hasInfix optionName) (
+            (evalWith {
+              services.victoriaStack.${svc} = {
+                enable = true;
+                inherit retentionPeriod;
+              };
+            }).config.warnings
+          );
+        problems =
+          lib.concatMap (
+            v:
+            let
+              w = warningsFor v;
+            in
+            lib.optional
+              (
+                !(
+                  builtins.length w == 1
+                  && lib.hasInfix ''"${v}"'' (builtins.head w)
+                  && lib.hasInfix "1200 months" (builtins.head w)
+                )
+              )
+              "${v}: expected one warning naming ${optionName}, the value and the 1200 months limit, got ${builtins.toJSON w}"
+          ) retentionAboveMaximum
+          ++ lib.concatMap (
+            v: lib.optional (warningsFor v != [ ]) "${v}: must not warn, got ${builtins.toJSON (warningsFor v)}"
+          ) retentionAtOrBelowMaximum
+          ++ lib.optional (
+            !lib.hasInfix "1200 months" (
+              (evalWith { }).options.services.victoriaStack.${svc}.retentionPeriod.description
+            )
+          ) "option description does not state the 1200 months limit";
       in
       if problems == [ ] then "echo OK > $out" else throw (lib.concatStringsSep "\n" problems)
     );
@@ -2646,6 +2721,70 @@ in
   logs-short-retention-warns = mkShortRetentionWarningCheck "logs";
   traces-short-retention-warns = mkShortRetentionWarningCheck "traces";
 
+  # Also a warning: above 1200 months the binary refuses to start.
+  metrics-long-retention-warns = mkLongRetentionWarningCheck "metrics";
+  logs-long-retention-warns = mkLongRetentionWarningCheck "logs";
+  traces-long-retention-warns = mkLongRetentionWarningCheck "traces";
+
+  # A number too long to convert used to abort the whole evaluation from
+  # lib.toIntBase10 inside the module (no option name, nothing else evaluates);
+  # the types must refuse it themselves, so the failure names the option.
+  # tryEval distinguishes "refused" (value = false) from "aborted" (success = false).
+  digit-overflow-is-refused-by-the-option-types =
+    let
+      refused =
+        t: v:
+        let
+          r = builtins.tryEval (t.check v);
+        in
+        r.success && !r.value;
+      cases = svc: [
+        {
+          name = "${svc}.retentionPeriod 20 digits";
+          ok =
+            refused (evalWith { }).options.services.victoriaStack.${svc}.retentionPeriod.type
+              "99999999999999999999d";
+        }
+        {
+          name = "${svc}.retentionPeriod 20 digits, bare";
+          ok =
+            refused (evalWith { }).options.services.victoriaStack.${svc}.retentionPeriod.type
+              "99999999999999999999";
+        }
+        {
+          name = "${svc}.retentionPeriod 20 fraction digits";
+          ok =
+            refused (evalWith { }).options.services.victoriaStack.${svc}.retentionPeriod.type
+              "1.99999999999999999999d";
+        }
+        {
+          name = "${svc}.startupTimeout 20 digits";
+          ok =
+            refused (evalWith { }).options.services.victoriaStack.${svc}.startupTimeout.type
+              "99999999999999999999s";
+        }
+        {
+          name = "${svc}.startupTimeout 20 digits in a later part";
+          ok =
+            refused (evalWith { }).options.services.victoriaStack.${svc}.startupTimeout.type
+              "1m99999999999999999999s";
+        }
+      ];
+      failed = lib.filter (c: !c.ok) (
+        lib.concatMap cases [
+          "metrics"
+          "logs"
+          "traces"
+        ]
+      );
+    in
+    pkgs.runCommand "digit-overflow-is-refused-by-the-option-types" { } (
+      if failed == [ ] then
+        "echo OK > $out"
+      else
+        throw "not cleanly refused: ${builtins.toJSON (map (c: c.name) failed)}"
+    );
+
   # The minimum the warning states is what the binaries enforce, edges included.
   retention-minimum-matches-the-real-binaries =
     let
@@ -2684,6 +2823,55 @@ in
           + lib.concatMapStrings (
             v: "probe ${pkgOf svc}/bin/${bin} ${lib.escapeShellArg v} start\n"
           ) retentionAtOrAboveMinimum
+        ) bins
+      )}
+      wait
+      if [ -n "$(ls failures)" ]; then
+        cat failures/* >&2
+        exit 1
+      fi
+      echo OK > $out
+    '';
+
+  # The 1200 months limit the warning states is what the binaries enforce, and
+  # the largest value the type allows (10 digits) is refused by them too.
+  retention-maximum-matches-the-real-binaries =
+    let
+      bins = {
+        metrics = "victoria-metrics";
+        logs = "victoria-logs";
+        traces = "victoria-traces";
+      };
+      pkgOf =
+        svc:
+        (evalWith { services.victoriaStack.${svc}.enable = true; })
+        .config.services.victoriaStack.${svc}.package;
+    in
+    pkgs.runCommand "retention-maximum-matches-the-real-binaries" { } ''
+      mkdir failures
+      probe() {
+        bin=$1 v=$2 want=$3
+        (
+          d=$(mktemp -d)
+          rc=0
+          out=$(timeout 3 "$bin" -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-retentionPeriod=$v" 2>&1) || rc=$?
+          if [ "$want" = start ] && [ "$rc" -ne 124 ]; then
+            echo "FAIL: $bin refused -retentionPeriod=$v: $out" > "failures/$(mktemp -u XXXXXX)"
+          elif [ "$want" = refuse ] && ! echo "$out" | grep -q "must be smaller than 1200"; then
+            echo "FAIL: $bin did not refuse -retentionPeriod=$v as above 1200 months (rc=$rc): $out" > "failures/$(mktemp -u XXXXXX)"
+          fi
+          rm -rf "$d"
+        ) &
+      }
+      ${lib.concatStrings (
+        lib.mapAttrsToList (
+          svc: bin:
+          lib.concatMapStrings (
+            v: "probe ${pkgOf svc}/bin/${bin} ${lib.escapeShellArg v} refuse\n"
+          ) retentionAboveMaximum
+          + lib.concatMapStrings (
+            v: "probe ${pkgOf svc}/bin/${bin} ${lib.escapeShellArg v} start\n"
+          ) retentionAtOrBelowMaximum
         ) bins
       )}
       wait
