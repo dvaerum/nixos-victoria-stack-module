@@ -384,6 +384,13 @@ let
           `-httpAuth.*`) are rejected at build time: the module's readiness
           check and self-push use plain http on the known address and path.
           Put nginx in front of the service instead.
+
+          While `snapshots.enable` is true, the flag that makes the snapshot
+          endpoint demand a key (`-snapshotAuthKey` on VictoriaMetrics,
+          `-partitionManageAuthKey` on VictoriaLogs and VictoriaTraces) is
+          rejected at build time too: the snapshot timer sends no key, so it
+          would fail every run. Drop the flag, or disable `snapshots.enable` and
+          take snapshots yourself.
         ''
         + lib.optionalString supportsSyslog ''
 

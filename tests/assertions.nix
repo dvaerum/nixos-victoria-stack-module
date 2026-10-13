@@ -77,6 +77,57 @@ let
       };
     }
   ) flagServices;
+  # The snapshot oneshot POSTs without a key, so a flag that makes the service
+  # demand one for its snapshot endpoint fails it every run.
+  snapshotKeyFlags = {
+    metrics = "snapshotAuthKey";
+    logs = "partitionManageAuthKey";
+    traces = "partitionManageAuthKey";
+  };
+  snapshotKeyChecks = lib.concatMapAttrs (
+    svc: flag:
+    let
+      mod =
+        enable: flags:
+        lib.recursiveUpdate flagServices.${svc} {
+          services.victoriaStack.${svc} = {
+            enable = true;
+            snapshots.enable = enable;
+            extraFlags = flags;
+          };
+        };
+    in
+    lib.listToAttrs (
+      map
+        (
+          f:
+          lib.nameValuePair "${svc}-snapshots-reject-key-flag${slug f}" (mkAssertionFiresCheck {
+            name = "${svc}-snapshots-reject-key-flag${slug f}";
+            expectMessageSubstring = "services.victoriaStack.${svc}.snapshots.enable is true but extraFlags contains `${f}`";
+            module = mod true [ f ];
+          })
+        )
+        [
+          "-${flag}=k"
+          "--${flag}=k"
+          "-${flag}"
+        ]
+    )
+    // {
+      "${svc}-snapshots-key-flag-is-fine-with-snapshots-off" = mkNoAssertionsFireCheck {
+        name = "${svc}-snapshots-key-flag-is-fine-with-snapshots-off";
+        module = mod false [ "-${flag}=k" ];
+      };
+      "${svc}-snapshots-similar-flags-are-fine" = mkNoAssertionsFireCheck {
+        name = "${svc}-snapshots-similar-flags-are-fine";
+        module = mod true [
+          "-metricsAuthKey=k"
+          "-deleteAuthKey=k"
+          "-${flag}Extra=k"
+        ];
+      };
+    }
+  ) snapshotKeyFlags;
 in
 {
   nginx-requires-vmauth = mkAssertionMessagesAreCheck {
@@ -856,3 +907,4 @@ in
     );
 }
 // extraFlagsChecks
+// snapshotKeyChecks

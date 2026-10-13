@@ -2686,6 +2686,80 @@ in
       echo OK > $out
     '';
 
+  # The flags the extraFlags assertion rejects with snapshots.enable
+  # (assertions.nix snapshotKeyFlags) must be the ones that really gate the
+  # snapshot endpoint the oneshot calls: 401 without a key, 200 with one, and
+  # 200 with no flag at all.
+  snapshot-key-flags-gate-the-real-snapshot-endpoint =
+    let
+      binary =
+        {
+          svc,
+          bin,
+          flag,
+          path,
+        }:
+        let
+          pkg =
+            (evalWith { services.victoriaStack.${svc}.enable = true; })
+            .config.services.victoriaStack.${svc}.package;
+        in
+        ''
+          code ${pkg}/bin/${bin} ${path} 200
+          code ${pkg}/bin/${bin} ${path} 401 "-${flag}=k"
+          code ${pkg}/bin/${bin} "${path}?authKey=k" 200 "-${flag}=k"
+        '';
+    in
+    pkgs.runCommand "snapshot-key-flags-gate-the-real-snapshot-endpoint"
+      {
+        nativeBuildInputs = [ pkgs.curl ];
+      }
+      ''
+        code() {
+          bin=$1 path=$2 want=$3
+          shift 3
+          d=$(mktemp -d)
+          "$bin" -storageDataPath="$d" -httpListenAddr=127.0.0.1:18428 "$@" > "$d.log" 2>&1 &
+          pid=$!
+          # Bounded: a binary that never listens fails the check, not hangs it.
+          up=
+          for _ in $(seq 100); do
+            curl -s -o /dev/null http://127.0.0.1:18428/health && { up=1; break; }
+            sleep 0.2
+          done
+          [ -n "$up" ] || { cat "$d.log" >&2; exit 1; }
+          got=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:18428$path")
+          kill $pid
+          # Killed on purpose, so its exit status says nothing.
+          wait $pid || true
+          if [ "$got" != "$want" ]; then
+            echo "FAIL: $bin $* POST $path: got $got, want $want" >&2
+            exit 1
+          fi
+        }
+        ${lib.concatMapStrings binary [
+          {
+            svc = "metrics";
+            bin = "victoria-metrics";
+            flag = "snapshotAuthKey";
+            path = "/snapshot/create";
+          }
+          {
+            svc = "logs";
+            bin = "victoria-logs";
+            flag = "partitionManageAuthKey";
+            path = "/internal/partition/snapshot/create";
+          }
+          {
+            svc = "traces";
+            bin = "victoria-traces";
+            flag = "partitionManageAuthKey";
+            path = "/internal/partition/snapshot/create";
+          }
+        ]}
+        echo OK > $out
+      '';
+
   # snapshots.schedule stays a plain string: systemd's calendar grammar is too
   # large for a regex that would not also reject valid expressions, and an
   # eval-time type cannot call systemd-analyze. This proves what the module

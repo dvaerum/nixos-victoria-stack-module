@@ -144,6 +144,7 @@ let
       inherit (cfg.metrics) extraFlags;
       ownedPrefixes = storageOwnedPrefixes;
       ownedNames = [ ];
+      snapshotKeyFlags = [ "snapshotAuthKey" ];
       alternative = "put nginx in front of the service";
     }
     {
@@ -152,6 +153,7 @@ let
       inherit (cfg.logs) extraFlags;
       ownedPrefixes = storageOwnedPrefixes ++ syslogLib.ownedPrefixes cfg.logs.syslog;
       ownedNames = syslogLib.ownedNames cfg.logs.syslog;
+      snapshotKeyFlags = [ "partitionManageAuthKey" ];
       alternative = "put nginx in front of the service (for the -syslog.* flags the syslog.udp / syslog.tcp options own, use those)";
     }
     {
@@ -160,6 +162,7 @@ let
       inherit (cfg.traces) extraFlags;
       ownedPrefixes = storageOwnedPrefixes;
       ownedNames = [ ];
+      snapshotKeyFlags = [ "partitionManageAuthKey" ];
       alternative = "put nginx in front of the service";
     }
     {
@@ -172,6 +175,7 @@ let
         "httpInternalListenAddr"
       ];
       ownedNames = [ ];
+      snapshotKeyFlags = [ ];
       alternative = "use vmauth.https / vmauth.http / listenAddress, or put nginx in front";
     }
   ];
@@ -198,6 +202,32 @@ let
       address and path, so such a flag breaks them. Instead, ${svc.alternative}.
     '';
   }) flagServices;
+
+  # The snapshot oneshot POSTs to the snapshot endpoint without a key (it is a
+  # loopback call), and the binary answers 401 once one of these flags is set
+  # -- the timer would fail every run with no snapshot taken. The names are the
+  # flags that gate that endpoint on each pinned binary (tests/storage.nix probes it).
+  snapshotKeyFlagsIn = svc: lib.filter (f: lib.elem (flagName f) svc.snapshotKeyFlags) svc.extraFlags;
+  snapshotKeyAssertions = map (
+    svc:
+    let
+      offending = lib.optionals (svc.active && (cfg.${svc.name}.snapshots.enable or false)) (
+        snapshotKeyFlagsIn svc
+      );
+    in
+    {
+      assertion = offending == [ ];
+      message = ''
+        services.victoriaStack.${svc.name}.snapshots.enable is true but extraFlags contains ${
+          lib.concatMapStringsSep ", " (f: "`${f}`") offending
+        }, which makes the snapshot endpoint require that key. The module's
+        snapshot timer calls the endpoint without a key, so it would fail every
+        run and no snapshot would ever be created. Instead, drop the flag, or
+        set services.victoriaStack.${svc.name}.snapshots.enable = false and take
+        snapshots yourself.
+      '';
+    }
+  ) flagServices;
 
   syslogSlotNames = [
     "udp"
@@ -400,6 +430,7 @@ let
 
   moduleAssertions =
     extraFlagsAssertions
+    ++ snapshotKeyAssertions
     ++ syslogAssertions
     ++ syslogTlsFiles
     ++ syslogRequiresLogs
