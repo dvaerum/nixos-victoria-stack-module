@@ -279,6 +279,10 @@ in
       )
       read_ok("victoriametrics-ds", "/api/v1/series?match[]=grafana_probe_metric", "grafana_probe_metric")
       read_ok("victoriametrics-ds", "/api/v1/labels", "__name__")
+      # The Metrics browser loads both of these together and shows "Failed to
+      # load metrics" when either fails (docs/decisions/0021).
+      read_ok("victoriametrics-ds", "/api/v1/metadata", '"status":"success"')
+      read_ok("victoriametrics-ds", "/api/v1/label/__name__/values", "grafana_probe_metric")
       read_ok("victorialogs-ds", "/select/logsql/query?query=operator-line", "operator-line")
 
       # Everything that changes or leaks state is refused by vmauth itself.
@@ -290,6 +294,9 @@ in
       refused("victoriametrics-ds", "POST", "/api/v1/admin/tsdb/delete_series?match[]=grafana_probe_metric")
       refused("victoriametrics-ds", "GET", "/snapshot/create")
       refused("victoriametrics-ds", "GET", "/flags")
+      # The plugin also asks for these, but only optionally; kept out on purpose.
+      refused("victoriametrics-ds", "GET", "/api/v1/rules")
+      refused("victoriametrics-ds", "POST", "/api/v1/metadata/import")
       refused(
           "victorialogs-ds", "POST", "/insert/jsonline?_time_field=date",
           '{"_msg":"viewer-written-line","date":"0"}',

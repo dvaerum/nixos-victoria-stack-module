@@ -1651,6 +1651,10 @@ in
           machine.succeed(
               f"curl -sf {cred} 'http://127.0.0.1:4204/metrics/api/v1/labels'"
           )
+          # Grafana's Metrics browser needs this next to label/__name__/values.
+          machine.succeed(
+              f"curl -sf {cred} 'http://127.0.0.1:4204/metrics/api/v1/metadata'"
+          )
           machine.succeed(
               f"curl -sf {cred} 'http://127.0.0.1:4204/metrics/api/v1/label/__name__/values' "
               "| grep -q victoria_stack_readonly_probe_metric"
@@ -1739,6 +1743,7 @@ in
                 "/metrics/api/v1/series"
                 "/metrics/api/v1/labels"
                 "/metrics/api/v1/label/.+/values"
+                "/metrics/api/v1/metadata"
                 "/metrics/api/v1/export.*"
                 "/metrics/federate"
               ];

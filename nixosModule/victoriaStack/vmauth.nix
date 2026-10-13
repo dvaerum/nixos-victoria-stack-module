@@ -146,6 +146,9 @@ let
         "/metrics/api/v1/series"
         "/metrics/api/v1/labels"
         "/metrics/api/v1/label/.+/values"
+        # Grafana's Metrics browser fetches this together with the metric
+        # names and fails as a whole without it (docs/decisions/0021).
+        "/metrics/api/v1/metadata"
         "/metrics/api/v1/export.*"
         "/metrics/federate"
       ];

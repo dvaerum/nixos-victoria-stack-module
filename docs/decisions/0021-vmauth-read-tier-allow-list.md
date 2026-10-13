@@ -12,10 +12,14 @@ passthrough to the backend's entire native API.
 Per backend:
 
 - **VictoriaMetrics**: `/api/v1/query`, `/api/v1/query_range`, `/api/v1/series`,
-  `/api/v1/labels`, `/api/v1/label/.+/values`, `/api/v1/export.*`,
-  `/federate` — confirmed from VictoriaMetrics' own API docs' "Reads"
+  `/api/v1/labels`, `/api/v1/label/.+/values`, `/api/v1/metadata`,
+  `/api/v1/export.*`, `/federate` — confirmed from VictoriaMetrics' own API docs' "Reads"
   section; the first five are also vmauth's own official
-  per-tenant-authorization example, not improvised.
+  per-tenant-authorization example, not improvised. `/api/v1/metadata` was
+  added because Grafana's Metrics browser (victoriametrics-metrics-datasource)
+  loads it together with the metric names and shows "Failed to load metrics"
+  if it is refused. The plugin also calls `/api/v1/rules` (optional, failure
+  ignored) and `/prettify-query` (the Prettify button); both stay out.
 - **VictoriaLogs**: `/select/.*` — confirmed from VictoriaLogs' own HTTP API
   docs: its entire read surface lives under `/select/*`, with `/insert/*` as
   the completely separate, never-overlapping write namespace. One regex is
