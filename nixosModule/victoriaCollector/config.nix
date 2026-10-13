@@ -306,6 +306,8 @@ in
       # later change to the file.
       systemd.services.victoria-collector-write-token-appeared = {
         description = "Start the collector units once the write-token file exists";
+        # switch-to-configuration would otherwise re-run it when its unit file changes, starting consumers the operator stopped.
+        restartIfChanged = false;
         serviceConfig = {
           Type = "oneshot";
           RemainAfterExit = true;

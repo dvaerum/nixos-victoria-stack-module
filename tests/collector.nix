@@ -1715,6 +1715,49 @@ in
     '';
   };
 
+  # switch-to-configuration re-runs a RemainAfterExit oneshot whose unit file
+  # changed (e.g. a nixpkgs bump changing the systemctl store path); for the
+  # token start helper that must not start a unit the operator stopped.
+  switch-keeps-deliberate-stop = pkgs.testers.nixosTest {
+    name = "victoria-collector-switch-keeps-deliberate-stop";
+
+    nodes.machine =
+      { ... }:
+      {
+        imports = [ collectorModule ];
+        services.victoriaCollector = {
+          metrics.enable = true;
+          writeEndpoint = "http://127.0.0.1:4204";
+          writeTokenFile = "${writeTokenFixture}";
+          hostType = "server";
+        };
+        specialisation.changed-helper.configuration = {
+          systemd.services.victoria-collector-write-token-appeared.environment.PROBE = "1";
+        };
+      };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      machine.start()
+      wait_active(machine, "alloy.service")
+      machine.wait_for_unit("victoria-collector-write-token-appeared.path")
+      helper = "victoria-collector-write-token-appeared.service"
+      invocation = lambda: machine.succeed(f"systemctl show -p InvocationID --value {helper}").strip()
+      machine.wait_until_succeeds(f"test -n \"$(systemctl show -p InvocationID --value {helper})\"")
+      before = invocation()
+
+      machine.succeed("systemctl stop alloy.service")
+      machine.succeed(
+          "/run/current-system/specialisation/changed-helper/bin/switch-to-configuration test 2>&1"
+      )
+      machine.sleep(3)
+
+      state = machine.succeed("systemctl show -p ActiveState --value alloy.service").strip()
+      assert state == "inactive", f"alloy.service was started by the switch although it was stopped on purpose: {state}"
+      assert invocation() == before, "the start helper was re-run by the switch"
+    '';
+  };
+
   # Alloy's tls.ca_file / https:// path, for real: the gateway sits behind
   # a TLS-terminating nginx and the collector verifies it against the CA
   # (the existing alloy-tls-and-retry-options-are-inert-unless-configured
