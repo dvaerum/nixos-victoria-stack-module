@@ -1236,9 +1236,13 @@ in
           # A missed run (machine off at the scheduled time) is caught up.
           "${attr}: timer is Persistent" =
             on.config.systemd.timers."${unit}-snapshot".timerConfig.Persistent == true;
-          # Not started alone: a stopped backend must pull in (and order after) the real one.
-          "${attr}: oneshot requires and follows the backend" =
-            snapSvc.requires == [ "${unit}.service" ] && snapSvc.after == [ "${unit}.service" ];
+          # A deliberately stopped backend (restore/copy of dataDir) must stay
+          # stopped: no Requires=, ordering only, and a skip condition.
+          "${attr}: oneshot follows the backend without requiring it" =
+            snapSvc.requires == [ ] && snapSvc.after == [ "${unit}.service" ];
+          "${attr}: oneshot skips unless the backend is active" = lib.hasInfix "is-active" (
+            toString snapSvc.serviceConfig.ExecCondition
+          );
           "${attr}: oneshot is a oneshot that fails on HTTP errors" =
             snapSvc.serviceConfig.Type == "oneshot" && lib.hasInfix " --fail " snapExec;
           # Network families only: the call is an HTTP POST over loopback, so
@@ -1295,10 +1299,20 @@ in
       timers = machine.succeed("systemctl list-timers --no-pager")
       assert "victoriametrics-snapshot.timer" in timers, timers
 
+      # A deliberately stopped backend stays stopped: the oneshot is skipped
+      # (not failed) and does not start it.
+      machine.succeed("systemctl stop victoriametrics.service")
+      machine.succeed("systemctl start victoriametrics-snapshot.service")
+      assert machine.succeed("systemctl is-active victoriametrics.service || true").strip() == "inactive"
+      assert machine.succeed("systemctl is-failed victoriametrics-snapshot.service || true").strip() != "failed"
+      assert machine.succeed("systemctl show -p Result --value victoriametrics-snapshot.service").strip() == "exec-condition"
+
       # An HTTP error from the backend must fail the unit, not just a refused
       # connection: swap the backend for a server that answers every POST
-      # with 501 (and skip the Requires= that would restart the real one).
-      machine.succeed("systemctl stop victoriametrics.service")
+      # with 501 (the skip condition is dropped so the oneshot reaches curl).
+      machine.succeed("mkdir -p /run/systemd/system/victoriametrics-snapshot.service.d")
+      machine.succeed("printf '[Service]\\nExecCondition=\\n' > /run/systemd/system/victoriametrics-snapshot.service.d/no-condition.conf")
+      machine.succeed("systemctl daemon-reload")
       machine.succeed(
           "systemd-run --unit=fake-backend "
           "${pkgs.python3}/bin/python3 -m http.server 4201 --bind 127.0.0.1 --directory /tmp"

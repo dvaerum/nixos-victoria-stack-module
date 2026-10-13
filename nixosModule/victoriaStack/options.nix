@@ -489,6 +489,11 @@ let
           description = ''
             systemd `OnCalendar` expression for how often to create a
             snapshot. `daily` is systemd's own shorthand for midnight.
+
+            A run is skipped (not failed) while the service is not active, and
+            never starts it: stopping the service to restore or copy `dataDir`
+            stays in force across timer runs, including the catch-up run at
+            boot. A skipped run is not retried before the next `schedule` time.
           '';
         };
 

@@ -330,10 +330,18 @@ in
       (lib.mkIf cfg.snapshots.enable {
         systemd.services."${unitName}-snapshot" = {
           description = "Create a ${name} snapshot";
+          # Ordering only, no Requires=: a Requires= start would bring back a
+          # service the operator stopped on purpose (restore/copy of dataDir).
+          # After= still makes a queued start of the service finish first, so a
+          # timer firing at boot never meets it half-started.
           after = [ "${unitName}.service" ];
-          requires = [ "${unitName}.service" ];
           serviceConfig = {
             Type = "oneshot";
+            # Exit 3 (not active) is in systemd's 1-254 "condition not met"
+            # range: the run is skipped, not failed. "+" runs it outside the
+            # sandbox below, whose AF_UNIX-less address list would otherwise
+            # keep systemctl from reaching systemd.
+            ExecCondition = "+${config.systemd.package}/bin/systemctl is-active --quiet ${unitName}.service";
             ExecStart = lib.escapeShellArgs (
               map escape [
                 (lib.getExe pkgs.curl)
