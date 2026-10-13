@@ -28,7 +28,14 @@ let
   # `..` is rejected by assertions.nix, so a plain prefix test is sound here.
   queueFloorBytes = 4194304;
 
-  queueOutsideStateDir = !(lib.hasPrefix "/var/lib/alloy/" (toString cfg.queue.directory));
+  # The directory itself is alloy's StateDirectory, so it is inside too; the
+  # trailing slash on the prefix keeps look-alikes such as /var/lib/alloyx out.
+  alloyStateDir = "/var/lib/alloy";
+  queueOutsideStateDir =
+    let
+      dir = toString cfg.queue.directory;
+    in
+    !(dir == alloyStateDir || lib.hasPrefix "${alloyStateDir}/" dir);
 
   # Validates the token credential and sets $token; shared by the uploader's render
   # oneshot and Alloy's pre-start check below.

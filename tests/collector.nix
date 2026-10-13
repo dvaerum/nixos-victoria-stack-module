@@ -1057,6 +1057,62 @@ in
           ''
       );
 
+  # The StateDirectory itself (with or without a trailing slash) is inside;
+  # prefix look-alikes are outside. A prefix-only test counted the directory
+  # itself as outside: false warning, extra ReadWritePaths and tmpfiles rule.
+  queue-directory-statedir-boundary = pkgs.runCommand "queue-directory-statedir-boundary" { } (
+    let
+      probe =
+        dir: dynamicUser:
+        let
+          evaluated = evalWithCollector {
+            services.victoriaCollector = {
+              metrics.enable = true;
+              writeEndpoint = "http://127.0.0.1:4204";
+              hostType = "server";
+              queue.directory = dir;
+              alloy.dynamicUser = dynamicUser;
+            };
+          };
+          cfg = evaluated.config;
+        in
+        {
+          warned = lib.any (lib.hasInfix "queue.directory") cfg.warnings;
+          rwp = cfg.systemd.services.alloy.serviceConfig.ReadWritePaths or [ ];
+          tmpfiles = lib.filter (lib.hasInfix "alloy") cfg.systemd.tmpfiles.rules;
+        };
+      inside = [
+        "/var/lib/alloy"
+        "/var/lib/alloy/"
+        "/var/lib/alloy/queue"
+      ];
+      outside = [
+        "/var/lib/alloyx"
+        "/var/lib/alloy-other"
+        "/srv/queue"
+      ];
+      insideOk =
+        dir:
+        let
+          d = probe dir true;
+          s = probe dir false;
+        in
+        !d.warned && d.rwp == [ ] && !s.warned && s.rwp == [ ] && s.tmpfiles == [ ];
+      outsideOk =
+        dir:
+        let
+          d = probe dir true;
+          s = probe dir false;
+        in
+        d.warned && d.rwp != [ ] && s.rwp != [ ] && s.tmpfiles != [ ];
+      bad = lib.filter (d: !insideOk d) inside ++ lib.filter (d: !outsideOk d) outside;
+    in
+    if bad == [ ] then
+      "echo OK > $out"
+    else
+      throw "queue.directory StateDirectory boundary wrong for: ${builtins.toJSON bad}"
+  );
+
   write-token-file-is-a-plain-string-not-a-nix-path =
     pkgs.runCommand "collector-write-token-file-is-a-plain-string" { }
       (
