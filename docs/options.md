@@ -779,6 +779,8 @@ bearer token (no YAML structure needed at this end – that’s
 vmauth’s own ` writeTokensFile ` list on the gateway side)
 authorizing this host’s write traffic\. Required whenever the
 gateway’s own ` requireAuthForWrites ` is ` true ` (the default)\.
+Must be an absolute path with no whitespace, ` % ` or ` : `; the build
+fails otherwise\.
 
 The file may appear after boot: Alloy and the log uploader fail their
 first start without it, and a path unit starts them once it exists\.
