@@ -10,7 +10,7 @@ let
   listen = import ./listen.nix { inherit lib; };
 
   # One nginx argument, whatever the text holds (`;` or a space would otherwise
-  # end it). A `$` cannot be escaped in nginx: the address assertion keeps it out.
+  # end it). A `$` cannot be escaped in nginx, so the address assertions (including Grafana's http_addr) keep it out.
   quote = s: "\"${lib.replaceStrings [ "\\" "\"" ] [ "\\\\" "\\\"" ] s}\"";
 
   # Read from Grafana's own settings rather than assumed: the consumer may

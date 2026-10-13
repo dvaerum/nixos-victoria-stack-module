@@ -716,6 +716,70 @@ in
         throw "address validation wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
     );
 
+  # Grafana's own http_addr becomes nginx's proxy_pass (and takes part in the
+  # collision check), so it gets the same character check as the module's
+  # address options -- but empty stays legal (Grafana: all interfaces).
+  grafana-http-addr-accepts-only-host-characters =
+    let
+      failedFor =
+        grafanaEnable: addr:
+        map (a: a.message) (
+          builtins.filter (a: !a.assertion)
+            (testLib.evalWith {
+              services.grafana = {
+                enable = true;
+                settings = {
+                  security.secret_key = "$__file{${secretKeyFixture}}";
+                  server.http_addr = addr;
+                };
+              };
+              services.victoriaStack = {
+                metrics.enable = true;
+                grafana.enable = grafanaEnable;
+                nginx.enable = true;
+              };
+            }).config.assertions
+        );
+      named =
+        grafanaEnable: addr:
+        lib.any (lib.hasInfix "services.grafana.settings.server.http_addr = ") (
+          failedFor grafanaEnable addr
+        );
+      rejected = [
+        "a$host;b"
+        "a b"
+        "a/b"
+        "a,b"
+        "a\nb"
+      ];
+      accepted = [
+        "127.0.0.1"
+        "0.0.0.0"
+        "::1"
+        "localhost"
+        "grafana.example.com"
+        ""
+      ];
+      checks =
+        lib.listToAttrs (
+          map (a: lib.nameValuePair "rejects ${builtins.toJSON a}" (named true a)) rejected
+          ++ map (a: lib.nameValuePair "accepts ${builtins.toJSON a}" (!named true a)) accepted
+        )
+        // {
+          # Nothing reads http_addr when the module does not wire Grafana up.
+          "not checked while victoriaStack.grafana is off" = !named false "a$host;b";
+        };
+    in
+    pkgs.runCommand "grafana-http-addr-accepts-only-host-characters" { } (
+      let
+        failed = lib.filterAttrs (_: ok: !ok) checks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "grafana http_addr validation wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
+
   # dataDir is written into tmpfiles rules, ReadWritePaths, RequiresMountsFor and
   # -storageDataPath, where a space, `%` or quote changes the meaning; only a
   # plain absolute path may pass, and only for an enabled service.

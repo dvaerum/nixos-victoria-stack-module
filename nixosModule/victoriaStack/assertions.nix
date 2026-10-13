@@ -327,7 +327,14 @@ let
         name = "vmauth.http.ipAddress";
         value = cfg.vmauth.http.ipAddress;
       }
-    );
+    )
+    # Not ours but read by us (nginx's proxy_pass, the collision check). Empty
+    # is Grafana's "all interfaces" and is handled by listen.connectHost.
+    ++ lib.optional cfg.grafana.enable {
+      path = "services.grafana.settings.server.http_addr";
+      value = config.services.grafana.settings.server.http_addr;
+      allowEmpty = true;
+    };
 
   # nginx's server_name, which nixpkgs also uses as the ACME certificate name,
   # so it cannot be quoted like the upstream addresses (nginx.nix).
@@ -341,9 +348,10 @@ let
   };
 
   addressAssertions = map (o: {
-    assertion = lib.match "[]A-Za-z0-9._:%[-]+" o.value != null;
+    assertion =
+      (o.allowEmpty or false && o.value == "") || lib.match "[]A-Za-z0-9._:%[-]+" o.value != null;
     message = ''
-      services.victoriaStack.${o.name} = ${builtins.toJSON o.value} is not an
+      ${o.path or "services.victoriaStack.${o.name}"} = ${builtins.toJSON o.value} is not an
       address: it may contain only letters, digits and . _ : % [ ] - (a host,
       an IP address, or host:port). The value is written into unit files,
       shell scripts and the nginx config, so anything else would be executed
