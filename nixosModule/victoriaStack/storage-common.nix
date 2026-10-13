@@ -75,7 +75,7 @@ let
     ) 0 parts;
   minRetentionSeconds = 86400;
 
-  inherit (import ./exec-escape.nix { inherit lib; }) escape;
+  inherit (import ./exec-escape.nix { inherit lib; }) escape escapeEnvironment;
 in
 {
   # Renamed from extraOptions to match vmauth.extraFlags and the
@@ -253,7 +253,7 @@ in
             }
 
             (lib.optionalAttrs (tlsFiles != { }) {
-              LoadCredential = lib.mapAttrsToList (n: path: "${n}:${path}") tlsFiles;
+              LoadCredential = lib.mapAttrsToList (n: path: "${n}:${escapeEnvironment path}") tlsFiles;
             })
 
             (lib.optionalAttrs (limitNOFILE != null) {
@@ -315,7 +315,7 @@ in
             description = "Watch ${unitName}'s ${n} file for replacement";
             wantedBy = [ "multi-user.target" ];
             pathConfig = {
-              PathChanged = path;
+              PathChanged = escapeEnvironment path;
               Unit = "${unitName}-secret-restart.service";
             };
           }

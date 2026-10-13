@@ -1094,6 +1094,75 @@ in
         !((eval { tcp = slot "192.0.2.10" 5514; }).systemd.services ? victorialogs-secret-restart);
     };
 
+  # LoadCredential= and PathChanged= expand systemd specifiers like any other
+  # setting, so a `%` in an operator's path must be doubled to arrive literally.
+  tls-file-paths-escape-specifiers =
+    let
+      eval =
+        (evalWith {
+          services.victoriaStack.logs = {
+            enable = true;
+            syslog.tls = (tlsSlot "192.0.2.10" 6514) // {
+              certFile = "/run/s/cert %h.pem";
+              keyFile = "/run/s/key %H.pem";
+            };
+          };
+        }).config;
+      watch = n: eval.systemd.paths."victorialogs-secret-watch-${n}".pathConfig.PathChanged;
+    in
+    mkTableCheck "syslog-tls-paths-escape-specifiers" {
+      "LoadCredential escapes both paths" =
+        eval.systemd.services.victorialogs.serviceConfig.LoadCredential == [
+          "syslog-tls-cert:/run/s/cert %%h.pem"
+          "syslog-tls-key:/run/s/key %%H.pem"
+        ];
+      "the cert watcher escapes the path" = watch "syslog-tls-cert" == "/run/s/cert %%h.pem";
+      "the key watcher escapes the path" = watch "syslog-tls-key" == "/run/s/key %%H.pem";
+    };
+
+  # Runtime counterpart of tls-file-paths-escape-specifiers: systemd must open
+  # the credential files and arm the watchers with the literal `%` in the name.
+  tls-files-with-a-percent-in-the-path-load-and-rotate = pkgs.testers.nixosTest {
+    name = "victoria-stack-syslog-tls-percent-path";
+
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
+      environment.systemPackages = tools;
+      # `%%` is tmpfiles' own escape for a literal `%`.
+      systemd.tmpfiles.rules = [
+        "d /var/lib/syslog-tls 0700 root root -"
+        "C /var/lib/syslog-tls/c%%H.pem 0600 root root - ${certOne}/cert.pem"
+        "C /var/lib/syslog-tls/k%%H.pem 0600 root root - ${certOne}/key.pem"
+      ];
+      services.victoriaStack.logs = {
+        enable = true;
+        syslog.tls = (slot "127.0.0.1" 6514) // {
+          certFile = "/var/lib/syslog-tls/c%H.pem";
+          keyFile = "/var/lib/syslog-tls/k%H.pem";
+        };
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      wait_active(machine, "victorialogs.service")
+      machine.wait_for_open_port(6514)
+      machine.wait_for_unit("victorialogs-secret-watch-syslog-tls-cert.path")
+      machine.wait_until_succeeds("systemctl show -p SubState --value victorialogs-secret-watch-syslog-tls-cert.path | grep -qx waiting")
+      machine.succeed("${send} --proto tls --port 6514 --cacert ${certOne}/cert.pem PERCENTPATHMARK")
+
+      # The watcher must see the real file: replacing it restarts the unit.
+      was = machine.succeed("systemctl show -p InvocationID --value victorialogs.service").strip()
+      machine.succeed("cp ${certTwo}/key.pem '/var/lib/syslog-tls/k%H.pem' && cp ${certTwo}/cert.pem '/var/lib/syslog-tls/c%H.pem'")
+      machine.wait_until_succeeds("echo | openssl s_client -connect 127.0.0.1:6514 2>/dev/null | openssl x509 -noout -subject | grep -F syslog-test-two", timeout=180)
+      assert machine.succeed("systemctl show -p InvocationID --value victorialogs.service").strip() != was
+    '';
+  };
+
   # --- firewall ---
 
   # The module opens a slot's port only when asked, in the list of its

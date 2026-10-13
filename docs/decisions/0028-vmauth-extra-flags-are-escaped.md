@@ -24,4 +24,5 @@ one: the same option name behaved differently per service.
   systemd first (`nixosModule/victoriaStack/exec-escape.nix`, one helper for the
   storage services, vmauth and the syslog flags) and only then quoted; the
   module's own `%d` flags skip the escape. MCP's values travel in `Environment=`,
-  where only `%` needs escaping.
+  where only `%` needs escaping; so do the syslog TLS file paths in
+  `LoadCredential=` and `PathChanged=`.
