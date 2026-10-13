@@ -1313,6 +1313,11 @@ disabled and that’s what you want\. Requires this service’s own
 ` enable = true ` – there is nothing for the MCP server to proxy
 to otherwise (see docs/decisions/0002-opt-in-everything\.md)\.
 
+The MCP server has no authentication, so an address beyond
+loopback bypasses vmauth’s tiers and warns (silence it with
+` suppressExposureWarning `)\. The port must be 1024 or above: the
+unit has no capability to bind a privileged port\.
+
 The MCP tools sit behind vmauth’s read tier but OUTSIDE its
 endpoint allow-list: the server calls the backend directly on
 loopback\. Tools that would reach beyond that list are off by
@@ -1390,6 +1395,34 @@ null or one of “debug”, “info”, “warn”, “error”
 
 ```nix
 null
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.mcp\.suppressExposureWarning
+
+
+
+Silences the evaluation warning that the MCP server listens beyond
+loopback with no authentication (see ` listenAddress `)\. Set it once
+you have confirmed that a firewall or a trusted network restricts
+who can reach the port; same idea as ` suppressDynamicUserWarning `
+(docs/decisions/0009-dynamicuser-warning-not-assertion\.md)\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
 ```
 
 *Declared by:*
@@ -2797,6 +2830,11 @@ disabled and that’s what you want\. Requires this service’s own
 ` enable = true ` – there is nothing for the MCP server to proxy
 to otherwise (see docs/decisions/0002-opt-in-everything\.md)\.
 
+The MCP server has no authentication, so an address beyond
+loopback bypasses vmauth’s tiers and warns (silence it with
+` suppressExposureWarning `)\. The port must be 1024 or above: the
+unit has no capability to bind a privileged port\.
+
 The MCP tools sit behind vmauth’s read tier but OUTSIDE its
 endpoint allow-list: the server calls the backend directly on
 loopback\. Tools that would reach beyond that list are off by
@@ -2874,6 +2912,34 @@ null or one of “debug”, “info”, “warn”, “error”
 
 ```nix
 null
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.metrics\.mcp\.suppressExposureWarning
+
+
+
+Silences the evaluation warning that the MCP server listens beyond
+loopback with no authentication (see ` listenAddress `)\. Set it once
+you have confirmed that a firewall or a trusted network restricts
+who can reach the port; same idea as ` suppressDynamicUserWarning `
+(docs/decisions/0009-dynamicuser-warning-not-assertion\.md)\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
 ```
 
 *Declared by:*
@@ -3394,8 +3460,6 @@ absolute path
 
 ## services\.victoriaStack\.traces\.dynamicUser
 
-
-
 Whether to run victoria-traces under a systemd ` DynamicUser `
 (nixpkgs’ own default behavior for these binaries) or a static,
 stable system user\. ` DynamicUser `’s ` StateDirectory ` handling
@@ -3432,6 +3496,8 @@ true
 
 
 ## services\.victoriaStack\.traces\.extraFlags
+
+
 
 Extra command-line flags passed straight through to victoria-traces,
 for anything not worth promoting to its own typed option\.
@@ -3695,6 +3761,11 @@ disabled and that’s what you want\. Requires this service’s own
 ` enable = true ` – there is nothing for the MCP server to proxy
 to otherwise (see docs/decisions/0002-opt-in-everything\.md)\.
 
+The MCP server has no authentication, so an address beyond
+loopback bypasses vmauth’s tiers and warns (silence it with
+` suppressExposureWarning `)\. The port must be 1024 or above: the
+unit has no capability to bind a privileged port\.
+
 The MCP tools sit behind vmauth’s read tier but OUTSIDE its
 endpoint allow-list: the server calls the backend directly on
 loopback\. Tools that would reach beyond that list are off by
@@ -3772,6 +3843,34 @@ null or one of “debug”, “info”, “warn”, “error”
 
 ```nix
 null
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.traces\.mcp\.suppressExposureWarning
+
+
+
+Silences the evaluation warning that the MCP server listens beyond
+loopback with no authentication (see ` listenAddress `)\. Set it once
+you have confirmed that a firewall or a trusted network restricts
+who can reach the port; same idea as ` suppressDynamicUserWarning `
+(docs/decisions/0009-dynamicuser-warning-not-assertion\.md)\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
 ```
 
 *Declared by:*
