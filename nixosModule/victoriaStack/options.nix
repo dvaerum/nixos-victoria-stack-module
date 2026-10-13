@@ -560,6 +560,18 @@ let
 
         package = mkPackageOption' "The mcp-${name} package to use. Defaults to this flake's own packages.mcp-${name}.";
 
+        suppressExposureWarning = mkOption {
+          type = types.bool;
+          default = false;
+          description = ''
+            Silences the evaluation warning that the MCP server listens beyond
+            loopback with no authentication (see `listenAddress`). Set it once
+            you have confirmed that a firewall or a trusted network restricts
+            who can reach the port; same idea as `suppressDynamicUserWarning`
+            (docs/decisions/0009-dynamicuser-warning-not-assertion.md).
+          '';
+        };
+
         listenAddress = mkOption {
           type = types.str;
           default = "127.0.0.1:${toString defaultMcpPort}";
@@ -570,6 +582,11 @@ let
             disabled and that's what you want. Requires this service's own
             `enable = true` -- there is nothing for the MCP server to proxy
             to otherwise (see docs/decisions/0002-opt-in-everything.md).
+
+            The MCP server has no authentication, so an address beyond
+            loopback bypasses vmauth's tiers and warns (silence it with
+            `suppressExposureWarning`). The port must be 1024 or above: the
+            unit has no capability to bind a privileged port.
 
             The MCP tools sit behind vmauth's read tier but OUTSIDE its
             endpoint allow-list: the server calls the backend directly on

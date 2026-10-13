@@ -12,6 +12,12 @@ straight to its co-located backend over loopback; any authentication
 happens in vmauth's `/mcp/*` routing in front of it, or not at all when
 `vmauth.enable = false` and the MCP `listenAddress` is left on loopback.
 
+A non-loopback `mcp.listenAddress` therefore bypasses vmauth's tiers, so it
+warns at evaluation (`mcp.suppressExposureWarning` silences it, as for the
+syslog listeners, [0031](./0031-victorialogs-syslog-listeners.md)). A port
+below 1024 is an assertion: the MCP unit has no `CAP_NET_BIND_SERVICE` and
+would crash-loop.
+
 ## Why
 
 Same reasoning as [0010](./0010-grafana-direct-loopback-own-auth.md): a

@@ -295,6 +295,43 @@ let
     ) (syslogLib.exposed cfg.logs.syslog)
   );
 
+  mcpServices = [
+    "metrics"
+    "logs"
+    "traces"
+  ];
+
+  # The MCP servers have no authentication and call their backend directly, so
+  # a listener beyond loopback bypasses vmauth's credential tiers.
+  mcpWarnings = lib.concatMap (
+    svc:
+    let
+      sp = listen.split cfg.${svc}.mcp.listenAddress;
+      option = "services.victoriaStack.${svc}.mcp";
+    in
+    lib.optional
+      (mcp svc && sp != null && !listen.isLoopbackHost sp.host && !cfg.${svc}.mcp.suppressExposureWarning)
+      ''
+        ${option}.listenAddress is "${cfg.${svc}.mcp.listenAddress}", which is not
+        loopback. The MCP server has no authentication and talks to the backend
+        directly, so anyone who can reach that port bypasses vmauth's credential
+        tiers (docs/decisions/0023). Keep it on loopback and use vmauth's
+        /mcp/${svc} route, or set ${option}.suppressExposureWarning = true
+        once the exposure is deliberate.
+      ''
+  ) mcpServices;
+
+  # The MCP unit has no CAP_NET_BIND_SERVICE (and PrivateUsers blocks it), so a
+  # privileged port would fail to bind and crash-loop. The length cap keeps
+  # toIntBase10 from overflowing on an absurd digit string.
+  mcpLowPortServices = lib.filter (
+    svc:
+    let
+      sp = listen.split cfg.${svc}.mcp.listenAddress;
+    in
+    mcp svc && sp != null && lib.stringLength sp.port <= 5 && lib.toIntBase10 sp.port < 1024
+  ) mcpServices;
+
   # Every address option ends up in a shell script, a systemd unit or nginx's
   # config, so it must hold only what a host:port (or a bare host) holds: that
   # is all the listen helper takes. `%` is for an IPv6 zone (`fe80::1%eth0`);
@@ -493,6 +530,7 @@ in
         ) services;
       in
       syslogWarnings
+      ++ mcpWarnings
       ++ syslogSharedArrayWarnings
       ++ map (svc: ''
         services.victoriaStack.${svc.name}.extraFlags contains -pushmetrics.*
@@ -504,6 +542,18 @@ in
       '') conflicts;
 
     assertions = moduleAssertions ++ [
+      {
+        assertion = mcpLowPortServices == [ ];
+        message = ''
+          services.victoriaStack: ${
+            lib.concatMapStringsSep ", " (
+              svc: "${svc}.mcp.listenAddress (${cfg.${svc}.mcp.listenAddress})"
+            ) mcpLowPortServices
+          } uses a port below 1024.
+          The MCP unit has no CAP_NET_BIND_SERVICE, so it would fail to bind and
+          crash-loop. Use a port of 1024 or above.
+        '';
+      }
       {
         assertion = !anyListenersCollide;
         message = ''

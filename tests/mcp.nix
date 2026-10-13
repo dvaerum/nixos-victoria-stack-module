@@ -7,6 +7,18 @@ let
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
   inherit (testLib) evalWith probeAndStartSeconds;
 
+  mkTableCheck =
+    name: checks:
+    pkgs.runCommand name { } (
+      let
+        failed = lib.filterAttrs (_: ok: !ok) checks;
+      in
+      if failed == { } then
+        "echo OK > $out"
+      else
+        throw "${name} wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
+    );
+
   # Same shape as storage.nix's mkHardeningCheck, minus LimitNOFILE --
   # no nixpkgs module to confirm a LimitNOFILE value against here. The
   # readiness probe itself (mcp.nix) has its own dedicated eval
@@ -834,4 +846,81 @@ in
       assert took < 20, f"mcp-victoriametrics.service: took {took:.1f}s; its probe deadline is 90s"
     '';
   };
+
+  # An MCP listener beyond loopback bypasses vmauth (no authentication, direct
+  # backend access): one warning per service. A port below 1024 would crash-loop
+  # the unit (no CAP_NET_BIND_SERVICE), so it is an assertion.
+  mcp-exposure-warning-and-low-port-assertion =
+    let
+      eval =
+        svc: mcp:
+        (evalWith {
+          services.victoriaStack.${svc} = {
+            enable = true;
+            mcp = {
+              enable = true;
+            }
+            // mcp;
+          };
+        }).config;
+      ours = lib.filter (lib.hasInfix "services.victoriaStack");
+      warningsOf = svc: mcp: ours (eval svc mcp).warnings;
+      warns = svc: addr: lib.length (warningsOf svc { listenAddress = addr; }) == 1;
+      quiet = svc: addr: warningsOf svc { listenAddress = addr; } == [ ];
+      lowPort =
+        svc: addr:
+        lib.any (a: !a.assertion && lib.hasInfix "${svc}.mcp.listenAddress" a.message)
+          (eval svc { listenAddress = addr; }).assertions;
+      perSvc =
+        f:
+        lib.all f [
+          "metrics"
+          "logs"
+          "traces"
+        ];
+      disabledLogs =
+        (evalWith {
+          services.victoriaStack.logs = {
+            enable = true;
+            mcp.listenAddress = "0.0.0.0:80";
+          };
+        }).config;
+    in
+    mkTableCheck "mcp-exposure-warning-and-low-port-assertion" {
+      "0.0.0.0:PORT warns" = perSvc (s: warns s "0.0.0.0:4300");
+      ":PORT warns" = perSvc (s: warns s ":4300");
+      "[::]:PORT warns" = perSvc (s: warns s "[::]:4300");
+      "LAN-style address warns" = perSvc (s: warns s "192.0.2.10:4300");
+      "a hostname warns" = perSvc (s: warns s "mcp.example.test:4300");
+      "127.0.0.1 is quiet" = perSvc (s: quiet s "127.0.0.1:4300");
+      "127.0.0.2 is quiet" = perSvc (s: quiet s "127.0.0.2:4300");
+      "localhost is quiet" = perSvc (s: quiet s "localhost:4300");
+      "[::1] is quiet" = perSvc (s: quiet s "[::1]:4300");
+      "the default is quiet" = perSvc (s: warningsOf s { } == [ ]);
+      "suppress silences it" = perSvc (
+        s:
+        warningsOf s {
+          listenAddress = "0.0.0.0:4300";
+          suppressExposureWarning = true;
+        } == [ ]
+      );
+      "the warning names option, value, vmauth route and the suppress option" =
+        let
+          w = lib.concatStrings (warningsOf "logs" { listenAddress = "0.0.0.0:4300"; });
+        in
+        lib.all (n: lib.hasInfix n w) [
+          "logs.mcp.listenAddress"
+          "0.0.0.0:4300"
+          "/mcp/logs"
+          "logs.mcp.suppressExposureWarning"
+        ];
+      "disabled MCP gives no warning" = ours disabledLogs.warnings == [ ];
+      "port 1 is rejected" = perSvc (s: lowPort s "127.0.0.1:1");
+      "port 80 on the wildcard is rejected" = perSvc (s: lowPort s "0.0.0.0:80");
+      "port 1023 is rejected" = perSvc (s: lowPort s "127.0.0.1:1023");
+      "port 1024 is accepted" = perSvc (s: !lowPort s "127.0.0.1:1024");
+      "the default port is accepted" = perSvc (s: !lowPort s "127.0.0.1:4205");
+      "a disabled MCP service is not asserted" =
+        !lib.any (a: !a.assertion && lib.hasInfix "mcp.listenAddress" a.message) disabledLogs.assertions;
+    };
 }
