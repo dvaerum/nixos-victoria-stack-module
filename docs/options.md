@@ -1169,6 +1169,50 @@ true
 
 
 
+## services\.victoriaStack\.logs\.mcp\.enabledTools
+
+
+
+Tools to switch back on that this module disables by default\.
+The MCP server calls its backend directly, so its tools are
+NOT limited to vmauth’s read-tier endpoint allow-list
+(docs/decisions/0021): a read token reaches anything a tool
+can call\. The module therefore disables the tools whose
+endpoint is off that list or that show other users’ query
+text: ` flags ` for logs; ` active_queries `, ` top_queries ` and
+` tsdb_status ` for metrics; none for traces\. Naming one here
+re-enables it, e\.g\. ` [ "flags" ] ` for logs\. Only these
+module defaults can be lifted; the binary’s own defaults
+(see ` disabledTools `) stay off\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "tsdb_status"
+]
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
 ## services\.victoriaStack\.logs\.mcp\.package
 
 
@@ -1192,8 +1236,9 @@ package
 ` MCP_DISABLED_TOOLS ` – confirmed identical across all three
 mcp-victoria\* binaries’ own READMEs (a comma-separated list
 on the wire; this option takes a real Nix list and joins it)\.
-` [ ] ` (the default) adds nothing beyond whatever the binary
-you’re configuring already disables on its own\. Each binary’s
+` [ ] ` (the default) adds nothing beyond what the binary
+disables on its own and what this module disables by default
+(see ` enabledTools `)\. Each binary’s
 own README documents its available tool names – e\.g\.
 ` documentation ` disables an embedded vector-database tool
 that’s otherwise the dominant source of that MCP server’s
@@ -1247,6 +1292,11 @@ routing); override to expose it directly if ` vmauth ` is
 disabled and that’s what you want\. Requires this service’s own
 ` enable = true ` – there is nothing for the MCP server to proxy
 to otherwise (see docs/decisions/0002-opt-in-everything\.md)\.
+
+The MCP tools sit behind vmauth’s read tier but OUTSIDE its
+endpoint allow-list: the server calls the backend directly on
+loopback\. Tools that would reach beyond that list are off by
+default (see ` enabledTools `)\.
 
 When reached through vmauth (e\.g\. ` /mcp/metrics `,
 ` /mcp/logs `, ` /mcp/traces `): request it with NO trailing
@@ -2574,6 +2624,50 @@ true
 
 
 
+## services\.victoriaStack\.metrics\.mcp\.enabledTools
+
+
+
+Tools to switch back on that this module disables by default\.
+The MCP server calls its backend directly, so its tools are
+NOT limited to vmauth’s read-tier endpoint allow-list
+(docs/decisions/0021): a read token reaches anything a tool
+can call\. The module therefore disables the tools whose
+endpoint is off that list or that show other users’ query
+text: ` flags ` for logs; ` active_queries `, ` top_queries ` and
+` tsdb_status ` for metrics; none for traces\. Naming one here
+re-enables it, e\.g\. ` [ "flags" ] ` for logs\. Only these
+module defaults can be lifted; the binary’s own defaults
+(see ` disabledTools `) stay off\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "tsdb_status"
+]
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
 ## services\.victoriaStack\.metrics\.mcp\.package
 
 
@@ -2597,8 +2691,9 @@ package
 ` MCP_DISABLED_TOOLS ` – confirmed identical across all three
 mcp-victoria\* binaries’ own READMEs (a comma-separated list
 on the wire; this option takes a real Nix list and joins it)\.
-` [ ] ` (the default) adds nothing beyond whatever the binary
-you’re configuring already disables on its own\. Each binary’s
+` [ ] ` (the default) adds nothing beyond what the binary
+disables on its own and what this module disables by default
+(see ` enabledTools `)\. Each binary’s
 own README documents its available tool names – e\.g\.
 ` documentation ` disables an embedded vector-database tool
 that’s otherwise the dominant source of that MCP server’s
@@ -2652,6 +2747,11 @@ routing); override to expose it directly if ` vmauth ` is
 disabled and that’s what you want\. Requires this service’s own
 ` enable = true ` – there is nothing for the MCP server to proxy
 to otherwise (see docs/decisions/0002-opt-in-everything\.md)\.
+
+The MCP tools sit behind vmauth’s read tier but OUTSIDE its
+endpoint allow-list: the server calls the backend directly on
+loopback\. Tools that would reach beyond that list are off by
+default (see ` enabledTools `)\.
 
 When reached through vmauth (e\.g\. ` /mcp/metrics `,
 ` /mcp/logs `, ` /mcp/traces `): request it with NO trailing
@@ -3262,8 +3362,6 @@ true
 
 ## services\.victoriaStack\.traces\.extraFlags
 
-
-
 Extra command-line flags passed straight through to victoria-traces,
 for anything not worth promoting to its own typed option\.
 
@@ -3333,6 +3431,8 @@ string
 
 ## services\.victoriaStack\.traces\.manageTmpfiles
 
+
+
 Whether this module re-asserts ` dataDir `’s ownership/mode (via
 ` systemd.tmpfiles.rules `) on every boot, when ` dynamicUser = false ` (the static-user branch)\. The default is self-healing:
 it catches drift or manual mistakes automatically, which is
@@ -3393,6 +3493,50 @@ true
 
 
 
+## services\.victoriaStack\.traces\.mcp\.enabledTools
+
+
+
+Tools to switch back on that this module disables by default\.
+The MCP server calls its backend directly, so its tools are
+NOT limited to vmauth’s read-tier endpoint allow-list
+(docs/decisions/0021): a read token reaches anything a tool
+can call\. The module therefore disables the tools whose
+endpoint is off that list or that show other users’ query
+text: ` flags ` for logs; ` active_queries `, ` top_queries ` and
+` tsdb_status ` for metrics; none for traces\. Naming one here
+re-enables it, e\.g\. ` [ "flags" ] ` for logs\. Only these
+module defaults can be lifted; the binary’s own defaults
+(see ` disabledTools `) stay off\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "tsdb_status"
+]
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
 ## services\.victoriaStack\.traces\.mcp\.package
 
 
@@ -3416,8 +3560,9 @@ package
 ` MCP_DISABLED_TOOLS ` – confirmed identical across all three
 mcp-victoria\* binaries’ own READMEs (a comma-separated list
 on the wire; this option takes a real Nix list and joins it)\.
-` [ ] ` (the default) adds nothing beyond whatever the binary
-you’re configuring already disables on its own\. Each binary’s
+` [ ] ` (the default) adds nothing beyond what the binary
+disables on its own and what this module disables by default
+(see ` enabledTools `)\. Each binary’s
 own README documents its available tool names – e\.g\.
 ` documentation ` disables an embedded vector-database tool
 that’s otherwise the dominant source of that MCP server’s
@@ -3471,6 +3616,11 @@ routing); override to expose it directly if ` vmauth ` is
 disabled and that’s what you want\. Requires this service’s own
 ` enable = true ` – there is nothing for the MCP server to proxy
 to otherwise (see docs/decisions/0002-opt-in-everything\.md)\.
+
+The MCP tools sit behind vmauth’s read tier but OUTSIDE its
+endpoint allow-list: the server calls the backend directly on
+loopback\. Tools that would reach beyond that list are off by
+default (see ` enabledTools `)\.
 
 When reached through vmauth (e\.g\. ` /mcp/metrics `,
 ` /mcp/logs `, ` /mcp/traces `): request it with NO trailing
