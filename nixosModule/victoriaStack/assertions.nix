@@ -54,7 +54,12 @@ let
     in
     map (
       l:
-      at "services.victoriaStack.nginx (virtualHost \"victoria-stack\")" (listen.hostPort l.addr l.port)
+      at "services.victoriaStack.nginx (virtualHost \"victoria-stack\")" (
+        # nixpkgs leaves an explicit listen line's port null and nginx then
+        # binds 80, ssl or not -- not defaultHTTPListenPort, which only feeds
+        # the derived lines above.
+        listen.hostPort l.addr (if l.port == null then 80 else l.port)
+      )
     ) (lib.filter (l: !(lib.hasPrefix "unix:" l.addr)) lines);
 
   # Every listener this module would bind, labelled so a collision can name

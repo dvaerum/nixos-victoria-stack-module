@@ -360,6 +360,85 @@ in
             nginx.enable = true;
             metrics.listenAddress = "127.0.0.1:8081";
           };
+      # An explicit listen line without a port is NOT filled in by nixpkgs;
+      # nginx itself binds 80, for ssl lines too (vhost-options.nix: "nginx
+      # defaults to 80").
+      "explicit listen line without a port binds 80 and collides" =
+        firesWith { services.nginx.virtualHosts."victoria-stack".listen = [ { addr = "0.0.0.0"; } ]; }
+          {
+            nginx.enable = true;
+            vmauth.http = {
+              enable = true;
+              port = 80;
+              ipAddress = "0.0.0.0";
+            };
+          };
+      "portless listen collision names both sides" =
+        lib.all
+          (
+            n:
+            lib.any (lib.hasInfix n) (
+              messages { services.nginx.virtualHosts."victoria-stack".listen = [ { addr = "0.0.0.0"; } ]; } {
+                nginx.enable = true;
+                vmauth.http = {
+                  enable = true;
+                  port = 80;
+                  ipAddress = "0.0.0.0";
+                };
+              }
+            )
+          )
+          [
+            "services.victoriaStack.nginx"
+            "services.victoriaStack.vmauth.http"
+          ];
+      "portless ssl listen line still binds 80, not 443" =
+        firesWith
+          {
+            services.nginx.virtualHosts."victoria-stack".listen = [
+              {
+                addr = "0.0.0.0";
+                ssl = true;
+              }
+            ];
+          }
+          {
+            nginx.enable = true;
+            vmauth.http = {
+              enable = true;
+              port = 80;
+              ipAddress = "0.0.0.0";
+            };
+          }
+        && !(firesWith
+          {
+            services.nginx.virtualHosts."victoria-stack".listen = [
+              {
+                addr = "0.0.0.0";
+                ssl = true;
+              }
+            ];
+          }
+          {
+            nginx.enable = true;
+            vmauth.https = {
+              enable = true;
+              port = 443;
+              ipAddress = "0.0.0.0";
+              certFile = "/run/secrets/c.pem";
+              keyFile = "/run/secrets/k.pem";
+            };
+          }
+        );
+      "portless listen line does not collide on another port" =
+        !(firesWith { services.nginx.virtualHosts."victoria-stack".listen = [ { addr = "0.0.0.0"; } ]; } {
+          nginx.enable = true;
+          vmauth.http = {
+            enable = true;
+            port = 8080;
+            ipAddress = "0.0.0.0";
+          };
+        });
       "nginx's 443 only when the vhost serves TLS" =
         !(fires {
           nginx.enable = true;
