@@ -82,6 +82,7 @@ in
       # resolve $connection_upgrade at all -- Grafana's own official doc's
       # exact block, nixpkgs' nginx module has no first-class option for
       # a bare map{} directive outside a server/location block.
+      # A second map of $connection_upgrade is accepted by nginx; the later one wins silently.
       appendHttpConfig = lib.mkIf topCfg.grafana.enable ''
         map $http_upgrade $connection_upgrade {
           default upgrade;

@@ -38,7 +38,8 @@ both without polling (details in the unit definitions):
 
 - `PathExists=` starts the consumers once, through a `RemainAfterExit` helper so
   the path unit does not trigger again while the file exists; a deliberate
-  `systemctl stop` is not undone by a later change to the file.
+  `systemctl stop` is not undone by a later change to the file, nor by a
+  `switch` that changes the helper's unit file (`restartIfChanged = false`).
 - `PathChanged=` runs `try-restart --no-block` (a stopped unit stays stopped; the
   path unit only re-arms once its helper ends, so waiting would lose a file
   replaced meanwhile). A live swap is not possible with `LoadCredential=`; the
