@@ -34,6 +34,7 @@ let
   readiness = import ./readiness.nix { inherit lib pkgs; };
 
   listen = import ./listen.nix { inherit lib; };
+  restartBackoff = import ../restart-backoff.nix;
   syslog = import ./syslog.nix { inherit lib; };
   # The unit keeps its empty capability set unless a syslog port is below 1024
   # (the same rule as vmauth, docs/decisions/0015).
@@ -196,6 +197,7 @@ in
               );
               Restart = "on-failure";
               RestartSec = 5;
+              inherit (restartBackoff) RestartSteps RestartMaxDelaySec;
               # A minute above the probe (startup-timeout.nix): with both at 90s
               # (systemd's own default) they expired together and
               # Restart=on-failure looped a slow start.

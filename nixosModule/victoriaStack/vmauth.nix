@@ -16,6 +16,7 @@ let
   # credential-directory flags must stay raw.
   inherit (import ./exec-escape.nix { inherit lib; }) escape;
   listen = import ./listen.nix { inherit lib; };
+  restartBackoff = import ../restart-backoff.nix;
   readiness = import ./readiness.nix { inherit lib pkgs; };
 
   # One value for the readiness probe and, a minute above it, TimeoutStartSec.
@@ -643,6 +644,7 @@ in
         DynamicUser = true;
         Restart = "on-failure";
         RestartSec = 5;
+        inherit (restartBackoff) RestartSteps RestartMaxDelaySec;
         TimeoutStartSec = startTimeout;
 
         # Same hardening profile as the storage services (docs/decisions/0015),

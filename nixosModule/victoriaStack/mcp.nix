@@ -8,6 +8,7 @@
 let
   topCfg = config.services.victoriaStack;
   listen = import ./listen.nix { inherit lib; };
+  restartBackoff = import ../restart-backoff.nix;
   readiness = import ./readiness.nix { inherit lib pkgs; };
   inherit (import ./exec-escape.nix { inherit lib; }) escapeEnvironment;
 
@@ -87,6 +88,7 @@ let
             DynamicUser = true;
             Restart = "on-failure";
             RestartSec = 5;
+            inherit (restartBackoff) RestartSteps RestartMaxDelaySec;
             TimeoutStartSec = startTimeout;
 
             # Hardening -- same general-purpose systemd profile applied

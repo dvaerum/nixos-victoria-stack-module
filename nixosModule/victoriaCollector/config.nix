@@ -8,6 +8,7 @@
 let
   cfg = config.services.victoriaCollector;
   common = import ./common.nix { inherit lib; };
+  restartBackoff = import ../restart-backoff.nix;
   needsAlloyOtlp = common.needsAlloyOtlp cfg;
   configAlloyText = import ./config.alloy.nix { inherit lib cfg; };
 
@@ -156,6 +157,8 @@ in
       # directory writable under ProtectSystem=strict.
       systemd.services.alloy.serviceConfig = lib.mkMerge [
         {
+          # On top of nixpkgs' own RestartSec=2, which stays the first delay.
+          inherit (restartBackoff) RestartSteps RestartMaxDelaySec;
           # The CA bundle and the write token reach Alloy's user as systemd
           # credentials (config.alloy.nix reads both from the credentials
           # directory), so the files' owner and mode don't matter -- same rule as

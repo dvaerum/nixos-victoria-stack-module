@@ -15,6 +15,7 @@ let
     syslog = import ./syslog.nix { inherit pkgs nixosModule; };
     collector = import ./collector.nix { inherit pkgs nixosModule; };
     testlib = import ./testlib.nix { inherit pkgs nixosModule; };
+    restart-backoff = import ./restart-backoff.nix { inherit pkgs nixosModule; };
     full = import ./full.nix { inherit pkgs nixosModule; };
   };
 in

@@ -80,3 +80,27 @@ already cleared costs nothing beyond more `serviceConfig` lines; there was
 no real security trade-off to relitigate, since nixpkgs' own maintainers
 already validated this exact profile against these exact binaries.
 </content>
+
+## Restart backoff
+
+The storage services (which also run the syslog listeners), vmauth, the three
+MCP units and the collector's Alloy restart with an exponential backoff
+(`RestartSteps=3`, `RestartMaxDelaySec=30`, defined once in
+`nixosModule/restart-backoff.nix`), so a unit that cannot start stops filling the
+journal with a retry every few seconds. The first retry keeps the unit's own
+`RestartSec` (5 s; Alloy keeps nixpkgs' 2 s): measured on a real boot the retries
+wait 5, 9, 16.5, 30, 30 ... s, and Alloy 2, 5, 12, 30, 30 ... s. `Restart=always`
+and `on-failure` behave the same, and the start limit is never tripped because
+retries only get slower.
+
+Limitation: systemd 261 never resets the growth after a healthy run. The restart
+counter is zeroed only by a manual start or restart, `reset-failed`, or
+`RESTART_RESET=1` sent by the service itself, so after a few crashes in a unit's
+lifetime every later crash waits the 30 s cap. That is accepted because it is
+bounded and the collector's disk queue absorbs it; a helper that runs
+`reset-failed` after a healthy period would remove it. A low cap was chosen for
+this reason, instead of a couple of minutes.
+
+Left out: `systemd-journal-upload` (nixpkgs' own escalating restart policy, see
+`nixosModule/victoriaCollector/config.nix`), Grafana and nginx (nixpkgs-owned),
+and the oneshot and path helper units (they never restart).
