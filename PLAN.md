@@ -823,7 +823,45 @@ Later review batches and restart backoff:
   `RestartSteps=3` / `RestartMaxDelaySec=30` (shared `restart-backoff.nix`,
   ADR 0015). Limitation, accepted: systemd never resets the growth after a
   healthy run, so the cap is kept low.
-- Open, unconfirmed: whether a second `map $http_upgrade` in the nginx
-  config clashes (`nginx -t` accepts duplicates; override behaviour untested),
-  and whether a changed unit file at `switch` re-runs the late-token start
-  helper.
+- Two open questions were settled afterwards: a second `map $http_upgrade` in
+  the nginx config is accepted and the later one wins silently (harmless);
+  a changed unit file at `switch` did re-run the late-token start helper and
+  started a unit the operator had stopped, fixed with `restartIfChanged =
+  false` (see the critical review below).
+
+Critical review of both modules (second round):
+- Five read-only reviews found 25 problems, each proven with a probe. Fixed,
+  one agent per fix, red-first, mutation-checked, full gate each:
+  - IPv6 listen addresses now pass `-enableTCP6` through one helper
+    (`listen.tcp6Flags`); before, the service exited at start although the
+    option text promised IPv6.
+  - The log uploader recovers after an unusable token file at first start
+    (the restart helper also starts it when its token step is `failed`; a unit
+    stopped on purpose stays stopped).
+  - MCP servers sit behind the read tier but outside its endpoint allow-list:
+    the tools that leak (`flags`; `active_queries`, `top_queries`,
+    `tsdb_status`) are off by default, `mcp.enabledTools` lifts a default.
+  - Snapshot units no longer restart a deliberately stopped storage service
+    (`ExecCondition` instead of `Requires=`).
+  - `/metrics/api/v1/metadata` is on the read allow-list (Grafana's Metrics
+    browser needed it).
+  - The `dynamicUser` true/false switch is documented as a manual data
+    migration (`docs/runbooks/dynamicuser-migration.md`), proven in a boot
+    test.
+  - Build-time validation: syslog TLS paths escape `%`; `dataDir` charset;
+    portless nginx `listen` lines count as port 80; Grafana `http_addr`;
+    `writeTokenFile` must be absolute without `%`, `:` or whitespace;
+    retention and `startupTimeout` digit caps and a warning above 1200 months;
+    snapshot auth-key flags in `extraFlags`; `queue.directory` equal to the
+    state directory; MCP exposure warning and a port-below-1024 assertion;
+    per-entry vmauth token-file errors; clearer syslog assertion messages.
+- Decided not to do: a separate MCP token tier (possible later); a warning or
+  automatic move for the `dynamicUser` switch (documented only).
+- Open, not started: the same `%`/`:` escaping bug on vmauth and Grafana
+  credential paths and on the collector's other path options; the MCP servers
+  build backend URLs from unescaped tool arguments (`trace_id`,
+  `service_name`, `label_name`), so `..` reaches other backend paths and the
+  `tenant` argument sets the tenant headers: the proposed fix is an allow-list
+  on the hop between each MCP server and its backend; tenant support (logs and
+  traces have native tenants, metrics would need a label scheme or the cluster
+  version) is only researched.
