@@ -3317,6 +3317,119 @@ string matching the pattern \[0-9]+\[kKmMgG]?
 
 
 
+## services\.victoriaStack\.tenants
+
+
+
+The tenants VictoriaLogs and VictoriaTraces keep data apart for\. A tenant is an
+AccountID/ProjectID pair the data is stored under; the attribute name is the
+name that vmauth token files will use to refer to it\. A name is 1 to 63
+characters of lower-case letters, digits and hyphens, not starting or ending
+with a hyphen, and ` all ` is reserved (it will mean every tenant in a read
+token)\.
+
+The default tenant 0:0, where tokens without a tenant keep working as before,
+is implicit and cannot be declared here\.
+
+Nothing uses this table yet: it takes effect only once token files reference
+a tenant by name\. Tenants for metrics are not supported yet (planned)\.
+
+
+
+*Type:*
+attribute set of (submodule)
+
+
+
+*Default:*
+
+```nix
+{ }
+```
+
+
+
+*Example:*
+
+```nix
+{
+  team-a = {
+    accountId = 7;
+  };
+  team-b = {
+    accountId = 7;
+    projectId = 1;
+  };
+}
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.tenants\.\<name>\.accountId
+
+
+
+The AccountID VictoriaLogs and VictoriaTraces store this tenant’s data
+under (a 32-bit unsigned number)\. Together with ` projectId ` it must be
+unique among the declared tenants\. It is the permanent key of the data:
+changing it later leaves the data stored under the old number, where
+nothing reads it any more\.
+
+
+
+*Type:*
+integer between 0 and 4294967295 (both inclusive)
+
+
+
+*Example:*
+
+```nix
+7
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.tenants\.\<name>\.projectId
+
+
+
+The ProjectID half of the tenant’s data key (a 32-bit unsigned number)\.
+Like ` accountId `, changing it later orphans the data stored under the
+old number\.
+
+
+
+*Type:*
+integer between 0 and 4294967295 (both inclusive)
+
+
+
+*Default:*
+
+```nix
+0
+```
+
+
+
+*Example:*
+
+```nix
+1
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
 ## services\.victoriaStack\.traces\.enable
 
 
@@ -3366,8 +3479,6 @@ package
 
 
 ## services\.victoriaStack\.traces\.dataDir
-
-
 
 Directory the victoria-traces binary stores its data in
 (` -storageDataPath `)\. Changing this away from the default
@@ -3439,6 +3550,8 @@ true
 
 
 ## services\.victoriaStack\.traces\.extraFlags
+
+
 
 Extra command-line flags passed straight through to victoria-traces,
 for anything not worth promoting to its own typed option\.
