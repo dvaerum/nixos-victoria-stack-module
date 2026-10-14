@@ -5605,8 +5605,9 @@ outside the list is vmauth’s 400 ` missing route `, never a default\.
 ` tenants: all ` is the same over every declared tenant\. Two listed
 tenants with the same ` accountId ` are ambiguous: a warning names
 both and the first stays\. An entry may not carry both ` tenant ` and
-` tenants ` (vmauth does not start)\. A tenant entry gets no ` /mcp/* `
-route\. A tenant name that is not declared
+` tenants ` (vmauth does not start)\. A tenant entry gets the
+` /mcp/* ` routes within its ` backends `, unstamped: the MCP servers call
+the stamped read tier with the caller’s own token\. A tenant name that is not declared
 gets a warning and no access; ` tenants: all ` with no tenant
 declared too\. Without a tenant key, a token reads the default
 tenant (0:0) once at least one tenant is declared, whatever header
