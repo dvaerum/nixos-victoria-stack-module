@@ -72,9 +72,8 @@
         logs.enable = true;
         traces.enable = traces;
 
-        # Tenant write tokens have no metrics route yet: vmauth refuses the
-        # push with `400 missing route`, so a tenant host ships logs and
-        # traces only.
+        # A tenant write token carries metrics into the tenant too; this
+        # example ships logs and traces only.
         metrics.enable = false;
 
         writeEndpoint = "https://victoria-gateway.example.internal:8443";

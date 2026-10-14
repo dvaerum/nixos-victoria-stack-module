@@ -30,9 +30,8 @@ place, and an unknown name is a visible warning instead of a silent new tenant.
   a tenant is the reader's decision, and a writer stays in exactly one.
 - The anonymous write door (`requireAuthForWrites = false`) is stamped 0:0 on logs
   and traces when tenants are declared.
-- A tenant token gets no `/mcp/*` routes and no metrics routes (a warning says so
-  for metrics), and none of the routes added through `extraReadUrlMap` or
-  `extraWriteUrlMap`: those are not tenant-bound.
+- A tenant token gets no `/mcp/*` routes and none of the routes added through
+  `extraReadUrlMap` or `extraWriteUrlMap`: those are not tenant-bound.
 - `tenant` together with `tenants`, or a value of the wrong type, stops the render
   naming the entry. Undeclared names, two tenants of one account in a list, and
   `tenants: all` with nothing declared warn and drop that access.
@@ -94,3 +93,19 @@ other tenants', and a tenant name longer than 37 characters is refused (Grafana
 caps a datasource uid at 40 characters). Tenant datasources are not removed
 when the options are, like a disabled backend's
 ([0029](./0029-grafana-datasources-through-vmauth-read-tier.md)).
+
+Update: vmauth now stamps metrics per tenant token, and the warning that metrics
+were dropped is gone. The tenant is in the backend path, so a `tenant: a` token's
+metrics routes keep the unchanged client paths and the same closed allow-list but
+point at vmselect `/select/<accountId>/prometheus/` and vminsert
+`/insert/<accountId>/`. A `tenants`/`all` read token gets one copy of the metrics
+routes per tenant, matched by `src_headers: AccountID: <id>` like logs and traces
+(a missing or unlisted `AccountID` is the same 400; a second header value can only
+select a listed tenant, since the id is in the path and the first matching copy
+wins). A client path naming another tenant (`/metrics/select/<id>/...`, `..`,
+`%2e%2e`) is not in the allow-list and stays vmauth's 400. Metrics have no project:
+`projectId` is ignored for them. The admin tier is unstamped (reads tenant 0
+metrics) and the anonymous write door stays 0. Only the module's own tenant-0
+metrics routes are retargeted: an operator route under the metrics prefixes with
+another `url_prefix` (`extraWriteUrlMap`) is not given to a tenant token. Tenant
+tokens still get no `/mcp/*` routes and no extra routes until the later tasks.

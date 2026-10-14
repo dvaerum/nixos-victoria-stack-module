@@ -7,13 +7,15 @@ include "tenant-routes";
 # Inputs: --slurpfile tokens, urlmap (the tier's url_map), prefixes (backend
 # name -> its path prefixes), tenants (name -> {accountId, projectId}),
 # tenantprefixes (per tier: logs/traces -> the data prefixes a tenant applies
-# to); environment: label (the option name) and tier ("read" | "write").
+# to; metrics.<tier> -> the metrics prefixes, bound by path); environment: label (the option name) and tier ("read" | "write").
 #
-# Tenants: `tenant: x` stamps x on every logs and traces route of the entry;
-# `tenants: [..]`/`all` (read tier) emits those routes once per tenant, picked
-# by the client's AccountID. Metrics and MCP routes are never given to a
-# tenant token (no native metrics tenants yet; the MCP servers cannot bound
-# tenants). Without a tenant key and with tenants declared, the logs and
+# Tenants: `tenant: x` stamps x on every logs and traces route of the entry
+# and retargets its metrics routes to x's path; `tenants: [..]`/`all` (read
+# tier) emits those routes once per tenant, picked by the client's AccountID.
+# MCP routes are never given to a
+# tenant token (the MCP servers cannot bound tenants). Metrics routes are
+# retargeted to the tenant's `/select/<id>/prometheus/` or `/insert/<id>/`.
+# Without a tenant key and with tenants declared, the logs and
 # traces routes are stamped 0:0, so a client header cannot reach another
 # tenant. With no tenant declared nothing differs from a render without tenants.
 $ENV.label as $label
@@ -22,7 +24,9 @@ $ENV.label as $label
 | $tenants[0] as $table
 | ($table | keys) as $declared
 | (($table | length) > 0) as $tenanted
-| ($tenantprefixes[0][$tier] | [.[][]]) as $tenant_pfx
+| ($tenantprefixes[0][$tier] | [.[][]]) as $header_pfx
+| $tenantprefixes[0].metrics[$tier] as $metrics_pfx
+| ($header_pfx + $metrics_pfx) as $tenant_pfx
 | ($tokens[0] | to_entries | map(
     (.key + 1) as $n
     | .value as $t
@@ -60,16 +64,14 @@ $ENV.label as $label
     | (if $mode == "none" or $misuse then []
        elif $mode == "single" then $known_names
        else $dd.kept end) as $tn
-    | (($prefixes[0].metrics) as $mp
-       | any($um[].src_paths[]?; under($mp))) as $has_metrics
     | (if $mode == "none" then
-         (if $tenanted then $um | on_paths_under($tenant_pfx; add_headers(["AccountID: 0", "ProjectID: 0"]))
+         (if $tenanted then $um | on_paths_under($header_pfx; add_headers(["AccountID: 0", "ProjectID: 0"]))
           else $um end)
        elif ($tn | length) == 0 then []
        else
          ($um | keep_paths((contains("|") | not) and under($tenant_pfx))) as $r
-         | if $mode == "single" then $r | stamp($table[$tn[0]].accountId; $table[$tn[0]].projectId)
-           else $r | per_tenant($table; $tn) end
+         | if $mode == "single" then $r | stamp($table[$tn[0]]; $metrics_pfx)
+           else $r | per_tenant($table; $tn; $metrics_pfx) end
        end) as $routes
     | (if $misuse then null
        elif $mode == "none" or ($tn | length) > 0 then null
@@ -95,9 +97,6 @@ $ENV.label as $label
             + (if $no_tenant != null
                then ["\($label) entry #\($n) \($no_tenant) -- the token gets no access and is left out of the configuration"]
                else [] end)
-            + (if ($tn | length) > 0 and $has_metrics
-               then ["\($label) entry #\($n) is tenant-bound; metrics tenants are not supported yet: metrics access omitted"]
-               else [] end)
             + (if $scoped and ($valid | length) == 0
                then ["\($label) entry #\($n) has no valid backend (an empty or all-unknown backends list) -- the token gets no access and is left out of the configuration"]
                elif ($um | length) == 0 and $scoped
@@ -105,7 +104,7 @@ $ENV.label as $label
                elif ($um | length) == 0
                then ["\($label) entry #\($n) has no routes to grant -- the token gets no access and is left out of the configuration"]
                elif ($tn | length) > 0 and ($routes | length) == 0
-               then ["\($label) entry #\($n) has no logs or traces route to grant -- the token gets no access and is left out of the configuration"]
+               then ["\($label) entry #\($n) has no logs, traces or metrics route to grant -- the token gets no access and is left out of the configuration"]
                else [] end)
           end)
       })) as $entries

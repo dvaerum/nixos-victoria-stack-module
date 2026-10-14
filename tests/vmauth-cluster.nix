@@ -107,6 +107,8 @@ let
     let
       sel = "http://127.0.0.1:4201/select/0/prometheus/";
       ins = "http://127.0.0.1:4209/insert/0/";
+      sel1 = "http://127.0.0.1:4201/select/1/prometheus/";
+      ins1 = "http://127.0.0.1:4209/insert/1/";
     in
     pkgs.testers.nixosTest {
       name = "victoria-stack-vmauth-cluster-renders-each-token-tier";
@@ -158,13 +160,13 @@ let
         assert metrics_routes(users["admin"]) == [READ], users["admin"]
         assert metrics_routes(users["cluster-read-token"]) == [READ], users["cluster-read-token"]
         assert metrics_routes(users["cluster-write-token"]) == [WRITE], users["cluster-write-token"]
-        # Tenant tokens get no metrics route (stage 3).
-        assert metrics_routes(users["cluster-read-tenant-a"]) == [], users["cluster-read-tenant-a"]
-        assert metrics_routes(users["cluster-write-tenant-a"]) == [], users["cluster-write-tenant-a"]
+        # A tenant token's metrics routes point at the tenant's own path (account 1).
+        assert metrics_routes(users["cluster-read-tenant-a"]) == [dict(READ, url_prefix="${sel1}")], users["cluster-read-tenant-a"]
+        assert metrics_routes(users["cluster-write-tenant-a"]) == [dict(WRITE, url_prefix="${ins1}")], users["cluster-write-tenant-a"]
         assert metrics_routes(config["unauthorized_user"]["url_map"]) == [WRITE]
 
         journal = machine.succeed("journalctl -u vmauth.service --no-pager")
-        assert journal.count("metrics tenants are not supported yet: metrics access omitted") == 2, journal  # read entry and write entry
+        assert "metrics tenants are not supported" not in journal, journal
         for secret in ["cluster-read-tenant-a", "cluster-write-tenant-a"]:
             assert secret not in journal, secret
 

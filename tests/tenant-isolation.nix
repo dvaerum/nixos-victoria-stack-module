@@ -37,6 +37,26 @@ let
     READ_TRACES = {"src_paths": ["/traces/select/.*"], "drop_src_path_prefix_parts": 1}
     WRITE_LOGS = {"src_paths": ["/insert/journald.*"]}
     WRITE_TRACES = {"src_paths": ["/insert/opentelemetry/v1/traces.*"]}
+    READ_METRICS = {
+        "src_paths": [
+            "/metrics/api/v1/query", "/metrics/api/v1/query_range", "/metrics/api/v1/series",
+            "/metrics/api/v1/labels", "/metrics/api/v1/label/.+/values", "/metrics/api/v1/metadata",
+            "/metrics/api/v1/export.*", "/metrics/federate",
+        ],
+        "drop_src_path_prefix_parts": 1,
+    }
+    WRITE_METRICS = {"src_paths": ["/opentelemetry.*"]}
+
+    def mroute(base, pick=None):
+        # A metrics route carries its tenant in the url_prefix, not in headers.
+        r = dict(base)
+        if pick is not None:
+            r["src_headers"] = [f"AccountID: {pick}"]
+        r["headers"] = ["Authorization:"]
+        return r
+
+    def backend_paths(routes):
+        return [r["url_prefix"].split("/", 3)[3] for r in routes if r["src_paths"][0].startswith(("/metrics", "/opentelemetry"))]
 
     def route(base, account, project, pick=False):
         r = dict(base)
@@ -156,27 +176,32 @@ in
       read_map = load_json_file(unit_env("READ_URL_MAP_FILE"))
       write_map = load_json_file(unit_env("WRITE_URL_MAP_FILE"))
 
-      # tenant: the entry's logs and traces routes carry the tenant, nothing else.
+      # tenant: the entry's logs and traces routes carry the tenant, its metrics routes the
+      # tenant's backend path, nothing else (no MCP route).
       assert bare(users["read-single-a"]["url_map"]) == [
-          route(READ_LOGS, 1, 0), route(READ_TRACES, 1, 0),
+          mroute(READ_METRICS), route(READ_LOGS, 1, 0), route(READ_TRACES, 1, 0),
       ], users["read-single-a"]
+      assert backend_paths(users["read-single-a"]["url_map"]) == ["select/1/prometheus/"]
       assert bare(users["read-single-c-logs-only"]["url_map"]) == [route(READ_LOGS, 3, 7)]
       assert bare(users["write-single-a"]["url_map"]) == [
-          route(WRITE_LOGS, 1, 0), route(WRITE_TRACES, 1, 0),
+          mroute(WRITE_METRICS), route(WRITE_LOGS, 1, 0), route(WRITE_TRACES, 1, 0),
       ], users["write-single-a"]
+      assert backend_paths(users["write-single-a"]["url_map"]) == ["insert/1/"]
 
       # tenants: [..]: per tenant, the client's AccountID selects, the project is forced.
       assert bare(users["read-list-a-c"]["url_map"]) == [
-          route(READ_LOGS, 1, 0, pick=True), route(READ_TRACES, 1, 0, pick=True),
-          route(READ_LOGS, 3, 7, pick=True), route(READ_TRACES, 3, 7, pick=True),
+          mroute(READ_METRICS, 1), route(READ_LOGS, 1, 0, pick=True), route(READ_TRACES, 1, 0, pick=True),
+          mroute(READ_METRICS, 3), route(READ_LOGS, 3, 7, pick=True), route(READ_TRACES, 3, 7, pick=True),
       ], users["read-list-a-c"]
+      assert backend_paths(users["read-list-a-c"]["url_map"]) == ["select/1/prometheus/", "select/3/prometheus/"]
 
       # tenants: all: every declared tenant.
       assert bare(users["read-all"]["url_map"]) == [
-          route(r, a, p, pick=True)
+          x
           for a, p in [(1, 0), (2, 0), (3, 7)]
-          for r in (READ_LOGS, READ_TRACES)
+          for x in (mroute(READ_METRICS, a), route(READ_LOGS, a, p, pick=True), route(READ_TRACES, a, p, pick=True))
       ], users["read-all"]
+      assert backend_paths(users["read-all"]["url_map"]) == [f"select/{a}/prometheus/" for a in (1, 2, 3)]
 
       # No key: tenant 0:0 on logs and traces; every other route exactly as before.
       stamped_read = [
@@ -197,29 +222,18 @@ in
       assert any(r["src_paths"][0].startswith("/metrics") and "AccountID: 0" not in r["headers"]
                  for r in users["read-plain"]["url_map"])
 
-      # Tenant tokens never get metrics or MCP routes.
+      # Tenant tokens never get MCP routes.
       for token in ("read-single-a", "read-list-a-c", "read-all", "read-single-c-logs-only", "write-single-a"):
           for r in users[token]["url_map"]:
-              p = r["src_paths"][0]
-              assert not p.startswith(("/metrics", "/mcp", "/opentelemetry")), (token, p)
+              assert not r["src_paths"][0].startswith("/mcp"), (token, r)
 
       # The admin tier is never stamped: the full read map, untouched.
       admin = next(u for u in render()["users"] if u.get("username") == "admin")
       assert admin["url_map"] == read_map, admin
 
-      # One warning per tenant entry that loses metrics access (entries 1-3 of the read file, 1 of the write file).
-      for fragment in [
-          "readTokensFile entry #1 is tenant-bound; metrics tenants are not supported yet: metrics access omitted",
-          "readTokensFile entry #2 is tenant-bound; metrics tenants are not supported yet: metrics access omitted",
-          "readTokensFile entry #3 is tenant-bound; metrics tenants are not supported yet: metrics access omitted",
-          "writeTokensFile entry #1 is tenant-bound; metrics tenants are not supported yet: metrics access omitted",
-      ]:
-          assert journal_has(fragment), fragment
-      # #5 is scoped to logs: nothing to omit. The tenant-less entries are not tenant-bound.
-      assert not journal_has("readTokensFile entry #5 is tenant-bound"), "entry #5 has no metrics"
-      assert not journal_has("readTokensFile entry #4"), "entry #4 is tenant-less"
+      # Tenant entries lose nothing, so nothing is warned about.
+      assert not journal_has("metrics tenants are not supported"), "the metrics warning is gone"
       journal = machine.succeed("journalctl -u vmauth.service --no-pager")
-      assert journal.count("readTokensFile entry #1 is tenant-bound") == 1, journal
       for secret in ["read-single-a", "read-list-a-c", "read-all", "read-plain", "write-single-a",
                      "write-plain", "admin-password-value"]:
           assert secret not in journal, secret
@@ -285,8 +299,6 @@ in
           "readTokensFile entry #5 has an empty `tenants` list -- the token gets no access",
           'readTokensFile entry #6: tenants "a2" and "a" share accountId 1; "a2" is ignored',
           'readTokensFile entry #7 names undeclared tenant(s): all',
-          "readTokensFile entry #8 is tenant-bound; metrics tenants are not supported yet: metrics access omitted",
-          "readTokensFile entry #8 has no logs or traces route to grant -- the token gets no access",
           "writeTokensFile entry #1 has a `tenants` key, which only a read token may carry",
           "writeTokensFile entry #2 has a `tenants` key, which only a read token may carry",
           "writeTokensFile entry #3 names undeclared tenant(s): nosuch",
@@ -296,20 +308,24 @@ in
 
       # No access: left out of the configuration (callers get an unknown token's 401).
       for token in ["read-undeclared", "read-list-all-undeclared", "read-empty-list", "read-reserved-word",
-                    "read-metrics-only", "write-list", "write-all", "write-undeclared"]:
+                    "write-list", "write-all", "write-undeclared"]:
           assert token not in users, token
 
       # A name that is not declared is ignored; the others stay.
       assert [r["src_headers"] for r in bare(users["read-list-one-undeclared"]["url_map"])] == [
-          ["AccountID: 1"], ["AccountID: 1"]
+          ["AccountID: 1"], ["AccountID: 1"], ["AccountID: 1"]
       ], users["read-list-one-undeclared"]
-      # Two tenants of one account: the first stays.
+      # Two tenants of one account: the first stays (metrics, logs, traces).
       assert [r["headers"][-2:] for r in bare(users["read-list-same-account"]["url_map"])] == [
-          ["AccountID: 1", "ProjectID: 0"], ["AccountID: 1", "ProjectID: 0"]
+          ["Authorization:"], ["AccountID: 1", "ProjectID: 0"], ["AccountID: 1", "ProjectID: 0"]
       ], users["read-list-same-account"]
+      assert backend_paths(users["read-list-same-account"]["url_map"]) == ["select/1/prometheus/"]
       assert sorted({r["src_headers"][0] for r in users["read-all-same-account"]["url_map"]}) == [
           "AccountID: 1", "AccountID: 2", "AccountID: 3"
       ]
+      # A tenant entry scoped to metrics keeps exactly the metrics route, in the tenant's path.
+      assert bare(users["read-metrics-only"]["url_map"]) == [mroute(READ_METRICS)], users["read-metrics-only"]
+      assert backend_paths(users["read-metrics-only"]["url_map"]) == ["select/1/prometheus/"]
       # A tenant entry scoped to traces keeps exactly that.
       assert bare(users["read-good"]["url_map"]) == [route(READ_TRACES, 2, 0)]
       assert bare(users["write-good"]["url_map"]) == [route(WRITE_LOGS, 1, 0)]

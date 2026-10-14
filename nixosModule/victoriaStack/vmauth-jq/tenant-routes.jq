@@ -30,20 +30,36 @@ def on_paths_under($pfx; f):
       end)
   | add // [];
 
-# The routes of ONE tenant the client cannot change: vmauth overrides a
-# client-sent header with these.
-def stamp($account; $project):
-  map(add_headers(["AccountID: \($account)", "ProjectID: \($project)"]));
+# A metrics route of tenant $id: the tenant lives in the backend path
+# (`/select/<id>/prometheus/`, `/insert/<id>/`), so only the module's own
+# tenant-0 prefix can be retargeted. Any other metrics route (an operator's
+# url_prefix) has no known place for the id and is dropped.
+def retarget($id):
+  select((.url_prefix // "") | test("/(select|insert)/0/(prometheus/)?$"))
+  | .url_prefix |= sub("/(?<k>select|insert)/0/(?<r>prometheus/)?$"; "/\(.k)/\($id)/\(.r // "")");
+
+# Binds one route to tenant $t: a metrics route (src_paths under $mpfx) by its
+# path; a logs or traces route by headers vmauth overrides a client-sent header
+# with. The metrics path carries the id, so nothing the client sends can move it;
+# projectId is not used by metrics.
+def bind($t; $mpfx):
+  if (.src_paths | all(under($mpfx))) then retarget($t.accountId)
+  else add_headers(["AccountID: \($t.accountId)", "ProjectID: \($t.projectId)"]) end;
+
+# The routes of ONE tenant the client cannot change. A route mixing metrics and
+# other paths is split first.
+def stamp($t; $mpfx):
+  on_paths_under($mpfx; .) | map(bind($t; $mpfx));
 
 # One copy of the routes per tenant. The client's AccountID selects the copy
 # (src_headers matches ANY value of the header, so the account is stamped too:
-# a second AccountID header would otherwise reach the backend), the project is
-# forced.
-def per_tenant($table; $names):
-  . as $routes
+# a second AccountID header would otherwise reach the backend; a metrics copy
+# has the id in its path, so the first matching copy decides and no other
+# tenant's path is reachable), the project is forced.
+def per_tenant($table; $names; $mpfx):
+  on_paths_under($mpfx; .) as $routes
   | [$names[] as $nm
      | $table[$nm] as $t
-     | $routes
-     | map(.src_headers = ((.src_headers // []) + ["AccountID: \($t.accountId)"]))
-     | stamp($t.accountId; $t.projectId)
-     | .[]];
+     | $routes[]
+     | .src_headers = ((.src_headers // []) + ["AccountID: \($t.accountId)"])
+     | bind($t; $mpfx)];

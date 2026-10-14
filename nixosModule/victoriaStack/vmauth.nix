@@ -271,8 +271,8 @@ let
     }
   );
 
-  # The data routes a tenant applies to: only logs and traces have native
-  # tenants. Not the MCP prefixes: a tenant token gets no MCP route.
+  # The data routes a tenant applies to: logs and traces by header, metrics by
+  # path (`metrics`). Not the MCP prefixes: a tenant token gets no MCP route.
   tenantRoutePrefixesFile = pkgs.writeText "vmauth-tenant-route-prefixes.json" (
     builtins.toJSON {
       read = {
@@ -282,6 +282,10 @@ let
       write = {
         logs = [ "/insert/journald" ];
         traces = [ "/insert/opentelemetry/v1/traces" ];
+      };
+      metrics = {
+        read = [ "/metrics" ];
+        write = [ "/opentelemetry" ];
       };
     }
   );

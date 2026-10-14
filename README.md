@@ -181,8 +181,8 @@ see [`docs/decisions/0031`](./docs/decisions/0031-victorialogs-syslog-listeners.
 
 ### Tenants
 
-A tenant keeps logs and traces of different teams or sites apart: its data is
-stored under an AccountID/ProjectID pair, and a token only reads or writes the
+A tenant keeps logs, traces and metrics of different teams or sites apart: its data is
+stored under an AccountID/ProjectID pair (metrics: AccountID only), and a token only reads or writes the
 tenant it names. Declare the tenants once; token files refer to them by name
 (the number is the permanent key of the stored data, so it lives in one place):
 
@@ -279,11 +279,16 @@ with a datasource for an organisation that is missing); the steps, checks and
 the reason are in the
 [runbook](./docs/runbooks/grafana-tenant-org.md).
 
-Limits: metrics have no tenants yet (planned), so a tenant token gets no metrics
-route and a tenant host does not ship metrics; tenant tokens get no `/mcp/*`
-routes; tokens without a tenant keep working and are stamped tenant 0:0 once any
-tenant is declared; the admin password is not bound to a tenant. The rules and
-the reasons:
+Metrics follow the same tokens: vmauth sends a `tenant` token's metrics reads and
+writes to that tenant's own path of the metrics cluster (`/select/<accountId>/...`,
+`/insert/<accountId>/...`), and a `tenants` token picks with the same `AccountID`
+header. Metrics have no project, so a tenant's `projectId` is ignored for them.
+The admin password reads the default tenant's metrics.
+
+Limits: tenant tokens get no `/mcp/*` routes and none of the routes added through
+`extraReadUrlMap`/`extraWriteUrlMap`; tokens without a tenant keep working and are
+stamped tenant 0:0 once any tenant is declared; the admin password is not bound to
+a tenant. The rules and the reasons:
 [`docs/decisions/0032`](./docs/decisions/0032-tenants-in-token-files.md).
 
 ### Fleet topology

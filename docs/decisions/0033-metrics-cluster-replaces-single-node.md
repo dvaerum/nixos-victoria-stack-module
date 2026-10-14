@@ -33,7 +33,7 @@ and vminsert's `/insert/0/...` ([0021](./0021-vmauth-read-tier-allow-list.md),
 - **Native tenants.** Single-node VictoriaMetrics has no tenant. The cluster
   version keeps data per `accountID:projectID` and takes it from the URL, so a
   tenant needs no label trick ([0032](./0032-tenants-in-token-files.md) lists
-  metrics tenants as not done).
+  metrics tenants as not done; its later Update records them done).
 - **Stage 3 builds on it.** vmauth can stamp `/insert/<accountId>/` and
   `/select/<accountId>/prometheus/` per token. This decision stays on tenant 0.
 - **Cheap on one host.** Measured idle resident memory: about 20 MB for

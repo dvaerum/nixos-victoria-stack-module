@@ -3888,11 +3888,10 @@ in
     '';
   };
 
-  # Pins the documented limit: tenant write tokens have no metrics route yet, so a
-  # tenant host with metrics.enable = true gets vmauth's `400 missing route` for the
-  # push while its logs still arrive in the tenant.
-  tenant-write-token-metrics-push-is-refused = pkgs.testers.nixosTest {
-    name = "victoria-collector-tenant-write-token-metrics-push-is-refused";
+  # A tenant host with metrics.enable = true: vmauth puts its write token's tenant
+  # into the metrics path, so the host's metrics land in that tenant only.
+  tenant-write-token-metrics-push-lands-in-the-tenant = pkgs.testers.nixosTest {
+    name = "victoria-collector-tenant-write-token-metrics-push-lands-in-the-tenant";
 
     containers.stack = mkTenantStack { metrics = true; };
 
@@ -3910,6 +3909,7 @@ in
 
     testScript = ''
       import time
+      import urllib.parse
       ${testLib.waitActivePython}
       ${tenantReadPython}
 
@@ -3927,30 +3927,21 @@ in
       collector.wait_until_succeeds("ping -c 1 stack")
 
 
-      def push(token):
+      def metric_names(token):
+          q = urllib.parse.quote('{__name__=~".+"}', safe="")
           out = stack.succeed(
-              "curl -s -w '\\n%{http_code}' -X POST "
-              f"-H {shlex.quote('Authorization: Bearer ' + token)} "
-              "-H 'Content-Type: application/x-protobuf' --data-binary @/dev/null "
-              "http://127.0.0.1:4204/opentelemetry/v1/metrics"
+              "curl -sfg -H " + shlex.quote("Authorization: Bearer " + token) + " "
+              f"'http://127.0.0.1:4204/metrics/api/v1/label/__name__/values?match[]={q}&start={int(time.time()) - 3600}'"
           )
-          body, code = out.rsplit("\n", 1)
-          return code.strip(), body
+          return json.loads(out)["data"]
 
 
-      # The tenant token: exact refusal. The tenant-less token on the same
-      # route is not refused for lack of a route, so the backend is really there.
-      code, body = push("collector-test-tenant-a-write")
-      assert code == "400" and body.strip().endswith('missing route for "/opentelemetry/v1/metrics"'), (code, body)
-      code, body = push("collector-test-plain-write")
-      assert "missing route" not in body, (code, body)
-
-      # Alloy's own push is refused the same way (it logs the status, not vmauth's body).
-      refused = "/opentelemetry/v1/metrics responded with HTTP Status Code 400"
-      deadline = time.monotonic() + 180
-      while refused not in collector.succeed("journalctl -u alloy.service --no-pager"):
-          assert time.monotonic() < deadline, "alloy never logged the refused metrics push"
-          time.sleep(2)
+      # Alloy's host metrics arrive in the token's tenant (a), and only there.
+      deadline = time.monotonic() + 300
+      while not metric_names("collector-test-tenant-a-read"):
+          assert time.monotonic() < deadline, "the host's metrics never arrived in tenant a"
+          time.sleep(3)
+      assert metric_names("collector-test-tenant-b-read") == []
 
       # ...and the logs of the same host still arrive in the tenant.
       collector.succeed("logger --tag tenant-fleet tenant_fleet_metrics_host_marker")
