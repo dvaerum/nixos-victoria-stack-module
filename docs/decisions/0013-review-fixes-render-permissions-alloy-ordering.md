@@ -7,7 +7,7 @@ one review round's outcome, not separate design decisions.
 
 Status: the Alloy `EnvironmentFile=` render oneshot of the first section no
 longer exists; Alloy reads the token as a systemd credential
-([0006](./0006-alloy-write-token-via-sys-env.md)).
+([0006](./0006-alloy-write-token-via-systemd-credential.md)).
 
 ## Alloy write-token `EnvironmentFile=` raced its own `preStart`
 

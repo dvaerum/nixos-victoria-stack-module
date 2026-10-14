@@ -366,7 +366,7 @@ The collector takes over a few things; everything else on those services stays y
   `/run/systemd/journal-upload.conf.d/50-write-token.conf`, which
   `victoria-collector-journal-upload-token.service` renders before the uploader
   first starts; a changed token file re-renders it and restarts the uploader
-  ([0006](./docs/decisions/0006-alloy-write-token-via-sys-env.md)).
+  ([0006](./docs/decisions/0006-alloy-write-token-via-systemd-credential.md)).
 
 ## Upgrading / breaking changes
 

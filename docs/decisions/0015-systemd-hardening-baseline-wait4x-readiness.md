@@ -5,7 +5,7 @@ storage
 
 The Alloy part of the last paragraph before "Why" (the write-token oneshot with
 `EnvironmentFile=`, its `DynamicUser` and `RuntimeDirectory`) is superseded by
-[0006](./0006-alloy-write-token-via-sys-env.md): that oneshot no longer exists and
+[0006](./0006-alloy-write-token-via-systemd-credential.md): that oneshot no longer exists and
 Alloy gets the token as a systemd credential. The rest of this ADR still holds.
 
 ## Decision
