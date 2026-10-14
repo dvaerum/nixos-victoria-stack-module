@@ -31,8 +31,44 @@ in
             '';
           }
         ];
+      # Paths (types.path guarantees "absolute", not the characters) that reach
+      # systemd settings verbatim: `%` is a specifier and whitespace splits
+      # ReadWritePaths= and tmpfiles rules; `:` additionally breaks
+      # LoadCredential's ID:PATH split. Asserted, not escaped (the stack
+      # modules escape instead).
+      pathChecks =
+        {
+          name,
+          value,
+          colonBreaks,
+        }:
+        lib.optional (value != null) {
+          assertion =
+            lib.match (if colonBreaks then "[^[:space:]%:]+" else "[^[:space:]%]+") (toString value) != null;
+          message = ''
+            services.victoriaCollector.${name} must not contain whitespace, "%"${lib.optionalString colonBreaks " or \":\""} (got "${toString value}"): "%" is a systemd specifier, whitespace splits the
+            systemd setting${lib.optionalString colonBreaks " and \":\" breaks the LoadCredential= ID:PATH split"}.
+          '';
+        };
     in
     endpointChecks "writeEndpoint" cfg.writeEndpoint
+    ++ lib.concatMap pathChecks [
+      {
+        name = "alloy.tlsCaFile";
+        value = cfg.alloy.tlsCaFile;
+        colonBreaks = true;
+      }
+      {
+        name = "trustedCertificateFile";
+        value = cfg.trustedCertificateFile;
+        colonBreaks = true;
+      }
+      {
+        name = "queue.directory";
+        value = cfg.queue.directory;
+        colonBreaks = false;
+      }
+    ]
     ++ endpointChecks "journaldWriteEndpoint" cfg.journaldWriteEndpoint
     ++ [
       {

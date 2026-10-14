@@ -781,6 +781,74 @@ in
           throw "writeTokenFile validation wrong: mustFire=${builtins.toJSON mustFire} mustNotFire=${builtins.toJSON mustNotFire}"
       );
 
+  # Every other collector path option that reaches a systemd setting verbatim:
+  # `%` is a specifier (LoadCredential, ReadWritePaths, tmpfiles `d`) and
+  # whitespace splits those lists/rules; `:` only breaks LoadCredential's ID:PATH
+  # split, so it stays legal for queue.directory.
+  collector-path-options-reject-systemd-special-characters =
+    pkgs.runCommand "collector-path-options-reject-systemd-special-characters" { }
+      (
+        let
+          options = [
+            {
+              name = "alloy.tlsCaFile";
+              set = value: { alloy.tlsCaFile = value; };
+              colonBreaks = true;
+            }
+            {
+              name = "trustedCertificateFile";
+              set = value: { trustedCertificateFile = value; };
+              colonBreaks = true;
+            }
+            {
+              name = "queue.directory";
+              set = value: { queue.directory = value; };
+              colonBreaks = false;
+            }
+          ];
+          fires =
+            o: value:
+            lib.any (lib.hasInfix "services.victoriaCollector.${o.name} must") (
+              ownFailed (evalWithCollector {
+                services.victoriaCollector = {
+                  hostType = "server";
+                }
+                // o.set value;
+              })
+            );
+          always = [
+            "/run/s/cert %h"
+            "/run/secrets/a b"
+            "/run/secrets/a\nb"
+            "/run/secrets/a\tb"
+          ];
+          rejected = o: always ++ lib.optional o.colonBreaks "/run/secrets/a:b";
+          accepted =
+            o:
+            [
+              "/run/secrets/my_ca-bundle.v2.pem"
+              "/var/lib/alloy"
+              "/var/lib/alloy/queue"
+              "/srv/data/nested/dir"
+            ]
+            ++ lib.optional (!o.colonBreaks) "/srv/a:b";
+          wrongRejects = lib.concatMap (
+            o: map (v: "${o.name} must reject ${builtins.toJSON v}") (lib.filter (v: !(fires o v)) (rejected o))
+          ) options;
+          wrongAccepts = lib.concatMap (
+            o: map (v: "${o.name} must accept ${builtins.toJSON v}") (lib.filter (fires o) (accepted o))
+          ) options;
+          # An unset tlsCaFile is not a violation (the other two always have a value).
+          wrongNull = lib.optional (fires (lib.head options) null) "alloy.tlsCaFile null must pass";
+        in
+        if wrongRejects == [ ] && wrongAccepts == [ ] && wrongNull == [ ] then
+          "echo OK > $out"
+        else
+          throw "collector path-option validation wrong: ${
+            builtins.toJSON (wrongRejects ++ wrongAccepts ++ wrongNull)
+          }"
+      );
+
   # Empty capability set everywhere, except the one oneshot that changes a file's
   # group (a real boot proves it needs CAP_CHOWN: "" made it fail).
   collector-oneshots-drop-capabilities = pkgs.runCommand "collector-oneshots-drop-capabilities" { } (
