@@ -89,4 +89,8 @@ before sending anything; the traces binary does not validate it (the value
 goes out as the `ProjectID` header, never into the path), so only vmauth
 bounds it.
 
+Update: with declared tenants ([0032](./0032-tenants-in-token-files.md)) a
+tenant token gets no `/mcp/*` routes, and a tenant-less token is stamped
+`0:0`, so "all data is tenant `0:0`" no longer holds for tenant tokens.
+
 A separate MCP credential tier is not part of this decision.
