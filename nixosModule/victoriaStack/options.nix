@@ -762,6 +762,18 @@ in
           '';
         };
 
+        clusterPackage = mkOption {
+          type = types.package;
+          internal = true;
+          description = ''
+            The package with the cluster binaries (`vminsert`, `vmselect`,
+            `vmstorage`). Defaults (via mkDefault) to this flake's own
+            `packages/victoriametrics-cluster`: nixpkgs has no cluster package.
+            `package` keeps meaning the single-node package until the two options
+            are folded together; only used while `mode = "cluster"`.
+          '';
+        };
+
         insert = {
           listenAddress = mkOption {
             type = types.str;

@@ -121,6 +121,22 @@ in
     pinsCheck "restart-backoff-stack" stackEval.config.systemd.services
       backedOff.stack;
 
+  cluster-units-carry-the-backoff-and-nothing-else-does =
+    pinsCheck "restart-backoff-cluster"
+      (evalWith {
+        services.victoriaStack.metrics = {
+          enable = true;
+          mode = "cluster";
+        };
+      }).config.systemd.services
+      [
+        "vmstorage"
+        "vminsert"
+        "vmselect"
+        # vmauth comes on with the metrics database.
+        "vmauth"
+      ];
+
   collector-alloy-carries-the-backoff-and-the-others-do-not =
     pinsCheck "restart-backoff-collector" collectorEval.config.systemd.services
       backedOff.collector;
@@ -175,6 +191,42 @@ in
       start_all()
       machine.wait_for_unit("multi-user.target")
       units = ["victoriametrics", "victorialogs", "vmauth", "mcp-victoriametrics"]
+      for u in units:
+          machine.succeed(f"systemctl start --no-block {u}.service")
+      for u in units:
+          assert_backoff(u, restart_delays(machine, f"{u}.service"), first=5)
+    '';
+  };
+
+  # All three at once: vminsert and vmselect `want` vmstorage, and a start job
+  # for a unit waiting out its backoff would cut that wait short. Each unit's
+  # delays must still be the nominal 5, 9, 16.5, 30 s.
+  broken-cluster-units-back-off = pkgs.testers.nixosTest {
+    name = "victoria-stack-broken-cluster-units-back-off";
+
+    containers.machine = {
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack.metrics = {
+        enable = true;
+        mode = "cluster";
+        extraFlags = [ "-noSuchFlag=1" ];
+        insert.extraFlags = [ "-noSuchFlag=1" ];
+        storage.extraFlags = [ "-noSuchFlag=1" ];
+      };
+      # A unit failing in a loop keeps the container's boot job pending.
+      systemd.services = lib.genAttrs [ "vmstorage" "vminsert" "vmselect" ] (_: {
+        wantedBy = lib.mkForce [ ];
+      });
+    };
+
+    testScript = ''
+      ${delaysPython}
+      start_all()
+      machine.wait_for_unit("multi-user.target")
+      units = ["vmstorage", "vminsert", "vmselect"]
       for u in units:
           machine.succeed(f"systemctl start --no-block {u}.service")
       for u in units:

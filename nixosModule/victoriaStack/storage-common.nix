@@ -87,6 +87,11 @@ let
     else
       retentionSeconds >= (maxRetentionMonths + 1) * monthSeconds;
 
+  # `mode` exists on metrics only. In cluster mode the units come from
+  # metrics-cluster-units.nix; the snapshot unit stays single-only until the
+  # snapshots move to vmstorage.
+  singleUnit = (cfg.mode or "single") == "single";
+
   inherit (import ./exec-escape.nix { inherit lib; }) escape escapeEnvironment;
 in
 {
@@ -159,7 +164,7 @@ in
         ];
       })
 
-      {
+      (lib.mkIf singleUnit {
         systemd.services.${unitName} = {
           inherit description;
           wantedBy = [ "multi-user.target" ];
@@ -229,46 +234,10 @@ in
               TimeoutStartSec = startupTimeout.unitTimeout cfg.startupTimeout;
               # A non-root user keeps no capability across exec unless it is ambient.
               AmbientCapabilities = lib.mkIf needsLowPort [ "CAP_NET_BIND_SERVICE" ];
-
-              # Hardening based on nixpkgs' own services.victoria* modules, but
-              # with ProtectSystem=strict and an empty capability set. See
-              # docs/decisions/0015.
-              DeviceAllow = [ "/dev/null rw" ];
-              DevicePolicy = "strict";
-              LockPersonality = true;
-              MemoryDenyWriteExecute = true;
-              NoNewPrivileges = true;
-              PrivateDevices = true;
-              PrivateTmp = true;
-              # Capabilities held inside a user namespace do not count for
-              # binding a port in the host's network namespace.
-              PrivateUsers = !needsLowPort;
-              ProtectClock = true;
-              ProtectControlGroups = true;
-              ProtectHome = true;
-              ProtectHostname = true;
-              ProtectKernelLogs = true;
-              ProtectKernelModules = true;
-              ProtectKernelTunables = true;
-              ProtectProc = "invisible";
-              CapabilityBoundingSet = if needsLowPort then [ "CAP_NET_BIND_SERVICE" ] else "";
-              ProtectSystem = "strict";
-              RemoveIPC = true;
-              RestrictAddressFamilies = [
-                "AF_INET"
-                "AF_INET6"
-                "AF_UNIX"
-              ];
-              RestrictNamespaces = true;
-              RestrictRealtime = true;
-              RestrictSUIDSGID = true;
-              SystemCallArchitectures = "native";
-              SystemCallFilter = [
-                "@system-service"
-                "~@privileged"
-                "mincore"
-              ];
             }
+
+            # docs/decisions/0015
+            (import ./hardening.nix { inherit needsLowPort; })
 
             (lib.optionalAttrs (tlsFiles != { }) {
               LoadCredential = lib.mapAttrsToList (n: path: "${n}:${escapeEnvironment path}") tlsFiles;
@@ -300,7 +269,7 @@ in
             )
           ];
         };
-      }
+      })
 
       (lib.optionalAttrs supportsSyslog (
         let
@@ -345,7 +314,7 @@ in
       # other internal call in this module -- no credential), fired by a
       # timer. Pruning is the binary's own -snapshotsMaxAge above, not
       # this unit's job.
-      (lib.mkIf cfg.snapshots.enable {
+      (lib.mkIf (cfg.snapshots.enable && singleUnit) {
         systemd.services."${unitName}-snapshot" = {
           description = "Create a ${name} snapshot";
           # Ordering only, no Requires=: a Requires= start would bring back a
