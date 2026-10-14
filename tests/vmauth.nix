@@ -4200,10 +4200,9 @@ in
               vmauth.extraRequestHeaders = [ "X-Test: 1" ];
             };
           };
-          # The metrics and logs MCP servers send the caller's token back to
-          # the read tier (docs/decisions/0023), so only their two routes keep it.
-          forwardsToken =
-            e: lib.any (p: lib.hasPrefix "/mcp/metrics" p || lib.hasPrefix "/mcp/logs" p) e.src_paths;
+          # The MCP servers send the caller's token back to the read tier
+          # (docs/decisions/0023), so only their three routes keep it.
+          forwardsToken = e: lib.any (lib.hasPrefix "/mcp/") e.src_paths;
           files = [
             "READ_URL_MAP_FILE"
             "WRITE_URL_MAP_FILE"
@@ -4223,11 +4222,11 @@ in
                 "X-Test: 1"
               ]
             ) (lib.filter (e: !forwardsToken e) readMap);
-            "the metrics and logs MCP routes keep the caller's token" =
-              lib.length (lib.filter forwardsToken readMap) == 2
+            "the three MCP routes keep the caller's token" =
+              lib.length (lib.filter forwardsToken readMap) == 3
               && lib.all (e: e.headers == [ "X-Test: 1" ]) (lib.filter forwardsToken readMap);
-            "the traces MCP route still strips it" = lib.any (
-              e: e.src_paths == [ "/mcp/traces(/.*)?" ] && lib.head e.headers == "Authorization:"
+            "a module-built read route outside /mcp still strips it" = lib.any (
+              e: e.src_paths == [ "/traces/select/.*" ] && lib.head e.headers == "Authorization:"
             ) readMap;
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;

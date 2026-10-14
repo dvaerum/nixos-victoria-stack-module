@@ -83,10 +83,7 @@ accidental widening back toward a wildcard is caught immediately, not just
 
 ## MCP tools and this allow-list
 
-The metrics and logs MCP servers call vmauth's read tier with the caller's
-own token ([0023](./0023-mcp-trust-boundary-extends-grafana.md)), so the
-list above bounds every tool call; a tool whose endpoint is off the list
-gets vmauth's 400. The traces MCP server still calls its backend directly
-on loopback, so its tools are not limited to the list: a tool whose
-endpoint is off the list would hand a read-token holder that endpoint, so
-those tools are disabled by default (see 0023).
+All three MCP servers call vmauth's read tier with the caller's own token
+([0023](./0023-mcp-trust-boundary-extends-grafana.md)), so the list above
+bounds every tool call; a tool whose endpoint is off the list gets vmauth's
+400.

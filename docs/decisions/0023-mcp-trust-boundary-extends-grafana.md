@@ -1,10 +1,9 @@
 # 0023: MCP's trust boundary extends ADR 0010's reasoning
 
 Status: the Grafana half of this reasoning is superseded by
-[0029](./0029-grafana-datasources-through-vmauth-read-tier.md). For the
-metrics and logs MCP servers the "talk straight to the backend" half is
-superseded by the section "MCP servers call vmauth's read tier" below; the
-traces server still follows the original decision.
+[0029](./0029-grafana-datasources-through-vmauth-read-tier.md). For all
+three MCP servers the "talk straight to the backend" half is superseded by
+the section "MCP servers call vmauth's read tier" below.
 
 ## Decision
 
@@ -18,11 +17,12 @@ listeners, [0031](./0031-victorialogs-syslog-listeners.md)). A port below
 1024 is an assertion: the MCP unit has no `CAP_NET_BIND_SERVICE` and would
 crash-loop.
 
-## MCP servers call vmauth's read tier (metrics and logs)
+## MCP servers call vmauth's read tier
 
-The metrics and logs MCP servers do not call their backend. Each runs with
-`MCP_PASSTHROUGH_HEADERS=Authorization` and an entrypoint of
-`http://<vmauth data listener>/metrics` or `/logs`, so every tool call
+The MCP servers do not call their backend. Each runs with
+`MCP_PASSTHROUGH_HEADERS=Authorization` (the traces binary carries
+`packages/mcp-victoriatraces/passthrough.patch` for it) and an entrypoint of
+`http://<vmauth data listener>/metrics`, `/logs` or `/traces`, so every tool call
 reaches vmauth's read tier carrying the CALLER's own token (vmauth's
 `/mcp/*` routes keep that header; every other module-built route strips it).
 vmauth stays the single authority: the token tier, the backend scope of a
@@ -34,22 +34,19 @@ route`).
 
 Consequences:
 
-- `metrics.mcp.enable` and `logs.mcp.enable` require `vmauth.enable` (an
-  assertion). The traces MCP server does not, yet.
+- `metrics.mcp.enable`, `logs.mcp.enable` and `traces.mcp.enable` require
+  `vmauth.enable` (an assertion): no MCP server works without vmauth.
 - The MCP unit orders itself after `vmauth.service` (no `Wants=`: that would
   let an MCP restart cut short vmauth's own restart backoff); vmauth does
-  not list these two units in its own `after` (that would be an ordering
+  not list the MCP units in its own `after` (that would be an ordering
   cycle). The MCP binaries do not contact the backend at start.
 - Tools whose endpoint is off the read allow-list (`alerts`, `rules`,
   `prettify_query`, `metric_statistics`, a lifted `flags`, ...) fail with
   vmauth's `400 missing route`. Accepted: the read tier is the boundary.
 - A request sent straight to the MCP listener without a valid token reaches
   vmauth with no usable credential and fails with its 401 on the tool call.
-- The traces MCP binary has no header passthrough yet, so it still talks to
-  its backend over loopback, outside the allow-list; the default-disabled
-  tools below still matter for it and for nothing else.
 
-## Why (the original reasoning, still the basis for traces)
+## Why (the original reasoning for the loopback trust boundary)
 
 Same reasoning as [0010](./0010-grafana-direct-loopback-own-auth.md): a
 credential whose only job is letting a process on the same host reach a
@@ -88,6 +85,8 @@ The logs and traces tools take a `tenant` argument. It selects the
 tenant (`AccountID:ProjectID`) on the same `/select/*` endpoints the read
 tier already allows, so it widens nothing; all data is tenant `0:0` today.
 The logs MCP binary rejects a `tenant` that is not `<number>:<number>`
-before sending anything.
+before sending anything; the traces binary does not validate it (the value
+goes out as the `ProjectID` header, never into the path), so only vmauth
+bounds it.
 
 A separate MCP credential tier is not part of this decision.

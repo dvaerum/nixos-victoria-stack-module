@@ -492,7 +492,7 @@ in
   mcp-uses-the-callers-token-through-vmauth =
     let
       # Same JSON-RPC client for both containers: `auth` is the curl
-      # credential flags, `route` is metrics or logs.
+      # credential flags, `route` is metrics, logs or traces.
       clientPython = ''
         import json
 
@@ -544,6 +544,8 @@ in
             backends: ["metrics"]
           - token: mcp-logs-only-read-token # gitleaks:allow
             backends: ["logs"]
+          - token: mcp-traces-only-read-token # gitleaks:allow
+            backends: ["traces"]
       '';
       fakeBackend = pkgs.writeText "mcp-fake-backend.py" ''
         import http.server
@@ -585,12 +587,14 @@ in
           metrics.mcp.enable = true;
           logs.enable = true;
           logs.mcp.enable = true;
+          traces.enable = true;
+          traces.mcp.enable = true;
           vmauth.adminPasswordFile = adminPassword;
           vmauth.readTokensFile = "${readTokens}";
         };
       };
 
-      # vmauth's metrics and logs backends are a recording fake: it sees every
+      # vmauth's metrics, logs and traces backends are a recording fake: it sees every
       # request vmauth lets through, so "the backend never saw it" is checkable.
       containers.recorder = {
         imports = [
@@ -604,6 +608,9 @@ in
           logs.enable = true;
           logs.mcp.enable = true;
           logs.effectiveUrl = lib.mkForce "http://127.0.0.1:9101";
+          traces.enable = true;
+          traces.mcp.enable = true;
+          traces.effectiveUrl = lib.mkForce "http://127.0.0.1:9101";
           vmauth.adminPasswordFile = adminPassword;
         };
         systemd.services.fake-backend = {
@@ -623,9 +630,10 @@ in
         ADMIN = "-u admin:mcp-test-admin-password-value"  # gitleaks:allow
         METRICS_TOKEN = "-H 'Authorization: Bearer mcp-metrics-only-read-token'"  # gitleaks:allow
         LOGS_TOKEN = "-H 'Authorization: Bearer mcp-logs-only-read-token'"  # gitleaks:allow
+        TRACES_TOKEN = "-H 'Authorization: Bearer mcp-traces-only-read-token'"  # gitleaks:allow
 
         start_all()
-        for unit in ("mcp-victoriametrics", "mcp-victorialogs", "vmauth"):
+        for unit in ("mcp-victoriametrics", "mcp-victorialogs", "mcp-victoriatraces", "vmauth"):
             wait_active(machine, f"{unit}.service")
             wait_active(recorder, f"{unit}.service")
         machine.wait_for_open_port(4204)
@@ -639,6 +647,14 @@ in
             "echo '{\"log\":{\"message\":\"mcp_caller_token_test_log\"},\"date\":\"0\",\"stream\":\"mcp-test\"}' | "
             "curl -sf -X POST -H 'Content-Type: application/stream+json' --data-binary @- "
             "'http://127.0.0.1:4202/insert/jsonline?_stream_fields=stream&_time_field=date&_msg_field=log.message'")
+        now = int(machine.succeed("date +%s%N").strip())
+        span = {"resourceSpans": [{"resource": {"attributes": [
+            {"key": "service.name", "value": {"stringValue": "mcp_caller_token_test_service"}}]},
+            "scopeSpans": [{"spans": [{"traceId": "00000000000000000000000000000001",
+                                       "spanId": "0000000000000001", "name": "mcp_caller_token_test_span",
+                                       "kind": 1, "startTimeUnixNano": str(now), "endTimeUnixNano": str(now)}]}]}]}
+        machine.succeed("curl -sf -X POST -H 'Content-Type: application/json' "
+                        f"-d '{json.dumps(span)}' 'http://127.0.0.1:4203/insert/opentelemetry/v1/traces'")
         machine.wait_until_succeeds(
             "curl -sf -u admin:mcp-test-admin-password-value "  # gitleaks:allow
             "'http://127.0.0.1:4204/metrics/api/v1/query?query=mcp_caller_token_test_metric' | grep -q '\"value\"'")
@@ -647,7 +663,12 @@ in
             "'http://127.0.0.1:4204/logs/select/logsql/query' -d 'query=mcp_caller_token_test_log' "
             "| grep -q mcp_caller_token_test_log")
 
+        machine.wait_until_succeeds(
+            "curl -sf -u admin:mcp-test-admin-password-value "  # gitleaks:allow
+            "'http://127.0.0.1:4204/traces/select/jaeger/api/services' | grep -q mcp_caller_token_test_service")
+
         METRICS_CALL = ("metrics", "label_values", {"label_name": "__name__"})
+        TRACES_CALL = ("traces", "services", {})
         LOGS_CALL = ("logs", "query", {"query": "*", "limit": 5, "start": "2000-01-01T00:00:00Z"})
 
         # The authorised token gets data through the MCP server: it only works
@@ -658,6 +679,8 @@ in
             (LOGS_TOKEN, LOGS_CALL, "mcp_caller_token_test_log"),
             (ADMIN, METRICS_CALL, "mcp_caller_token_test_metric"),
             (ADMIN, LOGS_CALL, "mcp_caller_token_test_log"),
+            (TRACES_TOKEN, TRACES_CALL, "mcp_caller_token_test_service"),
+            (ADMIN, TRACES_CALL, "mcp_caller_token_test_service"),
         ):
             status, _, sid = open_session(machine, route, token)
             assert status == 200, f"{route}: initialize with an authorised credential: {status}"
@@ -667,7 +690,13 @@ in
 
         # The other scope gets vmauth's own refusal, not data: its token has no
         # route to this MCP server at all.
-        for token, route in ((LOGS_TOKEN, "metrics"), (METRICS_TOKEN, "logs")):
+        for token, route in (
+            (LOGS_TOKEN, "metrics"),
+            (METRICS_TOKEN, "logs"),
+            (METRICS_TOKEN, "traces"),
+            (LOGS_TOKEN, "traces"),
+            (TRACES_TOKEN, "metrics"),
+        ):
             status, _, data = post(machine, route, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
                 "protocolVersion": "2024-11-05", "capabilities": {},
                 "clientInfo": {"name": "victoria-stack-test", "version": "1.0"}}}, token)
@@ -676,9 +705,10 @@ in
                 f"/mcp/{route} with the other backend's token must be vmauth's 400 missing route, got {status} {data!r}"
 
         # No credential at all: vmauth's 401 before any MCP server is reached.
-        status, _, data = post(machine, "metrics", {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}, "")
-        print(f"NOAUTH: {status} {data!r}")
-        assert status == 401, f"no credential must be 401, got {status} {data!r}"
+        for route in ("metrics", "traces"):
+            status, _, data = post(machine, route, {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}, "")
+            print(f"NOAUTH {route}: {status} {data!r}")
+            assert status == 401, f"/mcp/{route} with no credential must be 401, got {status} {data!r}"
 
         # Hostile tool arguments. The recording backend sees every request
         # vmauth lets through; the self-monitoring pushes the backend itself
@@ -726,7 +756,45 @@ in
         assert [l.split(" | ")[0] for l in new] == ["GET /api/v1/label/http:/evil.example.invalid/x/values HTTP/1.1"], \
             f"an absolute-URL label name must be a plain label read, got {new!r}"
 
-        assert not any("flags" in l or "X-Injected=None" not in l for l in recorded()), recorded()
+        # Traces: the Jaeger paths. A `..` run deep enough to leave /select/ is
+        # no allow-listed route (vmauth's 400); the Go client resolves `..`
+        # before sending, so the backend never sees the raw text either way.
+        # service_name and the traces tool's `service` go in the query/path as
+        # escaped text.
+        deep = "../" * 5 + "flags"
+        for tool, args in (
+            ("trace", {"trace_id": deep}),
+            ("trace", {"trace_id": "%2e%2e/" * 5 + "flags"}),
+            ("service_operations", {"service_name": "x/" + deep}),
+            ("service_operations", {"service_name": "x\r\nX-Injected: 1"}),
+        ):
+            hostile("traces", tool, args, "400: user admin missing route")
+        # Pinned as found: a `..` run that stays inside /select/ is an allow-listed
+        # read (the backend sees a path under /select/jaeger, nothing outside it).
+        before = recorded()
+        _, _, sid = open_session(recorder, "traces", ADMIN)
+        call(recorder, "traces", ADMIN, sid, "trace", {"trace_id": "../../flags"})
+        new = recorded()[len(before):]
+        assert [l.split(" | ")[0] for l in new] == ["GET /select/jaeger/flags HTTP/1.1"], new
+        # An absolute URL as a name stays a path segment of the same backend.
+        before = recorded()
+        _, _, sid = open_session(recorder, "traces", ADMIN)
+        call(recorder, "traces", ADMIN, sid, "service_operations", {"service_name": "http://evil.example.invalid/x"})
+        new = recorded()[len(before):]
+        assert all(l.split(" | ")[0].startswith("GET /select/jaeger/api/services/") for l in new) and len(new) <= 1, \
+            f"an absolute-URL service name must stay on the same backend, got {new!r}"
+        # FINDING: the traces MCP does not validate `tenant` (logs does): it goes out
+        # as the ProjectID header, never into the path. Stage 1's vmauth-stamped
+        # tenant is what bounds it; today it is only data in a header value.
+        before = recorded()
+        _, _, sid = open_session(recorder, "traces", ADMIN)
+        call(recorder, "traces", ADMIN, sid, "services", {"tenant": "0:0/../../flags"})
+        new = recorded()[len(before):]
+        assert [l.split(" | ")[0] for l in new] == ["GET /select/jaeger/api/services HTTP/1.1"], new
+        # A CRLF tenant is refused before any request leaves.
+        hostile("traces", "services", {"tenant": "0\r\nX-Injected: 1"}, "")
+
+        assert not any(" /flags HTTP" in l or "X-Injected=None" not in l for l in recorded()), recorded()
       '';
     };
 
@@ -821,9 +889,9 @@ in
 
   # The metrics and logs MCP servers reach their backend through vmauth's read
   # tier with the caller's own Authorization header (docs/decisions/0023), so
-  # vmauth stays the one authority. Traces keeps its direct backend connection
-  # until its binary can forward a token. The backend's effectiveUrl hop
-  # (docs/decisions/0019) is now vmauth's business, not the MCP unit's.
+  # vmauth stays the one authority, for all three servers. The backend's
+  # effectiveUrl hop (docs/decisions/0019) is vmauth's business, not the MCP
+  # unit's.
   mcp-passthrough-env-and-entrypoint =
     let
       evalMcp =
@@ -865,11 +933,20 @@ in
         (env wildcard "mcp-victoriametrics").VM_INSTANCE_ENTRYPOINT == "http://127.0.0.1:4301/metrics";
       "metrics.effectiveUrl no longer reaches the MCP unit" =
         (env overridden "mcp-victoriametrics").VM_INSTANCE_ENTRYPOINT == "http://127.0.0.1:4204/metrics";
-      "traces is left alone: no passthrough, raw backend" =
-        !(tracesEnv ? MCP_PASSTHROUGH_HEADERS)
-        && tracesEnv.VT_INSTANCE_ENTRYPOINT == default.services.victoriaStack.traces.effectiveUrl;
+      "traces forwards the Authorization header" =
+        (tracesEnv.MCP_PASSTHROUGH_HEADERS or null) == "Authorization";
+      "traces entrypoint is vmauth plus /traces" =
+        tracesEnv.VT_INSTANCE_ENTRYPOINT == "http://127.0.0.1:4204/traces";
+      "the traces entrypoint follows vmauth.listenAddress" =
+        (env moved "mcp-victoriatraces").VT_INSTANCE_ENTRYPOINT == "http://127.0.0.1:4300/traces";
+      "a wildcard vmauth address is dialled on loopback for traces" =
+        (env wildcard "mcp-victoriatraces").VT_INSTANCE_ENTRYPOINT == "http://127.0.0.1:4301/traces";
+      "traces.effectiveUrl no longer reaches the MCP unit" =
+        (env (evalMcp {
+          traces.effectiveUrl = lib.mkForce "http://victoria-stack-test.example.invalid:9998";
+        }) "mcp-victoriatraces").VT_INSTANCE_ENTRYPOINT == "http://127.0.0.1:4204/traces";
       # No Wants=: it would let an MCP restart cut short vmauth's restart backoff.
-      "metrics and logs MCP start after vmauth, without pulling it in" =
+      "all three MCP units start after vmauth, without pulling it in" =
         lib.all
           (
             unit:
@@ -879,6 +956,7 @@ in
           [
             "mcp-victoriametrics"
             "mcp-victorialogs"
+            "mcp-victoriatraces"
           ];
     };
 
@@ -910,35 +988,47 @@ in
     expectMessageSubstring = "logs.mcp.enable requires services.victoriaStack.vmauth.enable";
   };
 
-  # vmauth's own `after=` must include the traces MCP service -- without it,
-  # vmauth could route to /mcp/traces before that unit's readiness probe has
-  # passed. The metrics and logs MCP units start AFTER vmauth instead (they
-  # call its read tier); listing them here too would be an ordering cycle.
-  vmauth-after-includes-the-traces-mcp-service =
-    pkgs.runCommand "vmauth-after-includes-the-traces-mcp-service" { }
-      (
-        let
-          evaluated = evalWith {
-            services.victoriaStack = {
-              metrics.enable = true;
-              metrics.mcp.enable = true;
-              logs.enable = true;
-              logs.mcp.enable = true;
-              traces.enable = true;
-              traces.mcp.enable = true;
-            };
-          };
-          after = evaluated.config.systemd.services.vmauth.after;
-        in
-        if
-          lib.elem "mcp-victoriatraces.service" after
-          && !lib.elem "mcp-victoriametrics.service" after
-          && !lib.elem "mcp-victorialogs.service" after
-        then
-          "echo OK > $out"
-        else
-          throw "vmauth.service's `after` must list only the traces MCP unit: ${builtins.toJSON after}"
-      );
+  mcp-traces-requires-vmauth = testLib.mkAssertionFiresCheck {
+    name = "mcp-traces-requires-vmauth";
+    module =
+      { lib, ... }:
+      {
+        services.victoriaStack = {
+          traces.enable = true;
+          traces.mcp.enable = true;
+          vmauth.enable = lib.mkForce false;
+        };
+      };
+    expectMessageSubstring = "traces.mcp.enable requires services.victoriaStack.vmauth.enable";
+  };
+
+  # The MCP units start AFTER vmauth (they call its read tier), so vmauth's own
+  # `after=` must list none of them: that would be an ordering cycle.
+  vmauth-after-lists-no-mcp-service = pkgs.runCommand "vmauth-after-lists-no-mcp-service" { } (
+    let
+      evaluated = evalWith {
+        services.victoriaStack = {
+          metrics.enable = true;
+          metrics.mcp.enable = true;
+          logs.enable = true;
+          logs.mcp.enable = true;
+          traces.enable = true;
+          traces.mcp.enable = true;
+        };
+      };
+      after = evaluated.config.systemd.services.vmauth.after;
+    in
+    if
+      lib.all (u: !lib.elem u after) [
+        "mcp-victoriametrics.service"
+        "mcp-victorialogs.service"
+        "mcp-victoriatraces.service"
+      ]
+    then
+      "echo OK > $out"
+    else
+      throw "vmauth.service's `after` must list no MCP unit: ${builtins.toJSON after}"
+  );
 
   # Each MCP unit starts after the backend it talks to; without it the MCP
   # server can come up first and its readiness probe waits on a backend that
@@ -971,34 +1061,35 @@ in
       throw "MCP units not ordered after their backend: ${builtins.toJSON missing}"
   );
 
-  mcp-reachable-directly-when-vmauth-off = pkgs.testers.nixosTest {
-    name = "victoria-stack-mcp-direct-without-vmauth";
+  # An MCP listenAddress beyond loopback binds there (the exposure the warning
+  # is about). Replaces the old vmauth-off variant: no MCP server runs without
+  # vmauth any more (docs/decisions/0023).
+  mcp-binds-a-wildcard-listen-address = pkgs.testers.nixosTest {
+    name = "victoria-stack-mcp-wildcard-listen-address";
 
-    containers.machine =
-      { lib, ... }:
-      {
-        imports = [
-          module
-          testLib.testStartupTimeouts
-        ];
-        services.victoriaStack = {
-          traces.enable = true;
-          traces.mcp = {
-            enable = true;
-            listenAddress = "0.0.0.0:4207";
-          };
-          vmauth.enable = lib.mkForce false;
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack = {
+        traces.enable = true;
+        traces.mcp = {
+          enable = true;
+          listenAddress = "0.0.0.0:4207";
         };
+        vmauth.adminPasswordFile = "${pkgs.writeText "mcp-test-admin-password" "mcp-test-admin-password-value"}";
       };
+    };
 
     testScript = ''
       ${testLib.waitActivePython}
       start_all()
       wait_active(machine, "mcp-victoriatraces.service")
-      # (Only traces: the metrics and logs MCP servers need vmauth.) vmauth must not even exist/start -- confirmed separately in the
-      # vmauth test group's own no-op check; here the point is that mcp
-      # itself works fine standalone.
       machine.wait_for_open_port(4207)
+      listeners = machine.succeed("ss -Hltn 'sport = :4207'")
+      # ss prints a dual-stack wildcard bind as `*:4207`.
+      assert "*:4207" in listeners or "0.0.0.0:4207" in listeners, f"expected a wildcard listener: {listeners!r}"
     '';
   };
 
@@ -1082,25 +1173,23 @@ in
           throw "mcp start timeouts wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # vmauth off + MCP's listenAddress left at its loopback default: the
-  # unit must come up cleanly and stay loopback-only -- no crash loop, no
-  # surprise wildcard bind.
-  mcp-without-vmauth-stays-loopback-by-default = pkgs.testers.nixosTest {
-    name = "victoria-stack-mcp-loopback-default-without-vmauth";
+  # MCP's listenAddress left at its loopback default: the unit must come up
+  # cleanly and stay loopback-only -- no crash loop, no surprise wildcard bind.
+  # (Replaces the vmauth-off variant, see mcp-binds-a-wildcard-listen-address.)
+  mcp-stays-loopback-by-default = pkgs.testers.nixosTest {
+    name = "victoria-stack-mcp-loopback-default";
 
-    containers.machine =
-      { lib, ... }:
-      {
-        imports = [
-          module
-          testLib.testStartupTimeouts
-        ];
-        services.victoriaStack = {
-          traces.enable = true;
-          traces.mcp.enable = true;
-          vmauth.enable = lib.mkForce false;
-        };
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack = {
+        traces.enable = true;
+        traces.mcp.enable = true;
+        vmauth.adminPasswordFile = "${pkgs.writeText "mcp-test-admin-password" "mcp-test-admin-password-value"}";
       };
+    };
 
     testScript = ''
       ${testLib.waitActivePython}

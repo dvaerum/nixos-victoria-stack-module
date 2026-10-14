@@ -16,12 +16,11 @@ let
   readinessTimeout = "90s";
   startTimeout = (import ./startup-timeout.nix { inherit lib; }).unitTimeout readinessTimeout;
 
-  # The metrics and logs MCP servers call vmauth's read tier (loopback data
+  # The MCP servers call vmauth's read tier (loopback data
   # listener) with the caller's own Authorization header
   # (MCP_PASSTHROUGH_HEADERS), so vmauth stays the one authority: token tier,
   # closed allow-list, backend scope (docs/decisions/0023). The MCP unit holds
-  # no credential and logs none. Traces (`vmauthPrefix = null`) still talks to
-  # its backend directly: its binary has no header passthrough yet.
+  # no credential and logs none.
   vmauthUrl = "http://${listen.connectAddr topCfg.vmauth.listenAddress}";
 
   mkMcpService =
@@ -33,7 +32,7 @@ let
       packagePath, # directory name under ../../packages
       binaryName,
       backendUnit, # "victoriametrics.service" | "victorialogs.service" | "victoriatraces.service"
-      vmauthPrefix ? null, # read-tier path prefix ("metrics" | "logs"); null = direct to the backend
+      vmauthPrefix, # read-tier path prefix: "metrics" | "logs" | "traces"
       # mcp-victoriametrics hardcodes these as its fallback when
       # MCP_DISABLED_TOOLS is unset (pinned version 1.20.2); logs/traces have
       # no such default. Passing any value replaces it, so it is unioned in
@@ -61,20 +60,15 @@ let
           # start job for vmauth, which cuts short vmauth's own restart backoff
           # (the restart-backoff test caught shrinking delays). vmauth is
           # enabled anyway (assertions.nix).
-          ++ lib.optional (vmauthPrefix != null) "vmauth.service";
+          ++ [ "vmauth.service" ];
           wantedBy = [ "multi-user.target" ];
 
           environment = lib.mapAttrs (_: escapeEnvironment) (
             {
-              # effectiveUrl, not listenAddress: see docs/decisions/0019. Already
-              # includes its scheme.
-              "${envPrefix}_INSTANCE_ENTRYPOINT" =
-                if vmauthPrefix != null then "${vmauthUrl}/${vmauthPrefix}" else serviceCfg.effectiveUrl;
+              "${envPrefix}_INSTANCE_ENTRYPOINT" = "${vmauthUrl}/${vmauthPrefix}";
+              MCP_PASSTHROUGH_HEADERS = "Authorization";
               MCP_SERVER_MODE = "http";
               MCP_LISTEN_ADDR = serviceCfg.mcp.listenAddress;
-            }
-            // lib.optionalAttrs (vmauthPrefix != null) {
-              MCP_PASSTHROUGH_HEADERS = "Authorization";
             }
             // lib.optionalAttrs (instanceType != null) {
 
@@ -204,6 +198,7 @@ in
       packagePath = "mcp-victoriatraces";
       binaryName = "mcp-victoriatraces";
       backendUnit = "victoriatraces.service";
+      vmauthPrefix = "traces";
     })
   ];
 }

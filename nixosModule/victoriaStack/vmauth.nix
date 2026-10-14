@@ -111,7 +111,7 @@ let
         # strips it). The built-in backends are loopback and ignore it, but a
         # route to another host would receive every token and admin password that
         # passes through, so every module-built route drops it first -- except
-        # the metrics and logs MCP routes, whose servers send it back to vmauth's
+        # the MCP routes, whose servers send it back to vmauth's
         # read tier (docs/decisions/0023). The operator's own headers follow it,
         # so an entry can still set its own.
         headers =
@@ -192,9 +192,8 @@ let
     # sees exactly "/mcp" -- the one fixed path every mcp-victoria* binary
     # serves in MCP_SERVER_MODE=http (confirmed via each project's own
     # README). Callers must request with no trailing slash for this to
-    # land exactly on "/mcp" rather than "/mcp/". The metrics and logs MCP
-    # servers send the caller's token back to this read tier, so these two
-    # routes let it through.
+    # land exactly on "/mcp" rather than "/mcp/". The MCP servers send the
+    # caller's token back to this read tier, so these routes let it through.
     ++ withForwardedAuthorization (
       lib.optional topCfg.metrics.mcp.enable {
         src_paths = [ "/mcp/metrics(/.*)?" ];
@@ -206,15 +205,13 @@ let
         drop_src_path_prefix_parts = 2;
         url_prefix = "http://${listen.connectAddr topCfg.logs.mcp.listenAddress}/mcp";
       }
-    )
-    ++ withExtraHeaders (
-      lib.optional topCfg.traces.mcp.enable {
+      ++ lib.optional topCfg.traces.mcp.enable {
         src_paths = [ "/mcp/traces(/.*)?" ];
         drop_src_path_prefix_parts = 2;
         url_prefix = "http://${listen.connectAddr topCfg.traces.mcp.listenAddress}/mcp";
       }
-      ++ cfg.extraReadUrlMap
-    );
+    )
+    ++ withExtraHeaders cfg.extraReadUrlMap;
 
   # Each enabled backend's own native ingest/write path -- auto-derived
   # default for `openIngestPaths`, confirmed from each project's own data
@@ -575,12 +572,8 @@ in
       ++ lib.optional topCfg.metrics.enable "victoriametrics.service"
       ++ lib.optional topCfg.logs.enable "victorialogs.service"
       ++ lib.optional topCfg.traces.enable "victoriatraces.service"
-      # The traces MCP server vmauth's /mcp/traces route proxies to. Its
-      # postStart runs an HTTP readiness probe (mcp.nix), so `after` means
-      # "answering". The metrics and logs MCP servers are not listed: they
-      # start after vmauth (they call its read tier), and the reverse order
-      # would be a systemd ordering cycle.
-      ++ lib.optional topCfg.traces.mcp.enable "mcp-victoriatraces.service"
+      # No MCP unit here: they start after vmauth (they call its read tier),
+      # so listing them would be a systemd ordering cycle.
       # The cert files only exist once ACME has issued them (a first boot
       # would otherwise fail LoadCredential= and crash-loop until it has).
       ++ lib.optional (

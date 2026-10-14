@@ -464,20 +464,27 @@ in
     };
   };
 
-  # Control: traces.mcp.enable with vmauth.enable = false while traces itself
-  # IS enabled -- the traces MCP still reaches its backend directly (the
-  # metrics and logs MCP servers need vmauth, docs/decisions/0023), so it
-  # must NOT trip the mcp-requires-own-backend assertion (only the
-  # mcp-requires-own-backend one, scoped to the metrics.enable=false case
-  # above, should ever fire for mcp).
-  mcp-without-vmauth-is-not-an-assertion-failure = mkNoAssertionsFireCheck {
-    name = "mcp-without-vmauth-is-not-an-assertion-failure";
+  # Control for the three mcp-*-requires-vmauth assertions (tests/mcp.nix):
+  # every MCP server on its own backend with vmauth on trips nothing. The old
+  # "MCP without vmauth is fine" control is gone: no MCP server works without
+  # vmauth any more (docs/decisions/0023).
+  mcp-with-vmauth-is-not-an-assertion-failure = mkNoAssertionsFireCheck {
+    name = "mcp-with-vmauth-is-not-an-assertion-failure";
     module = {
-      services.victoriaStack.traces = {
-        enable = true;
-        mcp.enable = true;
+      services.victoriaStack = {
+        metrics = {
+          enable = true;
+          mcp.enable = true;
+        };
+        logs = {
+          enable = true;
+          mcp.enable = true;
+        };
+        traces = {
+          enable = true;
+          mcp.enable = true;
+        };
       };
-      services.victoriaStack.vmauth.enable = lib.mkForce false;
     };
   };
 

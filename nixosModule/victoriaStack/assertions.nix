@@ -676,7 +676,7 @@ in
           itself is disabled there is nothing for it to connect to.
         '';
       }
-      # The metrics and logs MCP servers forward the caller's own token to
+      # The MCP servers forward the caller's own token to
       # vmauth's read tier (docs/decisions/0023); without vmauth they would
       # have no backend to reach.
       {
@@ -692,6 +692,14 @@ in
         message = ''
           services.victoriaStack.logs.mcp.enable requires services.victoriaStack.vmauth.enable = true:
           the MCP server reaches VictoriaLogs only through vmauth's read tier, with the caller's own
+          token (docs/decisions/0023-mcp-trust-boundary-extends-grafana.md).
+        '';
+      }
+      {
+        assertion = !(cfg.traces.enable && cfg.traces.mcp.enable) || cfg.vmauth.enable;
+        message = ''
+          services.victoriaStack.traces.mcp.enable requires services.victoriaStack.vmauth.enable = true:
+          the MCP server reaches VictoriaTraces only through vmauth's read tier, with the caller's own
           token (docs/decisions/0023-mcp-trust-boundary-extends-grafana.md).
         '';
       }
