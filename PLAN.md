@@ -857,11 +857,37 @@ Critical review of both modules (second round):
     per-entry vmauth token-file errors; clearer syslog assertion messages.
 - Decided not to do: a separate MCP token tier (possible later); a warning or
   automatic move for the `dynamicUser` switch (documented only).
-- Open, not started: the same `%`/`:` escaping bug on vmauth and Grafana
-  credential paths and on the collector's other path options; the MCP servers
-  build backend URLs from unescaped tool arguments (`trace_id`,
-  `service_name`, `label_name`), so `..` reaches other backend paths and the
-  `tenant` argument sets the tenant headers: the proposed fix is an allow-list
-  on the hop between each MCP server and its backend; tenant support (logs and
-  traces have native tenants, metrics would need a label scheme or the cluster
-  version) is only researched.
+- Open at the time, settled afterwards (see the stage 0 notes below): the same
+  `%`/`:` escaping bug on vmauth and Grafana credential paths and on the
+  collector's other path options, and the MCP servers building backend URLs
+  from unescaped tool arguments (`trace_id`, `service_name`, `label_name`).
+  Tenant support (logs and traces have native tenants; metrics would need the
+  cluster version) was researched and is planned in stages 1 to 3.
+
+Tenants, per-caller MCP and the metrics cluster, stage 0 (plan,
+section 4): the MCP servers now call vmauth's read tier with the caller's own
+token, so vmauth stays the single authority.
+- All three MCP servers (metrics, logs, traces) run with
+  `MCP_PASSTHROUGH_HEADERS=Authorization` and an entrypoint on the vmauth
+  loopback listener with the `/metrics`, `/logs` or `/traces` prefix. A tool
+  that needs a path outside the read tier's allow-list gets vmauth's 400
+  whatever the tool list says; `..` runs that leave the allow-list never reach
+  the backend. `<svc>.mcp.enable` requires `vmauth.enable`.
+- The traces MCP 1.5.0 had no passthrough, so `packages/mcp-victoriatraces`
+  carries a small patch that gives it the same `MCP_PASSTHROUGH_HEADERS` as
+  the metrics and logs servers; drop it once upstream has it.
+- `mcp.enabledTools` is gone; the default-disabled tools (`flags` on logs;
+  `active_queries`, `top_queries`, `tsdb_status` and upstream's own list on
+  metrics) stay hidden, and `disabledTools` still adds to them.
+- `%` in vmauth and Grafana credential and watcher paths is escaped (like the
+  syslog paths); a collector assertion rejects `%` and whitespace (and `:`)
+  in `alloy.tlsCaFile`, `trustedCertificateFile` and `queue.directory`.
+  A `:` in a `LoadCredential=` path is in fact harmless (systemd splits at
+  the first one), so the collector's `:` rule is stricter than needed.
+- Known and accepted: the traces `tenant` tool argument is not validated by the
+  binary and goes out as a header; only stage 1's vmauth tenant stamping
+  bounds it. A `..` run that stays inside `/select/` is an allowed read.
+- Full gates now run on a remote build server (`nix flake archive` of the
+  tree, then `nix flake check -L` there): 34 minutes for the whole suite, of
+  which about 25 are single-threaded evaluation.
+- Next: stage 1 (tenants for logs and traces), after review.
