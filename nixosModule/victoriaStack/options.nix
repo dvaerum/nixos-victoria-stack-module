@@ -237,6 +237,9 @@ let
       supportsDiskRetention ? false, # victoria-logs / victoria-traces only
       # -syslog.* exists on victoria-logs only.
       supportsSyslog ? false,
+      # Text appended to the descriptions that read differently while
+      # `metrics.mode = "cluster"` (only metrics passes it).
+      clusterNote ? { },
     }:
     {
       enable = mkEnableOption name;
@@ -259,7 +262,8 @@ let
           Only letters, digits and `. _ / -` are allowed (an absolute path
           with no space, `%` or quote); anything else fails the build for
           an enabled service, since the path is written into unit files.
-        '';
+        ''
+        + clusterNote.dataDir or "";
       };
 
       dynamicUser = mkOption {
@@ -326,7 +330,8 @@ let
           then started with `-enableTCP6`, which the binary needs to bind
           IPv6 at all (an operator-supplied `-enableTCP6` in `extraFlags` is
           not repeated). `:port` binds IPv4 only without that flag.
-        '';
+        ''
+        + clusterNote.listenAddress or "";
       };
 
       effectiveUrl = mkOption {
@@ -364,7 +369,8 @@ let
           value (`1201`, `37231d`) makes ${binaryName} refuse to start, and
           evaluation warns about it. At most 10 digits before and 9 after the
           decimal point are accepted.
-        '';
+        ''
+        + clusterNote.retentionPeriod or "";
       };
 
       startupTimeout = mkOption {
@@ -386,7 +392,8 @@ let
           Format: one or more whole numbers with a unit of `s`, `m` or `h`
           (`90s`, `5m`, `1h30m`) of at most 6 digits each; zero is not
           allowed.
-        '';
+        ''
+        + clusterNote.startupTimeout or "";
       };
 
       extraFlags = mkOption {
@@ -409,6 +416,7 @@ let
           would fail every run. Drop the flag, or disable `snapshots.enable` and
           take snapshots yourself.
         ''
+        + clusterNote.extraFlags or ""
         + lib.optionalString supportsSyslog ''
 
           The `syslog.udp` / `syslog.tcp` options own the `-syslog.listenAddr.*`,
@@ -697,15 +705,123 @@ let
 in
 {
   options.services.victoriaStack = {
-    metrics = mkStorageServiceOptions {
-      name = "victoriametrics";
-      binaryName = "victoria-metrics";
-      # docs/decisions/0017: sequential 4201-4207 scheme, an explicit
-      # operator decision, not any binary's own upstream default.
-      defaultListenAddress = "127.0.0.1:4201";
-      defaultMcpPort = 4205;
-      retentionPeriodNullBehavior = "a 1 month default for this binary, NOT unbounded";
-    };
+    metrics =
+      mkStorageServiceOptions {
+        name = "victoriametrics";
+        binaryName = "victoria-metrics";
+        # docs/decisions/0017: sequential 4201-4207 scheme, an explicit
+        # operator decision, not any binary's own upstream default.
+        defaultListenAddress = "127.0.0.1:4201";
+        defaultMcpPort = 4205;
+        retentionPeriodNullBehavior = "a 1 month default for this binary, NOT unbounded";
+        clusterNote = {
+          listenAddress = ''
+
+            With `mode = "cluster"` this is the READ API (vmselect). The write API
+            is `insert.listenAddress`; vmstorage's own HTTP address is
+            `storage.listenAddress`.
+          '';
+          extraFlags = ''
+
+            With `mode = "cluster"` these go to vmselect, the process behind
+            `listenAddress`; `insert.extraFlags` and `storage.extraFlags` take
+            the flags of the other two processes.
+          '';
+          dataDir = ''
+
+            With `mode = "cluster"` the data lives in vmstorage, which reads this.
+          '';
+          retentionPeriod = ''
+
+            With `mode = "cluster"` this is vmstorage's `-retentionPeriod`.
+          '';
+          startupTimeout = ''
+
+            With `mode = "cluster"` this bounds the wait for vmstorage, and the
+            snapshot options (`snapshots.*`) apply to vmstorage as well.
+          '';
+        };
+      }
+      // {
+        mode = mkOption {
+          type = types.enum [
+            "single"
+            "cluster"
+          ];
+          default = "single";
+          internal = true;
+          description = ''
+            Transitional switch, internal to the build-up of the metrics cluster:
+            `single` is the VictoriaMetrics single-node binary as before, `cluster`
+            runs vminsert (writes), vmselect (reads) and vmstorage (data) on this
+            host. It exists only so the existing tests can be ported one step at a
+            time; the cluster replaces the single-node path for everyone and this
+            option goes away before any release.
+
+            `insert.*` and `storage.*` have no effect while this is `single`.
+          '';
+        };
+
+        insert = {
+          listenAddress = mkOption {
+            type = types.str;
+            default = "127.0.0.1:4209";
+            description = ''
+              Address vminsert, the write API of the cluster, listens on. Same
+              rules as `listenAddress` (loopback by default, an IPv6 address
+              starts the process with `-enableTCP6`). The two internal ports
+              between the processes are fixed on loopback (127.0.0.1:4211 for
+              vminsert's store, 127.0.0.1:4212 for vmselect's) and checked against
+              every other listener.
+
+              Only used while `mode = "cluster"`.
+            '';
+          };
+
+          extraFlags = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            example = [ "-maxLabelsPerTimeseries=60" ];
+            description = ''
+              Extra command-line flags passed straight through to vminsert. The
+              flags the module renders itself are rejected at build time:
+              `-httpListenAddr*`, `-storageNode`, `-tls*`, `-http.pathPrefix*` and
+              `-httpAuth.*`.
+
+              Only used while `mode = "cluster"`.
+            '';
+          };
+        };
+
+        storage = {
+          listenAddress = mkOption {
+            type = types.str;
+            default = "127.0.0.1:4210";
+            description = ''
+              Address vmstorage's own HTTP server listens on (health, snapshots),
+              not the data path between the processes. Same rules as
+              `listenAddress`.
+
+              Only used while `mode = "cluster"`.
+            '';
+          };
+
+          extraFlags = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            example = [ "-dedup.minScrapeInterval=30s" ];
+            description = ''
+              Extra command-line flags passed straight through to vmstorage. The
+              flags the module renders itself are rejected at build time:
+              `-httpListenAddr*`, `-vminsertAddr`, `-vmselectAddr`,
+              `-storageDataPath`, `-retentionPeriod`, `-tls*`, `-http.pathPrefix*`
+              and `-httpAuth.*`.
+
+              Only used while `mode = "cluster"`.
+            '';
+          };
+        };
+      };
 
     logs = mkStorageServiceOptions {
       name = "victorialogs";

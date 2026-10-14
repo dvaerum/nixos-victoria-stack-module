@@ -42,4 +42,14 @@ this project made independently. `nginx` and the collector's OTLP receiver
 were each excluded for their own distinct, concrete reason (operational
 collision history; external interop convention), not merely left out by
 oversight.
+
+## Update: metrics cluster ports
+
+The metrics cluster (vminsert, vmselect, vmstorage) continues the range:
+`metrics.insert.listenAddress` is `:4209` (vminsert, writes) and
+`metrics.storage.listenAddress` is `:4210` (vmstorage's own HTTP). The read
+API stays `metrics.listenAddress` (`:4201`, vmselect). The two internal ports
+between the processes, `127.0.0.1:4211` (vminsert to vmstorage) and
+`127.0.0.1:4212` (vmselect to vmstorage), are fixed, not options. All five are
+checked against every other listener at build time.
 </content>

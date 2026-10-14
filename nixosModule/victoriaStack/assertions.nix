@@ -4,6 +4,11 @@ let
   cfg = config.services.victoriaStack;
   anyBackendEnabled = cfg.metrics.enable || cfg.logs.enable || cfg.traces.enable;
   listen = import ./listen.nix { inherit lib; };
+  metricsCluster = import ./metrics-cluster.nix { inherit lib; };
+  # What only exists while the metrics cluster is the thing being built; in
+  # `single` mode insert.* and storage.* are never looked at.
+  clusterOn = cfg.metrics.enable && cfg.metrics.mode == "cluster";
+  clusterProcesses = metricsCluster.processes cfg.metrics;
 
   active = cfg.vmauth.enable && anyBackendEnabled;
 
@@ -120,6 +125,7 @@ let
     ++ lib.optional cfg.traces.enable (
       at "services.victoriaStack.traces.listenAddress" cfg.traces.listenAddress
     )
+    ++ lib.optionals clusterOn (map (l: at l.name l.addr) (metricsCluster.extraListeners cfg.metrics))
     ++ lib.optional active (at "services.victoriaStack.vmauth.listenAddress" cfg.vmauth.listenAddress)
     ++ lib.optional active (
       at "services.victoriaStack.vmauth.internalListenAddress" cfg.vmauth.internalListenAddress
@@ -187,8 +193,9 @@ let
       name = "metrics";
       active = cfg.metrics.enable;
       inherit (cfg.metrics) extraFlags;
-      ownedPrefixes = storageOwnedPrefixes;
-      ownedNames = [ ];
+      # In cluster mode the process behind listenAddress is vmselect.
+      ownedPrefixes = if clusterOn then clusterProcesses.select.ownedPrefixes else storageOwnedPrefixes;
+      ownedNames = if clusterOn then clusterProcesses.select.ownedNames else [ ];
       snapshotKeyFlags = [ "snapshotAuthKey" ];
       alternative = "put nginx in front of the service";
     }
@@ -224,6 +231,20 @@ let
       alternative = "use vmauth.https / vmauth.http / listenAddress, or put nginx in front";
     }
   ];
+  # The other two processes of the cluster. Kept out of flagServices: that list
+  # also drives the snapshot-key check, which reads `cfg.<name>.snapshots`.
+  clusterFlagServices =
+    map
+      (proc: {
+        name = clusterProcesses.${proc}.option;
+        active = clusterOn;
+        inherit (clusterProcesses.${proc}) extraFlags ownedPrefixes ownedNames;
+        alternative = "use the matching typed option, or put nginx in front of the service";
+      })
+      [
+        "insert"
+        "storage"
+      ];
   forbiddenFlags =
     svc:
     lib.optionals svc.active (
@@ -246,7 +267,7 @@ let
       module's readiness check and its self-push use plain http on the known
       address and path, so such a flag breaks them. Instead, ${svc.alternative}.
     '';
-  }) flagServices;
+  }) (flagServices ++ clusterFlagServices);
 
   # The snapshot oneshot POSTs to the snapshot endpoint without a key (it is a
   # loopback call), and the binary answers 401 once one of these flags is set
@@ -434,6 +455,16 @@ let
       {
         name = "metrics.listenAddress";
         value = cfg.metrics.listenAddress;
+      }
+    ]
+    ++ lib.optionals clusterOn [
+      {
+        name = "metrics.insert.listenAddress";
+        value = cfg.metrics.insert.listenAddress;
+      }
+      {
+        name = "metrics.storage.listenAddress";
+        value = cfg.metrics.storage.listenAddress;
       }
     ]
     ++ lib.optionals cfg.logs.enable (
