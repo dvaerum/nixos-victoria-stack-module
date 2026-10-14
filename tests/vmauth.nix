@@ -4189,18 +4189,32 @@ in
                 enable = true;
                 mcp.enable = true;
               };
-              logs.enable = true;
-              traces.enable = true;
+              logs = {
+                enable = true;
+                mcp.enable = true;
+              };
+              traces = {
+                enable = true;
+                mcp.enable = true;
+              };
               vmauth.extraRequestHeaders = [ "X-Test: 1" ];
             };
           };
+          # The metrics and logs MCP servers send the caller's token back to
+          # the read tier (docs/decisions/0023), so only their two routes keep it.
+          forwardsToken =
+            e: lib.any (p: lib.hasPrefix "/mcp/metrics" p || lib.hasPrefix "/mcp/logs" p) e.src_paths;
           files = [
             "READ_URL_MAP_FILE"
             "WRITE_URL_MAP_FILE"
             "OPEN_INGEST_PATHS_FILE"
           ];
           strips =
-            file: lib.all (e: lib.head (e.headers or [ "" ]) == "Authorization:") (urlMapFile file evaluated);
+            file:
+            lib.all (e: lib.head (e.headers or [ "" ]) == "Authorization:") (
+              lib.filter (e: !forwardsToken e) (urlMapFile file evaluated)
+            );
+          readMap = urlMapFile "READ_URL_MAP_FILE" evaluated;
           checks = lib.genAttrs files (f: urlMapFile f evaluated != [ ] && strips f) // {
             "the operator's own headers follow the strip" = lib.all (
               e:
@@ -4208,7 +4222,13 @@ in
                 "Authorization:"
                 "X-Test: 1"
               ]
-            ) (urlMapFile "READ_URL_MAP_FILE" evaluated);
+            ) (lib.filter (e: !forwardsToken e) readMap);
+            "the metrics and logs MCP routes keep the caller's token" =
+              lib.length (lib.filter forwardsToken readMap) == 2
+              && lib.all (e: e.headers == [ "X-Test: 1" ]) (lib.filter forwardsToken readMap);
+            "the traces MCP route still strips it" = lib.any (
+              e: e.src_paths == [ "/mcp/traces(/.*)?" ] && lib.head e.headers == "Authorization:"
+            ) readMap;
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in

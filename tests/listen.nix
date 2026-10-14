@@ -191,9 +191,9 @@ in
           "${name}: nginx upstream" = readLoc.proxyPass == "\"http://127.0.0.1:4303\"";
           "${name}: vmauth route to the MCP server" =
             mcpEntry != null && mcpEntry.url_prefix == "http://127.0.0.1:4302/mcp";
-          "${name}: mcp entrypoint is the effective URL" =
+          "${name}: mcp entrypoint is vmauth's read tier on loopback" =
             e.config.systemd.services.mcp-victoriametrics.environment.VM_INSTANCE_ENTRYPOINT
-            == "http://127.0.0.1:4301";
+            == "http://127.0.0.1:4303/metrics";
           "${name}: self-monitoring pushes to loopback" =
             lib.hasInfix "-pushmetrics.url=http://127.0.0.1:4301/api/v1/import/prometheus" e.config.systemd.services.victorialogs.serviceConfig.ExecStart;
         };

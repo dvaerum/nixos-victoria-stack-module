@@ -464,16 +464,16 @@ in
     };
   };
 
-  # Control: mcp.enable = true with vmauth.enable = false while the mcp's
-  # own backend IS enabled -- this is a legitimate, deliberately
-  # NOT-asserted-against configuration (see docs/decisions/0002), so it
+  # Control: traces.mcp.enable with vmauth.enable = false while traces itself
+  # IS enabled -- the traces MCP still reaches its backend directly (the
+  # metrics and logs MCP servers need vmauth, docs/decisions/0023), so it
   # must NOT trip the mcp-requires-own-backend assertion (only the
   # mcp-requires-own-backend one, scoped to the metrics.enable=false case
   # above, should ever fire for mcp).
   mcp-without-vmauth-is-not-an-assertion-failure = mkNoAssertionsFireCheck {
     name = "mcp-without-vmauth-is-not-an-assertion-failure";
     module = {
-      services.victoriaStack.metrics = {
+      services.victoriaStack.traces = {
         enable = true;
         mcp.enable = true;
       };

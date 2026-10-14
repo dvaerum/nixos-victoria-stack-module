@@ -100,22 +100,31 @@ let
   # rather than overwriting via `//`, which would silently discard them. The
   # entry's own values are listed last (more specific wins for any name vmauth
   # treats as last-value-wins).
-  withExtraHeaders = map (
-    entry:
-    entry
-    // {
-      # vmauth forwards the caller's Authorization header to the backend by
-      # default (its docs say so, and that an empty `Authorization:` header
-      # strips it). The built-in backends are loopback and ignore it, but a
-      # route to another host would receive every token and admin password that
-      # passes through, so every module-built route drops it first. The
-      # operator's own headers follow it, so an entry can still set its own.
-      headers = [ "Authorization:" ] ++ cfg.extraRequestHeaders ++ (entry.headers or [ ]);
-    }
-    // lib.optionalAttrs (cfg.extraResponseHeaders != [ ]) {
-      response_headers = cfg.extraResponseHeaders ++ (entry.response_headers or [ ]);
-    }
-  );
+  withHeaders =
+    stripAuthorization:
+    map (
+      entry:
+      entry
+      // {
+        # vmauth forwards the caller's Authorization header to the backend by
+        # default (its docs say so, and that an empty `Authorization:` header
+        # strips it). The built-in backends are loopback and ignore it, but a
+        # route to another host would receive every token and admin password that
+        # passes through, so every module-built route drops it first -- except
+        # the metrics and logs MCP routes, whose servers send it back to vmauth's
+        # read tier (docs/decisions/0023). The operator's own headers follow it,
+        # so an entry can still set its own.
+        headers =
+          lib.optional stripAuthorization "Authorization:"
+          ++ cfg.extraRequestHeaders
+          ++ (entry.headers or [ ]);
+      }
+      // lib.optionalAttrs (cfg.extraResponseHeaders != [ ]) {
+        response_headers = cfg.extraResponseHeaders ++ (entry.response_headers or [ ]);
+      }
+    );
+  withExtraHeaders = withHeaders true;
+  withForwardedAuthorization = withHeaders false;
 
   # Each enabled backend's own native read API, reached via vmauth as
   # /metrics/*, /logs/*, /traces/* -- src_paths are POST-STRIP (vmauth
@@ -137,68 +146,75 @@ let
   # is rejected by default, not silently allowed (the opposite failure
   # mode of the bug this fixes). New legitimate read endpoints need this
   # list updated -- use extraReadUrlMap as an interim escape hatch.
-  readUrlMap = withExtraHeaders (
-    lib.optional topCfg.metrics.enable {
-      # Confirmed from VictoriaMetrics' own "Reads" API docs, and this
-      # exact set (query/query_range/series/labels/label values) is also
-      # vmauth's own official per-tenant-authorization example -- not
-      # improvised. /api/v1/export* is a genuine read (dumps data out,
-      # distinct from /api/v1/import*, the write path); /federate is
-      # Prometheus's own federation read endpoint.
-      src_paths = [
-        "/metrics/api/v1/query"
-        "/metrics/api/v1/query_range"
-        "/metrics/api/v1/series"
-        "/metrics/api/v1/labels"
-        "/metrics/api/v1/label/.+/values"
-        # Grafana's Metrics browser fetches this together with the metric
-        # names and fails as a whole without it (docs/decisions/0021).
-        "/metrics/api/v1/metadata"
-        "/metrics/api/v1/export.*"
-        "/metrics/federate"
-      ];
-      drop_src_path_prefix_parts = 1;
-      url_prefix = "${topCfg.metrics.effectiveUrl}/";
-    }
-    ++ lib.optional topCfg.logs.enable {
-      # VictoriaLogs' entire read API lives under /select/* -- confirmed
-      # from its own HTTP API docs: /insert/* is the completely separate,
-      # never-overlapping write namespace. One regex is both correct and
-      # already a closed allow-list here, unlike metrics' API shape.
-      src_paths = [ "/logs/select/.*" ];
-      drop_src_path_prefix_parts = 1;
-      url_prefix = "${topCfg.logs.effectiveUrl}/";
-    }
-    ++ lib.optional topCfg.traces.enable {
-      # Same reasoning as logs -- VictoriaTraces' own docs: it "provides
-      # the same HTTP endpoints that VictoriaLogs provides" plus the
-      # Jaeger API, both also under /select/*.
-      src_paths = [ "/traces/select/.*" ];
-      drop_src_path_prefix_parts = 1;
-      url_prefix = "${topCfg.traces.effectiveUrl}/";
-    }
+  readUrlMap =
+    withExtraHeaders (
+      lib.optional topCfg.metrics.enable {
+        # Confirmed from VictoriaMetrics' own "Reads" API docs, and this
+        # exact set (query/query_range/series/labels/label values) is also
+        # vmauth's own official per-tenant-authorization example -- not
+        # improvised. /api/v1/export* is a genuine read (dumps data out,
+        # distinct from /api/v1/import*, the write path); /federate is
+        # Prometheus's own federation read endpoint.
+        src_paths = [
+          "/metrics/api/v1/query"
+          "/metrics/api/v1/query_range"
+          "/metrics/api/v1/series"
+          "/metrics/api/v1/labels"
+          "/metrics/api/v1/label/.+/values"
+          # Grafana's Metrics browser fetches this together with the metric
+          # names and fails as a whole without it (docs/decisions/0021).
+          "/metrics/api/v1/metadata"
+          "/metrics/api/v1/export.*"
+          "/metrics/federate"
+        ];
+        drop_src_path_prefix_parts = 1;
+        url_prefix = "${topCfg.metrics.effectiveUrl}/";
+      }
+      ++ lib.optional topCfg.logs.enable {
+        # VictoriaLogs' entire read API lives under /select/* -- confirmed
+        # from its own HTTP API docs: /insert/* is the completely separate,
+        # never-overlapping write namespace. One regex is both correct and
+        # already a closed allow-list here, unlike metrics' API shape.
+        src_paths = [ "/logs/select/.*" ];
+        drop_src_path_prefix_parts = 1;
+        url_prefix = "${topCfg.logs.effectiveUrl}/";
+      }
+      ++ lib.optional topCfg.traces.enable {
+        # Same reasoning as logs -- VictoriaTraces' own docs: it "provides
+        # the same HTTP endpoints that VictoriaLogs provides" plus the
+        # Jaeger API, both also under /select/*.
+        src_paths = [ "/traces/select/.*" ];
+        drop_src_path_prefix_parts = 1;
+        url_prefix = "${topCfg.traces.effectiveUrl}/";
+      }
+    )
     # MCP servers: drop 2 parts ("mcp" + the service name) so the backend
     # sees exactly "/mcp" -- the one fixed path every mcp-victoria* binary
     # serves in MCP_SERVER_MODE=http (confirmed via each project's own
     # README). Callers must request with no trailing slash for this to
-    # land exactly on "/mcp" rather than "/mcp/".
-    ++ lib.optional topCfg.metrics.mcp.enable {
-      src_paths = [ "/mcp/metrics(/.*)?" ];
-      drop_src_path_prefix_parts = 2;
-      url_prefix = "http://${listen.connectAddr topCfg.metrics.mcp.listenAddress}/mcp";
-    }
-    ++ lib.optional topCfg.logs.mcp.enable {
-      src_paths = [ "/mcp/logs(/.*)?" ];
-      drop_src_path_prefix_parts = 2;
-      url_prefix = "http://${listen.connectAddr topCfg.logs.mcp.listenAddress}/mcp";
-    }
-    ++ lib.optional topCfg.traces.mcp.enable {
-      src_paths = [ "/mcp/traces(/.*)?" ];
-      drop_src_path_prefix_parts = 2;
-      url_prefix = "http://${listen.connectAddr topCfg.traces.mcp.listenAddress}/mcp";
-    }
-    ++ cfg.extraReadUrlMap
-  );
+    # land exactly on "/mcp" rather than "/mcp/". The metrics and logs MCP
+    # servers send the caller's token back to this read tier, so these two
+    # routes let it through.
+    ++ withForwardedAuthorization (
+      lib.optional topCfg.metrics.mcp.enable {
+        src_paths = [ "/mcp/metrics(/.*)?" ];
+        drop_src_path_prefix_parts = 2;
+        url_prefix = "http://${listen.connectAddr topCfg.metrics.mcp.listenAddress}/mcp";
+      }
+      ++ lib.optional topCfg.logs.mcp.enable {
+        src_paths = [ "/mcp/logs(/.*)?" ];
+        drop_src_path_prefix_parts = 2;
+        url_prefix = "http://${listen.connectAddr topCfg.logs.mcp.listenAddress}/mcp";
+      }
+    )
+    ++ withExtraHeaders (
+      lib.optional topCfg.traces.mcp.enable {
+        src_paths = [ "/mcp/traces(/.*)?" ];
+        drop_src_path_prefix_parts = 2;
+        url_prefix = "http://${listen.connectAddr topCfg.traces.mcp.listenAddress}/mcp";
+      }
+      ++ cfg.extraReadUrlMap
+    );
 
   # Each enabled backend's own native ingest/write path -- auto-derived
   # default for `openIngestPaths`, confirmed from each project's own data
@@ -559,10 +575,11 @@ in
       ++ lib.optional topCfg.metrics.enable "victoriametrics.service"
       ++ lib.optional topCfg.logs.enable "victorialogs.service"
       ++ lib.optional topCfg.traces.enable "victoriatraces.service"
-      # The MCP servers vmauth's /mcp/* routes proxy to. Their postStart runs
-      # an HTTP readiness probe (mcp.nix), so `after` means "answering".
-      ++ lib.optional topCfg.metrics.mcp.enable "mcp-victoriametrics.service"
-      ++ lib.optional topCfg.logs.mcp.enable "mcp-victorialogs.service"
+      # The traces MCP server vmauth's /mcp/traces route proxies to. Its
+      # postStart runs an HTTP readiness probe (mcp.nix), so `after` means
+      # "answering". The metrics and logs MCP servers are not listed: they
+      # start after vmauth (they call its read tier), and the reverse order
+      # would be a systemd ordering cycle.
       ++ lib.optional topCfg.traces.mcp.enable "mcp-victoriatraces.service"
       # The cert files only exist once ACME has issued them (a first boot
       # would otherwise fail LoadCredential= and crash-loop until it has).
