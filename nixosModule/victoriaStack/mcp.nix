@@ -176,12 +176,19 @@ in
         "retention_filters_debug"
         "test_rules"
       ];
-      # active_queries/top_queries show other users' query text; tsdb_status
-      # reads /api/v1/status/tsdb. None is on vmauth's read allow-list.
+      # active_queries/top_queries show other users' query text. tsdb_status,
+      # alerts (/vmalert/api/v1/alerts), rules (/vmalert/api/v1/rules),
+      # metric_statistics (/api/v1/status/metric_names_stats) and
+      # prettify_query (/prettify-query) call endpoints that are not on
+      # vmauth's read allow-list, so they always get its 400.
       moduleDefaultDisabledTools = [
         "active_queries"
         "top_queries"
         "tsdb_status"
+        "alerts"
+        "rules"
+        "metric_statistics"
+        "prettify_query"
       ];
     })
     (mkMcpService {

@@ -625,9 +625,9 @@ let
             `Authorization` header to vmauth's read tier, so the caller's
             token tier, backend scope and the closed endpoint allow-list
             (docs/decisions/0021) apply to every tool call. A tool whose
-            backend endpoint is outside that list (`alerts`, `rules`,
-            `prettify_query`, `metric_statistics`, ...) fails with vmauth's
-            `400 missing route`. A request without a valid token (for
+            backend endpoint is outside that list fails with vmauth's
+            `400 missing route`; the module hides the ones that always do
+            (`alerts`, `rules`, `prettify_query`, `metric_statistics`, ...). A request without a valid token (for
             example one sent straight to this listener) is answered with
             vmauth's 401 by the tool call.
 

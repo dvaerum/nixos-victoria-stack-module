@@ -303,6 +303,10 @@ in
             "metrics disables active_queries" = lib.elem "active_queries" (tools "mcp-victoriametrics");
             "metrics disables top_queries" = lib.elem "top_queries" (tools "mcp-victoriametrics");
             "metrics disables tsdb_status" = lib.elem "tsdb_status" (tools "mcp-victoriametrics");
+            "metrics disables alerts" = lib.elem "alerts" (tools "mcp-victoriametrics");
+            "metrics disables rules" = lib.elem "rules" (tools "mcp-victoriametrics");
+            "metrics disables metric_statistics" = lib.elem "metric_statistics" (tools "mcp-victoriametrics");
+            "metrics disables prettify_query" = lib.elem "prettify_query" (tools "mcp-victoriametrics");
             "metrics keeps the upstream defaults" = lib.all (t: lib.elem t (tools "mcp-victoriametrics")) [
               "export"
               "flags"
@@ -368,7 +372,7 @@ in
               )).success;
             "metrics MCP_DISABLED_TOOLS pinned" =
               (env "mcp-victoriametrics").MCP_DISABLED_TOOLS
-              == "export,flags,metric_relabel_debug,downsampling_filters_debug,retention_filters_debug,test_rules,active_queries,top_queries,tsdb_status";
+              == "export,flags,metric_relabel_debug,downsampling_filters_debug,retention_filters_debug,test_rules,active_queries,top_queries,tsdb_status,alerts,rules,metric_statistics,prettify_query";
             "logs MCP_DISABLED_TOOLS pinned" = (env "mcp-victorialogs").MCP_DISABLED_TOOLS == "flags";
             "traces MCP_DISABLED_TOOLS stays absent" = !((env "mcp-victoriatraces") ? MCP_DISABLED_TOOLS);
             "disabledTools still hides one more tool" =
@@ -466,10 +470,19 @@ in
       assert not refused(ok), f"logs: query must still work: {ok!r}"
 
       sid, names = tool_names(machine, "metrics")
-      for gone in ("active_queries", "top_queries", "tsdb_status", "flags", "export", "test_rules"):
+      for gone in ("active_queries", "top_queries", "tsdb_status", "flags", "export", "test_rules",
+                   "alerts", "rules", "metric_statistics", "prettify_query"):
           assert gone not in names, f"metrics: {gone} must be disabled, got {sorted(names)}"
-      for kept in ("query", "labels", "series", "metrics_metadata"):
-          assert kept in names, f"metrics: {kept} must stay, got {sorted(names)}"
+      # Exactly the tools that can work: a tool that always fails must not
+      # sneak back in, and a working one must not disappear.
+      assert names == {"documentation", "explain_query", "label_values", "labels", "metrics",
+                       "metrics_metadata", "query", "query_range", "series"}, \
+          f"metrics: unexpected tool list {sorted(names)}"
+      # Why the four are hidden: their endpoints are off the read allow-list.
+      for path in ("vmalert/api/v1/alerts", "vmalert/api/v1/rules",
+                   "api/v1/status/metric_names_stats", "prettify-query?query=up"):
+          code = machine.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' {AUTH} 'http://127.0.0.1:4204/metrics/{path}'")
+          assert code == "400", f"metrics: /{path} must answer vmauth's 400, got {code}"
       assert refused(rpc(machine, "metrics", sid, "tools/call", {"name": "tsdb_status", "arguments": {}})), \
           "metrics: tsdb_status call must be refused"
       ok = rpc(machine, "metrics", sid, "tools/call", {"name": "labels", "arguments": {}})
