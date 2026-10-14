@@ -1523,7 +1523,9 @@ null
 
 
 Whether victoria-logs pushes its own ` /metrics ` page into the local
-VictoriaMetrics instance\.
+VictoriaMetrics instance\. With ` metrics.mode = "cluster" ` the push goes
+straight to vminsert’s address (` metrics.insert.listenAddress `, tenant 0),
+not through vmauth\.
 
  - On by default whenever ` services.victoriaStack.metrics.enable ` is
    true (there is then a database to push into)\.
@@ -3139,7 +3141,9 @@ null
 
 
 Whether victoria-metrics pushes its own ` /metrics ` page into the local
-VictoriaMetrics instance\.
+VictoriaMetrics instance\. With ` metrics.mode = "cluster" ` the push goes
+straight to vminsert’s address (` metrics.insert.listenAddress `, tenant 0),
+not through vmauth\.
 
  - On by default whenever ` services.victoriaStack.metrics.enable ` is
    true (there is then a database to push into)\.
@@ -3353,6 +3357,10 @@ flags the module renders itself are rejected at build time:
 ` -httpListenAddr* `, ` -vminsertAddr `, ` -vmselectAddr `,
 ` -storageDataPath `, ` -retentionPeriod `, ` -tls* `, ` -http.pathPrefix* `
 and ` -httpAuth.* `\.
+
+While ` snapshots.enable ` is true, ` -snapshotAuthKey ` is rejected
+here too: vmstorage serves the snapshot endpoint, and the snapshot
+timer sends no key\.
 
 Only used while ` mode = "cluster" `\.
 
@@ -4294,7 +4302,9 @@ null
 
 
 Whether victoria-traces pushes its own ` /metrics ` page into the local
-VictoriaMetrics instance\.
+VictoriaMetrics instance\. With ` metrics.mode = "cluster" ` the push goes
+straight to vminsert’s address (` metrics.insert.listenAddress `, tenant 0),
+not through vmauth\.
 
  - On by default whenever ` services.victoriaStack.metrics.enable ` is
    true (there is then a database to push into)\.
@@ -5607,7 +5617,9 @@ true
 
 
 Whether vmauth pushes its own ` /metrics ` page into the local
-VictoriaMetrics instance\.
+VictoriaMetrics instance\. With ` metrics.mode = "cluster" ` the push goes
+straight to vminsert’s address (` metrics.insert.listenAddress `, tenant 0),
+not through vmauth\.
 
  - On by default whenever ` services.victoriaStack.metrics.enable ` is
    true (there is then a database to push into)\.
