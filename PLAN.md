@@ -891,3 +891,27 @@ token, so vmauth stays the single authority.
   tree, then `nix flake check -L` there): 34 minutes for the whole suite, of
   which about 25 are single-threaded evaluation.
 - Next: stage 1 (tenants for logs and traces), after review.
+
+Tenants, stage 1 (logs and traces; the plan's stage 1):
+- `services.victoriaStack.tenants.<name> = { accountId; projectId = 0; }` is
+  declared in Nix (names are lower-case, `all` is reserved, `(accountId,
+  projectId)` pairs are unique, a declared `0:0` is refused). Token files
+  reference the name; the number is the permanent data key (ADR 0032).
+- Token entries take `tenant: <name>` (stamped by vmauth), and on the read tier
+  `tenants: [..]` or `tenants: all` (the client picks via the `AccountID`
+  header, only from the list; a missing or unlisted pick is a 400). Write
+  tokens carry one tenant only. Tenant-less tokens are stamped `0:0` once any
+  tenant is declared; the admin tier is never stamped; the anonymous write
+  door is stamped `0:0` too. Tenant tokens get no metrics, no `/mcp/*` and no
+  extra routes yet (metrics tenants wait for the cluster stage).
+- vmauth matches `src_headers` against any value of a repeated header and
+  forwards all of them, so the list routes stamp `AccountID` as well as
+  `ProjectID`; a mutation test pins it (`tests/tenant-isolation.nix`).
+- Each syslog slot takes `tenant = "<name>"` (default none = `0:0`); a collector
+  host's tenant is simply its write token (`examples/tenant-fleet.nix`, with a
+  cross-container test; a tenant host ships logs and traces only for now).
+- The token render moved into `nixosModule/victoriaStack/vmauth-jq/`.
+- Metrics cluster build-up started: the cluster binaries are packaged
+  (`packages/victoriametrics-cluster`, same version as `pkgs.victoriametrics`,
+  a guard check and the weekly bump workflow follow it) and the option layout
+  and ports exist behind a transitional `metrics.mode` switch that stage 2 removes.
