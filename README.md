@@ -451,6 +451,26 @@ mechanism here would just be a worse version of something you already have:
   };
   ```
 
+## Running the tests
+
+The suite is about 630 checks (`nix flake check -L`), most of them VM or
+container boots. Evaluating it in one process takes the better part of half
+an hour; `nix run .#gate` evaluates it in parallel instead and builds only
+what changed.
+
+```sh
+nix run .#gate -- --all                    # per task: every check, fail-closed
+nix run .#gate -- --list-sections          # a section = one tests/*.nix file
+nix run .#gate -- --sections tenants,vmauth  # while editing: not a gate
+GATE_REMOTE=builder nix run .#gate -- --all  # ship the tree to an ssh host, run there
+nix flake check -L                         # per stage: the final full gate
+```
+
+`--all` exits non-zero on any evaluation error, any failed build, or if the
+evaluated checks differ in number from the flake's `checks`. Tuning:
+`--workers`, `--max-memory-size`, `--max-jobs 0` (build on remote builders
+only). See [ADR 0034](docs/decisions/0034-parallel-evaluation-test-gate.md).
+
 ## License
 
 MIT, see [`LICENSE`](./LICENSE).

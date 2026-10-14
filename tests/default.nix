@@ -28,15 +28,21 @@ let
     collector = import ./collector.nix { inherit pkgs nixosModule; };
     testlib = import ./testlib.nix { inherit pkgs nixosModule; };
     restart-backoff = import ./restart-backoff.nix { inherit pkgs nixosModule; };
+    sections = import ./sections.nix { inherit pkgs nixosModule; };
     full = import ./full.nix { inherit pkgs nixosModule; };
   };
 in
-# Flatten { groupName = { checkName = drv; ... }; ... } into the flat
-# attrset `checks.<system>` needs, prefixed so e.g. assertions-nginx-x and
-# storage-nginx-x (if that ever collided) can't clash.
-lib.foldl' lib.mergeAttrs { } (
-  lib.mapAttrsToList (
-    groupName: checksInGroup:
-    lib.mapAttrs' (checkName: lib.nameValuePair "${groupName}-${checkName}") checksInGroup
-  ) groups
-)
+{
+  # Per group, so one file's checks can be built by name (scripts/gate.sh --sections).
+  inherit groups;
+
+  # Flatten { groupName = { checkName = drv; ... }; ... } into the flat
+  # attrset `checks.<system>` needs, prefixed so e.g. assertions-nginx-x and
+  # storage-nginx-x (if that ever collided) can't clash.
+  checks = lib.foldl' lib.mergeAttrs { } (
+    lib.mapAttrsToList (
+      groupName: checksInGroup:
+      lib.mapAttrs' (checkName: lib.nameValuePair "${groupName}-${checkName}") checksInGroup
+    ) groups
+  );
+}
