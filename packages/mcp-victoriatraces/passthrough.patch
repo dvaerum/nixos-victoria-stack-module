@@ -1,23 +1,59 @@
-From: nixos-victoria-stack-module
-Subject: [PATCH] forward selected incoming MCP request headers to VictoriaTraces
+From 98dab75213f6ee66e1fcf86f858cce55cbf44313 Mon Sep 17 00:00:00 2001
+From: Contributor <contributor@example.com>
+Date: Wed, 14 Oct 2026 09:58:47 +0200
+Subject: [PATCH] config: add MCP_PASSTHROUGH_HEADERS to forward listed client
+ headers
 
 Add MCP_PASSTHROUGH_HEADERS, a comma-separated list of header names to
-copy from the incoming MCP HTTP request to the requests sent to
-VictoriaTraces. Same variable and semantics as mcp-victorialogs and
-mcp-victoriametrics: off by default, only effective in sse/http modes
-(stdio has no HTTP request), names matched case-insensitively, applied
-after VT_INSTANCE_BEARER_TOKEN and VT_INSTANCE_HEADERS so a forwarded
-header wins on collision (AccountID/ProjectID are still set from the
-tool arguments afterwards).
+copy from the incoming MCP HTTP request onto the requests sent to
+VictoriaTraces. mcp-victorialogs and mcp-victoriametrics already have
+this variable; the semantics are the same: off by default, only
+effective in sse/http modes (stdio has no incoming HTTP request), names
+are matched case-insensitively, entries are trimmed and empty ones
+skipped.
+
+Forwarded headers are applied after VT_INSTANCE_BEARER_TOKEN and
+VT_INSTANCE_HEADERS, so a forwarded header wins on collision.
+AccountID and ProjectID are still set from the tool arguments
+afterwards.
 
 This lets a deployment that fronts VictoriaTraces with an authenticating
 proxy use each caller's own Authorization header instead of one shared
 token.
-
 ---
+ README.md                                    |  4 +
+ cmd/mcp-victoriatraces/config/config.go      | 45 +++++++----
+ cmd/mcp-victoriatraces/config/config_test.go | 78 ++++++++++++++++++++
+ cmd/mcp-victoriatraces/tools/utils.go        | 14 ++++
+ 4 files changed, 127 insertions(+), 14 deletions(-)
+
+diff --git a/README.md b/README.md
+index 585e053..7e61dde 100644
+--- a/README.md
++++ b/README.md
+@@ -110,6 +110,7 @@ MCP Server for VictoriaTraces is configured via environment variables:
+ | `VT_INSTANCE_ENTRYPOINT`   | URL to VictoriaTraces instance                            | Yes      | -                | -                      |
+ | `VT_INSTANCE_BEARER_TOKEN` | Authentication token for VictoriaTraces API               | No       | -                | -                      |
+ | `VT_INSTANCE_HEADERS`      | Custom HTTP headers to send with requests (comma-separated key=value pairs) | No       | -                | -                      |
++| `MCP_PASSTHROUGH_HEADERS`  | HTTP header names to forward from incoming MCP requests to VictoriaTraces (comma-separated list). Overrides `VT_INSTANCE_HEADERS` on collision. Only applies in `sse`/`http` modes. | No       | -                | -                      |
+ | `MCP_SERVER_MODE`          | Server operation mode. See [Modes](#modes) for details. | No       | `stdio`          | `stdio`, `sse`, `http` |
+ | `MCP_LISTEN_ADDR`          | Address for SSE or HTTP server to listen on             | No       | `localhost:8081` | -                      |
+ | `MCP_DISABLED_TOOLS`       | Comma-separated list of tools to disable                | No       | -                | -                      |
+@@ -137,6 +138,9 @@ export VT_INSTANCE_ENTRYPOINT="https://localhost:10428"
+ # Expected syntax is key=value separated by commas
+ export VT_INSTANCE_HEADERS="<HEADER>=<HEADER_VALUE>,<HEADER>=<HEADER_VALUE>"
+ 
++# Forward specific headers from incoming MCP requests to VictoriaTraces
++export MCP_PASSTHROUGH_HEADERS="X-Token,X-Access-Key"
++
+ # Server mode
+ export MCP_SERVER_MODE="sse"
+ export MCP_SSE_ADDR="0.0.0.0:8082"
+diff --git a/cmd/mcp-victoriatraces/config/config.go b/cmd/mcp-victoriatraces/config/config.go
+index c6624be..d402e6c 100644
 --- a/cmd/mcp-victoriatraces/config/config.go
 +++ b/cmd/mcp-victoriatraces/config/config.go
-@@ -9,13 +9,14 @@
+@@ -9,13 +9,14 @@ import (
  )
  
  type Config struct {
@@ -39,7 +75,7 @@ token.
  
  	entryPointURL *url.URL
  }
-@@ -50,6 +51,17 @@
+@@ -50,6 +51,17 @@ func InitConfig() (*Config, error) {
  		}
  	}
  
@@ -57,7 +93,7 @@ token.
  	heartbeatInterval := 30 * time.Second
  	heartbeatIntervalStr := os.Getenv("MCP_HEARTBEAT_INTERVAL")
  	if heartbeatIntervalStr != "" {
-@@ -64,13 +76,14 @@
+@@ -64,13 +76,14 @@ func InitConfig() (*Config, error) {
  	}
  
  	result := &Config{
@@ -79,7 +115,7 @@ token.
  	}
  	// Left for backward compatibility
  	if result.listenAddr == "" {
-@@ -138,3 +151,7 @@
+@@ -138,3 +151,7 @@ func (c *Config) HeartbeatInterval() time.Duration {
  func (c *Config) CustomHeaders() map[string]string {
  	return c.customHeaders
  }
@@ -87,9 +123,11 @@ token.
 +func (c *Config) PassthroughHeaders() []string {
 +	return c.passthroughHeaders
 +}
+diff --git a/cmd/mcp-victoriatraces/config/config_test.go b/cmd/mcp-victoriatraces/config/config_test.go
+index ac1549a..dd9c127 100644
 --- a/cmd/mcp-victoriatraces/config/config_test.go
 +++ b/cmd/mcp-victoriatraces/config/config_test.go
-@@ -14,6 +14,7 @@
+@@ -14,6 +14,7 @@ func TestInitConfig(t *testing.T) {
  	originalSSEAddr := os.Getenv("MCP_SSE_ADDR")
  	originalBearerToken := os.Getenv("VT_INSTANCE_BEARER_TOKEN")
  	originalHeartbeatInterval := os.Getenv("MCP_HEARTBEAT_INTERVAL")
@@ -97,7 +135,7 @@ token.
  
  	// Restore environment variables after test
  	defer func() {
-@@ -22,6 +23,7 @@
+@@ -22,6 +23,7 @@ func TestInitConfig(t *testing.T) {
  		os.Setenv("MCP_SSE_ADDR", originalSSEAddr)
  		os.Setenv("VT_INSTANCE_BEARER_TOKEN", originalBearerToken)
  		os.Setenv("MCP_HEARTBEAT_INTERVAL", originalHeartbeatInterval)
@@ -105,9 +143,94 @@ token.
  	}()
  
  	// Test case 1: Valid configuration
+@@ -148,6 +150,82 @@ func TestInitConfig(t *testing.T) {
+ 		}
+ 	})
+ 
++	// Test case: Passthrough headers parsing
++	t.Run("Passthrough headers parsing", func(t *testing.T) {
++		// Set environment variables
++		os.Setenv("VT_INSTANCE_ENTRYPOINT", "http://example.com")
++		os.Setenv("MCP_PASSTHROUGH_HEADERS", "Authorization,X-Custom-Token,X-Request-ID")
++
++		// Initialize config
++		cfg, err := InitConfig()
++
++		// Check for errors
++		if err != nil {
++			t.Fatalf("Expected no error, got: %v", err)
++		}
++
++		// Check passthrough headers
++		headers := cfg.PassthroughHeaders()
++		expected := []string{"Authorization", "X-Custom-Token", "X-Request-ID"}
++
++		if len(headers) != len(expected) {
++			t.Fatalf("Expected %d passthrough headers, got %d", len(expected), len(headers))
++		}
++		for i, h := range headers {
++			if h != expected[i] {
++				t.Errorf("Expected header %q at index %d, got %q", expected[i], i, h)
++			}
++		}
++	})
++
++	// Test case: Empty passthrough headers
++	t.Run("Empty passthrough headers", func(t *testing.T) {
++		// Set environment variables
++		os.Setenv("VT_INSTANCE_ENTRYPOINT", "http://example.com")
++		os.Setenv("MCP_PASSTHROUGH_HEADERS", "")
++
++		// Initialize config
++		cfg, err := InitConfig()
++
++		// Check for errors
++		if err != nil {
++			t.Fatalf("Expected no error, got: %v", err)
++		}
++
++		// Check passthrough headers
++		if len(cfg.PassthroughHeaders()) != 0 {
++			t.Errorf("Expected 0 passthrough headers, got %d", len(cfg.PassthroughHeaders()))
++		}
++	})
++
++	// Test case: Passthrough headers with whitespace and empty entries
++	t.Run("Passthrough headers whitespace trimming", func(t *testing.T) {
++		// Set environment variables
++		os.Setenv("VT_INSTANCE_ENTRYPOINT", "http://example.com")
++		os.Setenv("MCP_PASSTHROUGH_HEADERS", " Authorization , , X-Custom-Token , ")
++
++		// Initialize config
++		cfg, err := InitConfig()
++
++		// Check for errors
++		if err != nil {
++			t.Fatalf("Expected no error, got: %v", err)
++		}
++
++		// Check passthrough headers
++		headers := cfg.PassthroughHeaders()
++		expected := []string{"Authorization", "X-Custom-Token"}
++
++		if len(headers) != len(expected) {
++			t.Fatalf("Expected %d passthrough headers, got %d", len(expected), len(headers))
++		}
++		for i, h := range headers {
++			if h != expected[i] {
++				t.Errorf("Expected header %q at index %d, got %q", expected[i], i, h)
++			}
++		}
++	})
++
+ 	// Test case 5: Missing entrypoint
+ 	t.Run("Missing entrypoint", func(t *testing.T) {
+ 		// Set environment variables
+diff --git a/cmd/mcp-victoriatraces/tools/utils.go b/cmd/mcp-victoriatraces/tools/utils.go
+index 61bf501..f0d97d7 100644
 --- a/cmd/mcp-victoriatraces/tools/utils.go
 +++ b/cmd/mcp-victoriatraces/tools/utils.go
-@@ -37,6 +37,13 @@
+@@ -37,6 +37,13 @@ func CreateSelectRequest(ctx context.Context, cfg *config.Config, tcr mcp.CallTo
  		req.Header.Set(key, value)
  	}
  
@@ -121,7 +244,7 @@ token.
  	req.Header.Set("AccountID", accountID)
  	req.Header.Set("ProjectID", projectID)
  
-@@ -63,6 +70,13 @@
+@@ -63,6 +70,13 @@ func CreateAdminRequest(ctx context.Context, cfg *config.Config, tcr mcp.CallToo
  		req.Header.Set(key, value)
  	}
  
@@ -135,13 +258,6 @@ token.
  	return req, nil
  }
  
---- a/README.md
-+++ b/README.md
-@@ -110,6 +110,7 @@
- | `VT_INSTANCE_ENTRYPOINT`   | URL to VictoriaTraces instance                            | Yes      | -                | -                      |
- | `VT_INSTANCE_BEARER_TOKEN` | Authentication token for VictoriaTraces API               | No       | -                | -                      |
- | `VT_INSTANCE_HEADERS`      | Custom HTTP headers to send with requests (comma-separated key=value pairs) | No       | -                | -                      |
-+| `MCP_PASSTHROUGH_HEADERS`  | HTTP header names to forward from incoming MCP requests to VictoriaTraces (comma-separated list). Overrides `VT_INSTANCE_HEADERS` on collision. Only applies in `sse`/`http` modes. | No       | -                | -                      |
- | `MCP_SERVER_MODE`          | Server operation mode. See [Modes](#modes) for details. | No       | `stdio`          | `stdio`, `sse`, `http` |
- | `MCP_LISTEN_ADDR`          | Address for SSE or HTTP server to listen on             | No       | `localhost:8081` | -                      |
- | `MCP_DISABLED_TOOLS`       | Comma-separated list of tools to disable                | No       | -                | -                      |
+-- 
+2.54.0
+
