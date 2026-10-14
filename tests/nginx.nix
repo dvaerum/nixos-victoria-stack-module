@@ -71,13 +71,10 @@ let
   victoriaReadLocation = readLocationOf evaluated;
 in
 {
-  # Guards against building the vhost's `locations` attrset via plain `//`
-  # across two attrsets that BOTH have a top-level `locations` key: `//`
-  # doesn't deep-merge, so whichever side came last would silently clobber
-  # the other's `locations` ENTIRELY. In practice /victoria/ would vanish
-  # from the rendered config whenever grafana.enable was also true (the
-  # combination examples/default.nix documents); nginx-proxies-victoria-and-grafana-subpaths
-  # covers it end to end, this is the cheap structural check.
+  # `//` does not deep-merge: two attrsets that both have a `locations` key
+  # would drop one side's (/victoria/ vanished when grafana.enable was also
+  # set). nginx-proxies-victoria-and-grafana-subpaths covers it end to end;
+  # this is the cheap structural check.
   nginx-victoria-and-grafana-locations-coexist =
     pkgs.runCommand "nginx-victoria-and-grafana-locations-coexist" { }
       (
@@ -313,9 +310,7 @@ in
       # server is listening yet: without this, the /grafana/ curl below
       # races Grafana's startup and gets a 502 from nginx.
       machine.wait_for_open_port(3000)
-      # Same race for vmauth's own backend -- caught by the sibling test
-      # with grafana disabled (nothing else gave it enough of a head
-      # start), but latent here too without this.
+      # Same race for vmauth's own backend.
       wait_active(machine, "vmstorage.service")
       wait_active(machine, "vminsert.service")
       wait_active(machine, "vmselect.service")
@@ -465,8 +460,7 @@ in
       # null) -- a request's Host header must match for nginx to route
       # to it at all: omitting -H "Host: ..." fails with no error, just
       # curl/grep finding nothing.
-      # wait_until_succeeds, not succeed: Grafana's HTTP port opens
-      # before its own startup migrations finish.
+      # wait_until_succeeds, not succeed (Grafana race: see above).
       machine.wait_until_succeeds(
           "curl -sf -H 'Host: victoria-stack-test.example.com' "
           "'http://127.0.0.1:80/grafana/login' | grep -qi grafana"
@@ -501,9 +495,8 @@ in
       wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
-      # Before nginx was ordered after vmauth (whose postStart now waits for
-      # its port), proxy_pass raced it and got "502 Bad Gateway" often enough
-      # to fail this check; the explicit port waits are kept as a guard.
+      # Guard: the explicit port waits keep a proxy_pass race ("502 Bad
+      # Gateway") from reappearing.
       wait_active(machine, "vmstorage.service")
       wait_active(machine, "vminsert.service")
       wait_active(machine, "vmselect.service")
@@ -528,10 +521,8 @@ in
   # The 4th and last domain x grafana.enable combination (see the comment
   # on nginx-custom-domain-with-grafana-enabled above): a custom domain
   # with grafana.enable left off, checked via a real live request (not
-  # just a config-dump assertion like nginx-domain-sets-server-name) --
-  # setting `domain` makes the virtualHost name-based, so a request must
-  # carry the matching Host header to route at all, same as the
-  # grafana-enabled combination above.
+  # just a config-dump assertion like nginx-domain-sets-server-name); the
+  # Host-header requirement is explained in nginx-custom-domain-with-grafana-enabled.
   nginx-custom-domain-with-grafana-disabled = pkgs.testers.nixosTest {
     name = "victoria-stack-nginx-custom-domain-grafana-disabled";
 

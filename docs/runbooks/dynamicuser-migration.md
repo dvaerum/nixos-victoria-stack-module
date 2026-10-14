@@ -48,7 +48,7 @@ it first. Run as root.
 6. Verify through the real unit: `systemctl show -p User --value <service>.service`
    prints the static user, and the service's readiness endpoint answers
    (for metrics, vmstorage's `curl -sf http://127.0.0.1:4210/health`; use your
-   `storage.listenAddress`). Query an old series to confirm the data is back.
+   `services.victoriaStack.metrics.storage.listenAddress`). Query an old series to confirm the data is back.
 
 A custom `dataDir` follows the same steps with that path in place of
 `/var/lib/<name>`; the data still sits in `/var/lib/private/<name>`.

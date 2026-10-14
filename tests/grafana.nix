@@ -304,7 +304,7 @@ in
       refused("victorialogs-ds", "GET", "/flags")
 
       # ...and nothing happened in the backends.
-      # vmstorage's flush: the samples are readable at once, not after its periodic one.
+      # Flush again, as above.
       machine.succeed("curl -sf http://127.0.0.1:4210/internal/force_flush")
       series = machine.succeed(
           "curl -sf http://127.0.0.1:4201/select/0/prometheus/api/v1/series --data-urlencode 'match[]={__name__=~\".+\"}'"
@@ -626,9 +626,9 @@ in
   # next run, so nothing ever revisits it. This only tests the Nix-level
   # setting itself (deterministic, under this module's own control) --
   # NOT the live Grafana behavior it's supposed to trigger: on the pinned
-  # Grafana version (13.1.6), `prune: true` does NOT actually prune anything
+  # Grafana version, `prune: true` does NOT actually prune anything
   # (upstream bug github.com/grafana/grafana/issues/94645, fix in
-  # grafana/grafana#83034, likely not yet in this pin; see grafana.nix's own
+  # grafana/grafana#83034; see nixosModule/victoriaStack/grafana.nix's own
   # comment). This test's scope is "did we configure the documented setting",
   # not "does upstream's bug happen to be fixed".
   prune-is-configured-for-datasource-provisioning =

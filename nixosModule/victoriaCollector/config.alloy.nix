@@ -48,8 +48,9 @@ let
     }
   '';
 
-  # Both inert unless configured (docs/decisions/0020) -- indented to
-  # nest correctly inside each exporter's own block below.
+  # tlsBlock and retryOnFailureBlock are inert unless configured
+  # (docs/decisions/0020); their lines are indented to nest inside each
+  # exporter's own block below.
   tlsBlock = lib.optionalString (cfg.alloy.tlsCaFile != null || cfg.alloy.tlsInsecureSkipVerify) ''
     tls {
     ${lib.optionalString (

@@ -1,9 +1,7 @@
 title = "gitleaks config for nixos-victoria-stack-module"
 
-# Extends gitleaks' own bundled default ruleset (confirmed default
-# behavior when no `[extend]` with `useDefault = false` is set) --
-# this file only adds allowlist entries on top, it doesn't replace the
-# base rules.
+# Extends gitleaks' bundled default ruleset; this file only adds allowlist
+# entries on top.
 [extend]
 useDefault = true
 

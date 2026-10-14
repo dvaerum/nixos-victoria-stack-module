@@ -1,8 +1,9 @@
 # Implementation plan: nixos-victoria-stack-module
 
-Source of truth for implementation and for independent review agents (who will
-not have the chat history this plan was negotiated in — only this file, the
-ADRs in `docs/decisions/`, and the code itself).
+Historical implementation log: the plan as negotiated, kept for independent
+review agents (who will not have the chat history). Where it disagrees with the
+ADRs in `docs/decisions/` or the code, those win; superseded claims below are
+marked.
 
 ## Goal
 
@@ -100,17 +101,20 @@ exposed directly via its own `listenAddress` when vmauth is off).
 - vmauth two SEPARATE credential-tier secrets (write vs read/admin), both
   YAML format with inline `#` comments, parsed via `yq-go` (not raw `jq -R`
   line-splitting).
-- Grafana: own built-in auth only, direct loopback, never through vmauth.
+- Grafana: own built-in auth only, direct loopback, never through vmauth
+  (superseded: ADR 0029, datasources go through vmauth's read tier).
 - `dataDir`/`dynamicUser` mismatch -> warning + suppress option, not a hard
   assertion.
 - Alloy's write-token: `otelcol.auth.headers` + `sys.env()` + `EnvironmentFile=`
-  — token never touches rendered `config.alloy` text.
+  — token never touches rendered `config.alloy` text (superseded: ADR 0006,
+  systemd credential).
 - journal-upload's write-token: nixpkgs' `services.journald.upload` module
   kept for non-secret settings; a root oneshot renders
   `/run/systemd/journal-upload.conf.d/50-write-token.conf` with just the
   `Header=` line (ADR 0012).
 - Every service (metrics/logs/traces/vmauth/all 3 MCP packages) gets its own
-  `.package` option; vmauth's defaults from metrics' via `mkDefault`.
+  `.package` option; vmauth's defaults from metrics' via `mkDefault`
+  (superseded: vmauth.package defaults to `pkgs.victoriametrics`).
 - Secrets: fully agnostic `...File` path options everywhere. No sops-nix
   dependency in module code. Composes with sops-nix's native one-key-per-secret
   addressing (documented, not re-implemented).
@@ -146,7 +150,8 @@ site.
 service only ever builds single-node CLI flags -- no
 `vminsert`/`vmselect`/`vmstorage` cluster-component wiring exists or is
 planned. Single-node only, today; not ruled out forever, just not part
-of this project's current scope.
+of this project's current scope. (Superseded: ADR 0033, the metrics
+cluster is the only mode.)
 
 ## Task list / phase order
 

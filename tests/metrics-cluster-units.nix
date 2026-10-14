@@ -1,7 +1,7 @@
 { pkgs, nixosModule }:
 
 # The three systemd units of the metrics cluster:
-# what is rendered (L1 tables) and how they behave booted (L3).
+# what is rendered (eval-only tables) and how they behave booted.
 let
   inherit (pkgs) lib;
   module = nixosModule.nixosModules.victoriaStack;
@@ -133,7 +133,7 @@ let
   '';
 in
 {
-  # --- L1 ---
+  # --- eval ---
 
   units-exist-and-the-single-node-unit-does-not = table "cluster-units-set" {
     "exactly the three, no single-node unit" =
@@ -351,7 +351,7 @@ in
         ];
   };
 
-  # --- L3 ---
+  # --- booted ---
 
   metrics-cluster-roundtrip = pkgs.testers.nixosTest {
     name = "victoria-stack-metrics-cluster-roundtrip";

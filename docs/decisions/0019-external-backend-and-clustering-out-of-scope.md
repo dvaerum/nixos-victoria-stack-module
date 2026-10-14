@@ -35,6 +35,9 @@ self-monitoring) still read `effectiveUrl`; `grafana.nix` and `mcp.nix` dial
 [0023](./0023-mcp-trust-boundary-extends-grafana.md)). The conclusion stands:
 there is still no external-backend support.
 
+Update: the metrics cluster units (`metrics-cluster-units.nix`) also read `effectiveUrl`
+(as the select URL) and self-monitoring reads `effectiveInsertUrl`, see the cluster Update below.
+
 ## Why
 
 Neither gap was ever discussed or decided against during this project's

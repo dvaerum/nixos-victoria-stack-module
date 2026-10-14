@@ -1,7 +1,7 @@
 { pkgs, nixosModule }:
 
 # Tenant-aware token entries (`tenant`, `tenants`) for logs and traces: the
-# render script's output (L3) and the real stack through vmauth (L4).
+# render script's output and the real stack through vmauth.
 let
   inherit (pkgs) lib;
 

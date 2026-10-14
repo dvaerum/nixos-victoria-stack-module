@@ -120,9 +120,7 @@ let
       '';
     };
 
-  # Throwaway server cert for vmauth's own TLS listener (same shape as
-  # tests/nginx.nix's selfSignedCert): the SAN must cover the address
-  # curl dials or verification fails closed.
+  # Throwaway server cert for vmauth's own TLS listener.
   selfSignedCert =
     pkgs.runCommand "vmauth-test-self-signed-cert" { nativeBuildInputs = [ pkgs.openssl ]; }
       ''
@@ -318,14 +316,9 @@ in
               metrics.enable = true;
               vmauth.backendTls = {
                 insecureSkipVerify = true;
-                # A real path within this flake's own source tree -- an
-                # absolute path outside it (e.g. the real
-                # /etc/ssl/certs/ca-certificates.crt) hits flakes' own
-                # pure-eval "path outside the flake" restriction when
-                # assigned to a types.path option (same class of
-                # restriction as the secret-type tests above).
-                # Content is irrelevant here, only that it's a real,
-                # evaluable path.
+                # A path inside the flake source: one outside it (e.g.
+                # /etc/ssl/certs/ca-certificates.crt) hits pure-eval's
+                # "path outside the flake" restriction. Content is irrelevant.
                 caFile = ./lib.nix;
                 certFile = "${writeTokensFixture}"; # any string fixture, content irrelevant here
                 keyFile = "${readTokensFixture}";
@@ -510,18 +503,11 @@ in
       (
         let
           evaluated = evalWith { };
-          # types.path's own check/merge functions coerce via toString at
-          # option-definition time (not lazily deferred to actual use), so
-          # builtins.tryEval cannot catch the crash this
-          # produces for a nonexistent path, because interpolating a real
-          # Nix `path` value through a flake's filtered source tree is a
-          # restricted-eval abort, not an ordinary catchable exception.
-          # Asserting the TYPE itself, rather than trying to reproduce one
-          # downstream symptom of the wrong type, is both simpler and more
-          # direct -- it's the actual root cause docs/decisions/0020
-          # describes (eval-time crash OR a Nix-store secret leak,
-          # depending on whether the path happens to exist on the build
-          # machine).
+          # types.path coerces at option-definition time and a restricted-eval
+          # abort is not catchable, so builtins.tryEval cannot observe the
+          # crash. Asserting the type itself targets the root cause
+          # (docs/decisions/0020): an eval-time crash or a Nix-store secret
+          # leak, depending on whether the path exists on the build machine.
           actualType =
             name: evaluated.options.services.victoriaStack.vmauth.${name}.type.nestedTypes.elemType.name;
           wrongTypes = builtins.filter (name: actualType name != "str") [
@@ -658,12 +644,8 @@ in
 
       # Open write path -- no credential at all, confirming
       # requireAuthForWrites = false genuinely leaves it unauthenticated.
-      # Real OTLP protobuf, not plaintext: VictoriaMetrics' actual
-      # /opentelemetry/v1/metrics handler rejects both a bare
-      # "/opentelemetry" path and non-protobuf bodies (see
-      # otlpMetricGenerator's own comment in tests/lib.nix). wait_until_succeeds, not succeed: VictoriaMetrics'
-      # own -search.latencyOffset keeps freshly-ingested data invisible to
-      # "now"-relative instant queries for ~30s by default.
+      # Real OTLP protobuf and wait_until_succeeds, not succeed: see
+      # otlpMetricGenerator in tests/lib.nix.
       machine.succeed(
           "${otlpMetric} victoria_stack_vmauth_test_metric 1 > /tmp/otlp.bin"
       )
@@ -744,7 +726,7 @@ in
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(4201)
 
-      # No credential: the write path must now reject the request (default
+      # No credential: the write path must reject the request (default
       # requireAuthForWrites = true).
       code, body = otlp_status(machine, "http://127.0.0.1:4204/opentelemetry/v1/metrics")
       assert code == "401" and "missing 'Authorization'" in body, (code, body)
@@ -1373,10 +1355,8 @@ in
   # state (never silently falls back to open) -- the counterpart to
   # write-paths-require-write-token-by-default above, which always
   # configured a writeTokensFile; this is the "never configured one"
-  # case, deliberately left unwarned (too many
-  # legitimate setups write directly to the backend, bypassing vmauth
-  # entirely, for this to be a safe-to-assume mistake; see the `warnings`
-  # comment in nixosModule/victoriaStack/vmauth.nix).
+  # case, deliberately left unwarned (see the `warnings` comment in
+  # nixosModule/victoriaStack/vmauth.nix).
   write-paths-reject-everything-when-no-write-tokens-file-configured = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-no-write-tokens-file-rejects-all-writes";
 
@@ -1414,8 +1394,7 @@ in
 
   # vmauth builds symmetric url_map entries for all 3 signal types
   # (nixosModule/victoriaStack/vmauth.nix), but every other container
-  # test in this file -- and the only real HTTP assertions in
-  # tests/full.nix -- exclusively exercise the metrics route. A regex
+  # test in this file exclusively exercises the metrics route. A regex
   # typo or wrong drop_src_path_prefix_parts specific to logs or traces
   # would pass every other test. This test exercises all 3 through
   # vmauth's actual routing+auth.
@@ -1533,10 +1512,9 @@ in
     '';
   };
 
-  # vmauth.package (ADR 0007) has a nontrivial conditional default (mkDefault,
-  # tracking metrics' own package when metrics is enabled, falling back to
-  # pkgs.victoriametrics otherwise); this checks that it reaches ExecStart
-  # and that both branches resolve.
+  # vmauth.package defaults to nixpkgs' victoriametrics (the cluster build has
+  # no vmauth binary, ADR 0007/0033); this checks the default reaches
+  # ExecStart and that an override does.
   #
   # lib.hasPrefix, not lib.hasInfix: a regex needle carrying store-path
   # context makes builtins.match refuse to compile ("is not allowed to
@@ -1564,9 +1542,7 @@ in
     pkgs.runCommand "vmauth-package-default-fallback" { }
       (
         let
-          # metrics disabled, logs enabled instead -- exercises the
-          # "else pkgs.victoriametrics" branch of vmauth's own package
-          # default.
+          # Any enabled backend: the default is the same.
           evaluated = evalWith { services.victoriaStack.logs.enable = true; };
           execStart = evaluated.config.systemd.services.vmauth.serviceConfig.ExecStart;
         in
@@ -1807,7 +1783,7 @@ in
     testScript = ''
       start_all()
       # The service must still fail closed (a typo must not silently serve
-      # zero tokens) -- but legibly now, naming the file and expected shape.
+      # zero tokens), and legibly, naming the file and expected shape.
       machine.fail("systemctl is-active vmauth.service")
       machine.succeed(
           "journalctl -u vmauth.service --no-pager "
@@ -4321,8 +4297,7 @@ in
     '';
   };
 
-  # The "matches every path" warning for the extra url maps recognised only a
-  # literal `.*` first; these spellings route everything just as well.
+  # A `.*`-equivalent spelling routes everything just as well, so it warns too.
   extra-url-map-match-everything-variants-warn =
     pkgs.runCommand "vmauth-match-everything-variants" { }
       (

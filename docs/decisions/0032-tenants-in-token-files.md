@@ -78,6 +78,9 @@ routes are cut from the closed read allow-list of
 - A tenant host's collector sends logs and traces only (`metrics.enable = false`);
   its tenant is its write token.
 
+Update: a tenant write token now also pushes metrics (see the metrics Update below);
+`tenant-write-token-metrics-push-lands-in-the-tenant` in `tests/collector.nix` covers it.
+
 Update: metrics now run on the cluster version, which has native tenants
 ([0033](./0033-metrics-cluster-replaces-single-node.md)); vmauth still serves tenant
 0 only until the metrics tenant stage.

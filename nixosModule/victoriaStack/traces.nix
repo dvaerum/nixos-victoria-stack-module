@@ -1,5 +1,3 @@
-# retentionPeriod = null means "don't pass the flag"; the binary's own default
-# applies (see options.nix, docs/decisions/0020).
 import ./storage-common.nix {
   name = "traces";
   unitName = "victoriatraces";

@@ -40,6 +40,10 @@ dedicated ADR.
   already does this generically for every NixOS service; the unit names
   (`victoriametrics`/`victorialogs`/`victoriatraces`) are now documented
   as a stable contract a consumer can target directly.
+
+  Update: the metrics unit is now `vmstorage` / `vminsert` / `vmselect`
+  ([0033](./0033-metrics-cluster-replaces-single-node.md)); the current list of
+  stable unit names is in README.md.
 - **Grafana datasource tuning** (`isDefault`, `jsonData`): no new
   options. `services.grafana.provision.datasources.settings` is already a
   fully generic NixOS option a consumer can set directly; this module's

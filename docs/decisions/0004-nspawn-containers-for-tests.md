@@ -14,6 +14,9 @@ because `switch-to-configuration` and specialisations need a full boot:
 `switch-keeps-deliberate-stop` in `tests/collector.nix`, and
 `storage-dynamicuser-switch-needs-manual-migration` in `tests/storage.nix`.
 
+**Update:** two more use `nodes.machine`, both in `tests/grafana-tenant-orgs.nix`:
+`victoria-stack-grafana-tenant-orgs-metrics` and `victoria-stack-grafana-tenant-orgs-runbook`.
+
 ## Why
 
 None of these scenarios need a kernel of their own, SUID binaries, or

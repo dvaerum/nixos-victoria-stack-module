@@ -4,7 +4,7 @@
 {
   name, # "metrics" | "logs" | "traces" -- the services.victoriaStack.<name> option subtree
   unitName, # systemd unit + static user/group name, e.g. "victoriametrics"
-  binaryName, # binary under ${package}/bin, e.g. "victoria-metrics"
+  binaryName, # binary under ${package}/bin, e.g. "victoria-logs"
   packageFor, # pkgs -> <name>.package's default, e.g. pkgs: pkgs.victorialogs
   defaultDataDir,
   description,

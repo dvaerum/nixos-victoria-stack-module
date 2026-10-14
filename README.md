@@ -5,7 +5,7 @@ VictoriaTraces stack with an auth gateway (vmauth), optional Grafana
 datasource wiring, optional nginx reverse-proxy, optional MCP servers, and a
 separate fleet-wide collector agent (`victoriaCollector`).
 
-See [`PLAN.md`](./PLAN.md) for the full design and task list,
+See [`PLAN.md`](./PLAN.md) for the historical implementation log,
 [`docs/decisions/`](./docs/decisions/) for the ADRs behind each real design
 decision, and [`docs/architecture.md`](./docs/architecture.md) for the
 default network topology (what's reachable from where, out of the box).
@@ -37,14 +37,11 @@ The smallest valid configuration:
 
 That alone gives you the VictoriaMetrics cluster (vminsert, vmselect and
 vmstorage, [0033](./docs/decisions/0033-metrics-cluster-replaces-single-node.md))
-listening on loopback, plus vmauth, which starts by default whenever a backend is on (also on loopback, with
-no users configured). No Grafana, no nginx,
-no collector. A fuller,
-realistic single-host setup (metrics + logs + traces + vmauth with both
-credential tiers + Grafana + nginx + MCP, plus the host collecting its own
-data) is in [`examples/default.nix`](./examples/default.nix) — this is the
-exact same configuration `tests/full.nix` exercises, so it's always
-up to date with what's actually tested.
+listening on loopback, plus vmauth, which starts by default whenever a backend
+is on (also on loopback, with no users configured). No Grafana, no nginx, no
+collector. A fuller, realistic single-host setup (metrics + logs + traces +
+vmauth with both credential tiers + Grafana + nginx + MCP, plus the host
+collecting its own data) is in [`examples/default.nix`](./examples/default.nix).
 
 In your flake:
 
@@ -302,8 +299,7 @@ a tenant. The rules and the reasons:
 
 One gateway host running `victoriaStack`, N other hosts running
 `victoriaCollector` with their own `hostType` and write token:
-[`examples/fleet.nix`](./examples/fleet.nix) (evaluated by
-`tests/collector.nix`, so it stays in sync with the real options).
+[`examples/fleet.nix`](./examples/fleet.nix).
 
 The file is a function returning `{ gateway; collector; }`, not a module, so
 `imports = [ ./fleet.nix ]` fails. Import it first and use its parts as modules.
@@ -366,7 +362,7 @@ The collector takes over a few things; everything else on those services stays y
   `/run/systemd/journal-upload.conf.d/50-write-token.conf`, which
   `victoria-collector-journal-upload-token.service` renders before the uploader
   first starts; a changed token file re-renders it and restarts the uploader
-  ([0006](./docs/decisions/0006-alloy-write-token-via-systemd-credential.md)).
+  ([0012](./docs/decisions/0012-journal-upload-oneshot-helper.md)).
 
 ## Upgrading / breaking changes
 
@@ -381,7 +377,8 @@ What changed incompatibly, and what to do:
   `extraReadUrlMap` or `openIngestPaths` must point at those paths, and
   `extraFlags` is per process (`insert.extraFlags`, `storage.extraFlags`).
 - **Ports renumbered** ([0017](./docs/decisions/0017-port-renumbering.md)):
-  services now default to `:4201`-`:4208` (`:4208` is vmauth's internal
+  services now default to `:4201`-`:4212` (see
+  [`docs/architecture.md`](./docs/architecture.md); `:4208` is vmauth's internal
   listener). Check firewalls and anything that dialled
   `:8428`/`:9428`/`:10428`/`:8880`, or pin the old ports through each `listenAddress`.
 - **Writes no longer go through nginx**
@@ -401,10 +398,8 @@ What changed incompatibly, and what to do:
 
 ## Escape hatches for things this module deliberately doesn't wrap
 
-Three things found useful in practice have no first-class option here on
-purpose -- all three are already fully configurable through the generic NixOS
-mechanism that already exists for them, so adding a second, narrower
-mechanism here would just be a worse version of something you already have:
+Three things have no first-class option because generic NixOS mechanisms
+already cover them:
 
 - **Systemd resource limits** (`MemoryMax`, `CPUQuota`, etc.) for the
   storage services: `systemd.services.<name>.serviceConfig` already does

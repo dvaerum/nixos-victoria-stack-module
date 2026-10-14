@@ -74,8 +74,7 @@ with this project's "opt-in, nothing reachable until you say so"
 philosophy (ADR 0002). **A real multi-host deployment must explicitly
 enable `services.victoriaStack.vmauth.https` and/or `.http`** (ADR 0025) —
 extra listeners on the same vmauth; `listenAddress` stays the internal
-loopback listener. Nothing about vmauth being "the gateway" makes this
-happen automatically.
+loopback listener.
 
 ## Connection topology
 
@@ -129,9 +128,9 @@ What you still have behind a proxy:
 - **vmauth is the only thing every storage backend's own native API
   goes through** when reached from outside this host — metrics/logs/
   traces/mcp×3 all bind loopback-only and have no other sanctioned way
-  out, with one exception: the opt-in `logs.syslog` slots, extra
-  VictoriaLogs listeners with no authentication that bypass vmauth
-  (ADR 0031).
+  out, apart from the opt-in doors and slots listed in the "Nothing in this topology"
+  bullet below (the `logs.syslog` slots carry no authentication and bypass
+  vmauth, ADR 0031).
 - **Tenants are decided at the gateway** (ADR 0032): vmauth stamps the tenant of
   a token's entry on its logs and traces routes and sends its metrics to that
   tenant's own cluster path, so the client cannot pick another; the admin tier

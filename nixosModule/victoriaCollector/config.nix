@@ -246,13 +246,11 @@ in
       systemd.services.systemd-journal-upload.serviceConfig.LoadCredential =
         lib.optional journaldIsHttps "trusted-ca:${toString cfg.trustedCertificateFile}";
 
-      # The write-token header drop-in: a dedicated, narrowly-scoped root
-      # oneshot, NOT systemd-journal-upload.service's own preStart -- see
-      # docs/decisions/0012 for why (that unit runs hardened/DynamicUser,
-      # with no write access to /run/systemd/ at all). The uploader cannot take
-      # the credential itself: Header= is read only from its config files (systemd
-      # 261 man page; the binary has no credential support), hence this render
-      # step (docs/decisions/0012).
+      # A dedicated root oneshot, not systemd-journal-upload.service's own
+      # preStart: that unit runs hardened/DynamicUser with no write access to
+      # /run/systemd (docs/decisions/0012). The uploader cannot take the
+      # credential itself: Header= is read only from its config files (systemd
+      # 261 man page; the binary has no credential support).
       systemd.services.victoria-collector-journal-upload-token = lib.mkIf (cfg.writeTokenFile != null) {
         description = "Render systemd-journal-upload's write-token Header= drop-in";
         before = [ "systemd-journal-upload.service" ];
@@ -293,18 +291,9 @@ in
       systemd.services.systemd-journal-upload.after = [ "vmauth.service" ];
       systemd.services.systemd-journal-upload.wants = [ "vmauth.service" ];
 
-      # Cross-host fix: a collector on a laptop or anything else with an
-      # intermittent network has no ordering fix available -- the gateway
-      # genuinely isn't reachable yet, for an unbounded amount of time,
-      # not a brief same-host startup race. systemd's own default
-      # StartLimitIntervalSec/StartLimitBurst (nixpkgs' systemd-journal-
-      # upload.service ships its own escalating Restart=/RestartSec=
-      # backoff up to 60s, untouched here) would eventually hit the
-      # permanent-stop ceiling and require a manual `systemctl
-      # reset-failed` -- wrong for a host that's expected to go offline
-      # and come back on its own schedule. 0 disables the ceiling
-      # entirely (systemd.service(5): "If set to 0, the limiting of start
-      # rate is disabled").
+      # A collector on an intermittent network has no ordering fix: the
+      # default start-limit ceiling would eventually stop the uploader for
+      # good and need `systemctl reset-failed`. 0 disables the ceiling.
       systemd.services.systemd-journal-upload.startLimitIntervalSec = 0;
     })
 

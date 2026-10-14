@@ -66,7 +66,6 @@ in
       ${testLib.waitActivePython}
       start_all()
 
-      # Every real unit this configuration stands up.
       wait_active(machine, "vmstorage.service")
       wait_active(machine, "vminsert.service")
       wait_active(machine, "vmselect.service")
@@ -87,10 +86,7 @@ in
 
       # End-to-end: write through vmauth with the write-tier token,
       # query back through vmauth with the read-tier token. Real OTLP
-      # protobuf, not plaintext -- VictoriaMetrics' actual
-      # /opentelemetry/v1/metrics handler rejects both a bare
-      # "/opentelemetry" path and non-protobuf bodies (see
-      # otlpMetricGenerator's comment in tests/lib.nix).
+      # protobuf: see otlpMetricGenerator in tests/lib.nix.
       machine.succeed(
           "${otlpMetric} victoria_stack_full_test_metric 1 > /tmp/otlp.bin"
       )
@@ -227,8 +223,7 @@ in
       )
 
       # Grafana reachable through nginx, datasources provisioned.
-      # wait_until_succeeds, not succeed: Grafana's HTTP port opens
-      # before its own startup migrations finish (a one-shot curl races).  # gitleaks:allow
+      # wait_until_succeeds, not succeed: see tests/nginx.nix (Grafana's port opens early).  # gitleaks:allow
       machine.wait_until_succeeds("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
       datasources = machine.succeed(
           "curl -sf -u admin:full-test-grafana-admin-password 'http://127.0.0.1:3000/api/datasources'"
@@ -336,9 +331,7 @@ in
       for m in (stack, collector):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")
-      # network-online.target can be reached even if the collector's address
-      # unit failed in the container; fail early and clearly instead of
-      # timing out later waiting for data.
+      # Why ping first: see the note in tests/collector.nix.
       collector.wait_until_succeeds("ping -c 1 stack")
 
       tls = "--cacert ${stackSelfSignedCert}/cert.pem --resolve stack:443:127.0.0.1"

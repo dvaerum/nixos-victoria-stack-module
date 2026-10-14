@@ -8,7 +8,7 @@
 #
 # Like fleet.nix this is a function returning { gateway; collector; }, not a
 # module. tests/collector.nix evaluates it and runs the two-collector
-# end-to-end case (collector-tenant-write-token-lands-logs-in-that-tenant).
+# end-to-end case (victoria-collector-tenant-write-token-lands-logs-in-that-tenant).
 #
 # Secret file paths are placeholders; docs/decisions/0008.
 {

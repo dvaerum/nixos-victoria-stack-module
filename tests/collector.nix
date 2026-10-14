@@ -68,8 +68,7 @@ let
 
   # SAN for the container hostname "stack": Alloy verifies the gateway's
   # certificate against this CA, so the name must match what the collector
-  # dials (same lesson as tests/nginx.nix's selfSignedCert -- without a
-  # SAN, verification fails closed).
+  # dials.
   stackSelfSignedCert =
     pkgs.runCommand "collector-test-stack-self-signed-cert" { nativeBuildInputs = [ pkgs.openssl ]; }
       ''
@@ -183,11 +182,10 @@ let
 
 in
 {
-  # The one genuinely novel integration risk this whole project called
-  # out explicitly: two separate containers, one shipping real telemetry
-  # over the network to the other's vmauth gateway, end to end. Runs
-  # for real, since nixpkgs' own containers.nix framework self-test proves container<->container
-  # networking in the abstract (docs/decisions/0004).
+  # Two separate containers: one ships real telemetry over the network to the
+  # other's vmauth gateway, end to end. nixpkgs' own containers.nix framework
+  # self-test only proves container<->container networking in the abstract
+  # (docs/decisions/0004).
   metrics-roundtrip-across-containers = pkgs.testers.nixosTest {
     name = "victoria-collector-metrics-roundtrip-across-containers";
 
@@ -251,8 +249,8 @@ in
       # schedule (batch processor default interval) -- wait for the
       # collector's own host metric to actually arrive and become
       # queryable on the stack side, rather than assuming a fixed sleep
-      # is enough. Queried directly against victoriametrics' own loopback
-      # port (no credential needed there -- only vmauth gates access; the metric reaching
+      # is enough. Queried directly against vmselect's loopback port (no
+      # credential needed there -- only vmauth gates access; the metric reaching
       # the backend AT ALL through vmauth's authenticated write path is
       # the actual thing this test cares about).
       stack.wait_until_succeeds(
@@ -1127,7 +1125,7 @@ in
           countOccurrences = needle: haystack: (lib.length (lib.splitString needle haystack)) - 1;
           checks = {
             "no tls block when unset" = !(lib.hasInfix "tls {" textUnset);
-            # Retrying forever is now the default (the disk queue is what bounds
+            # Retrying forever is the default (the disk queue is what bounds
             # data held during an outage), so the block exists with ONLY that.
             "unset: retry block holds only max_elapsed_time = 0s" =
               lib.hasInfix "retry_on_failure {" textUnset
@@ -1186,8 +1184,7 @@ in
       );
 
   # The StateDirectory itself (with or without a trailing slash) is inside;
-  # prefix look-alikes are outside. A prefix-only test counted the directory
-  # itself as outside: false warning, extra ReadWritePaths and tmpfiles rule.
+  # prefix look-alikes are outside.
   queue-directory-statedir-boundary = pkgs.runCommand "queue-directory-statedir-boundary" { } (
     let
       probe =
@@ -1892,7 +1889,7 @@ in
   };
 
   # Same-host ordering: both services that export to a
-  # (possibly co-located) vmauth gateway now carry after/wants on it.
+  # (possibly co-located) vmauth gateway carry after/wants on it.
   # A plain unit name is a safe no-op on a collector-only host where
   # vmauth.service doesn't exist at all (systemd silently ignores an
   # After=/Wants= target with no matching unit).
@@ -1951,10 +1948,7 @@ in
   # already tracks via its own reloadTriggers (nixos/modules/services/
   # monitoring/alloy.nix, wired to ExecReload = kill -SIGHUP), shadowed
   # that lighter mechanism and forced a full stop+start on every
-  # collector config change instead (observed with a real
-  # switch-to-configuration between two generations differing only in
-  # hostType: MainPID changed with restartTriggers present, stayed
-  # stable once removed). A hard restart drops the local OTLP receiver
+  # collector config change instead. A hard restart drops the local OTLP receiver
   # (4317/4318) and host-metrics scraping for the duration, for a change
   # Alloy's own module is specifically designed to reload in place
   # instead. Uses nodes.machine (a real VM, not a container) --
@@ -2100,10 +2094,9 @@ in
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
       collector.wait_for_unit("network-online.target")
-      # network-online.target can be reached even if the collector's own
-      # address unit failed to start in the container (seen once in a
-      # 240-check run: the collector never got an IP and the test timed
-      # out 120s later) -- fail early and clearly instead.
+      # network-online.target can be reached although the collector's own
+      # address unit failed to start; the ping fails early and clearly
+      # instead of the test timing out later.
       collector.wait_until_succeeds("ping -c 1 stack")
 
       stack.wait_until_succeeds(
@@ -2150,10 +2143,6 @@ in
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
       collector.wait_for_unit("network-online.target")
-      # network-online.target can be reached even if the collector's own
-      # address unit failed to start in the container (seen once in a
-      # 240-check run: the collector never got an IP and the test timed
-      # out 120s later) -- fail early and clearly instead.
       collector.wait_until_succeeds("ping -c 1 stack")
 
       stack.wait_until_succeeds(
@@ -2218,10 +2207,6 @@ in
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
       collector.wait_for_unit("network-online.target")
-      # network-online.target can be reached even if the collector's own
-      # address unit failed to start in the container (seen once in a
-      # 240-check run: the collector never got an IP and the test timed
-      # out 120s later) -- fail early and clearly instead.
       collector.wait_until_succeeds("ping -c 1 stack")
 
       collector.succeed("logger --tag victoria-collector-test 'victoria_stack_three_signals_log_marker'")
@@ -2383,8 +2368,8 @@ in
       for m in (stack, collector_a, collector_b):
           m.systemctl("start network-online.target")
           m.wait_for_unit("network-online.target")
-      # See the note in the single-collector tests: fail early if a collector
-      # never got its address.
+      # Fail early if a collector never got its address (first ping note
+      # above, in the single-collector tests).
       for c in (collector_a, collector_b):
           c.wait_until_succeeds("ping -c 1 stack")
 
@@ -2594,10 +2579,6 @@ in
       collector.systemctl("start network-online.target")
       stack.wait_for_unit("network-online.target")
       collector.wait_for_unit("network-online.target")
-      # network-online.target can be reached even if the collector's own
-      # address unit failed to start in the container (seen once in a
-      # 240-check run: the collector never got an IP and the test timed
-      # out 120s later) -- fail early and clearly instead.
       collector.wait_until_succeeds("ping -c 1 stack")
 
       def has(metric):

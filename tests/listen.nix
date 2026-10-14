@@ -234,8 +234,8 @@ in
       "specific address untouched" = proxyPassFor "10.0.0.7" == "\"http://10.0.0.7:3000\"";
     };
 
-  # The collision assertion compared raw strings, so `0.0.0.0:4204` next to
-  # vmauth's `127.0.0.1:4204` passed although they cannot both bind.
+  # `0.0.0.0:4204` next to vmauth's `127.0.0.1:4204` must collide: they cannot
+  # both bind.
   listener-collision-considers-wildcards =
     let
       fires =
@@ -454,7 +454,7 @@ in
 
   # For real, with wildcard listen addresses on the database, its MCP server and
   # vmauth: every module-built URL must dial loopback (a raw wildcard would
-  # render the self-monitoring push as http://:4201/... and nginx's upstream as
+  # render the self-monitoring push as http://:4209/... and nginx's upstream as
   # http://:4204).
   wildcard-listen-address-works-end-to-end = pkgs.testers.nixosTest {
     name = "victoria-stack-wildcard-listen-end-to-end";

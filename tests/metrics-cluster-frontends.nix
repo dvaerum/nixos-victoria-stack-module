@@ -53,7 +53,7 @@ let
   '';
   adminPassword = pkgs.writeText "frontends-admin-password" "frontends-admin-password-value";
 
-  # ---- L1 ----
+  # ---- eval ----
   cluster = evalWith {
     services.victoriaStack = {
       metrics = {
@@ -91,7 +91,7 @@ let
       ) e.config.services.grafana.provision.datasources.settings.datasources
     );
 
-  # ---- L4 ----
+  # ---- booted ----
   mcpClientPython = ''
     import json
 
@@ -165,7 +165,7 @@ let
   '';
 in
 {
-  # --- L1 ---
+  # --- eval ---
 
   cluster-frontends-ordering-lists = table "cluster-frontends-ordering" {
     "the metrics MCP waits for vmselect and vmauth, exactly" =
@@ -205,7 +205,7 @@ in
       (datasourceUrls cluster).victoriametrics-ds == "http://127.0.0.1:4204/metrics";
   };
 
-  # --- L4 ---
+  # --- booted ---
 
   grafana-reads-the-cluster-through-vmauth = pkgs.testers.nixosTest {
     name = "victoria-stack-grafana-reads-the-cluster";

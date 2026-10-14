@@ -39,9 +39,9 @@ let
       # default. Passing any value replaces it, so it is unioned in
       # below. See the `disabledTools` option text for why.
       upstreamDefaultDisabledTools ? [ ],
-      # Tools that read /flags or /api/v1/status/tsdb or show other users'
-      # query text (docs/decisions/0023). Other tools off the allow-list stay
-      # listed and fail with vmauth's 400. Not operator-liftable.
+      # Tools that show other users' query text or call endpoints off vmauth's
+      # read allow-list (reasons at each call site; docs/decisions/0023).
+      # Not operator-liftable.
       moduleDefaultDisabledTools ? [ ],
     }:
     let

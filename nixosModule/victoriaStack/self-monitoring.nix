@@ -5,9 +5,10 @@
 { lib }:
 {
   # The flags for one service, as RAW strings (the caller does any shell
-  # escaping its own ExecStart construction needs); empty unless enabled AND the metrics database
-  # exists to push into (assertions.nix reports the missing-metrics case, so
-  # this must not throw before that message can be shown).
+  # escaping its own ExecStart construction needs); empty unless enabled AND
+  # the metrics database exists to push into (assertions.nix reports the
+  # missing-metrics case, so this must not throw before that message can be
+  # shown).
   mkFlags =
     {
       selfMonitoring, # services.victoriaStack.<svc>.selfMonitoring

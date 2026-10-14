@@ -3,8 +3,8 @@
 # vmauth in front of the metrics cluster: client
 # paths stay `/metrics/...` and `/opentelemetry/...`, vmauth rewrites them to
 # vmselect's `/select/0/prometheus/...` and vminsert's `/insert/0/...`.
-# L1: the rendered url maps; L3: config.json per token tier; L4: the real
-# processes through vmauth.
+# Sections: the rendered url maps (eval-only), config.json per token tier
+# (render script), the real processes through vmauth (booted).
 let
   inherit (pkgs) lib;
 
@@ -88,7 +88,7 @@ let
   firstMetrics =
     m: lib.head (lib.filter (e: lib.any (lib.hasPrefix "/metrics") (e.src_paths or [ ])) m);
 
-  # ---- L3 ----
+  # ---- render script ----
   adminPassword = pkgs.writeText "admin-password" "admin-password-value\n";
   readTokens = pkgs.writeText "read-tokens.yaml" ''
     tokens:
@@ -176,7 +176,7 @@ let
       '';
     };
 
-  # ---- L4 ----
+  # ---- booted ----
   roundtripTokens = {
     read = pkgs.writeText "rt-read-tokens.yaml" ''
       tokens:
@@ -189,7 +189,7 @@ let
   };
 in
 {
-  # --- L1 ---
+  # --- eval ---
 
   cluster-read-tier-routes-to-vmselect-under-select-0 = table "vmauth-cluster-read-tier" {
     "exactly the closed list, rewritten under /select/0/prometheus/" =
@@ -284,11 +284,11 @@ in
           logsOnly.config.services.victoriaStack.vmauth.package.outPath == pkgs.victoriametrics.outPath;
       };
 
-  # --- L3 ---
+  # --- render script ---
 
   cluster-renders-each-token-tier = renderTest;
 
-  # --- L4 ---
+  # --- booted ---
 
   vmauth-cluster-roundtrip = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-cluster-roundtrip";

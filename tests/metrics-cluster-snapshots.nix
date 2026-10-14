@@ -119,7 +119,7 @@ let
   '';
 in
 {
-  # --- L1: snapshots ---
+  # --- eval: snapshots ---
 
   cluster-snapshots-unit-posts-to-vmstorage = table "cluster-snapshots-unit" {
     "unit and timer exist, named for vmstorage" =
@@ -182,7 +182,7 @@ in
       && !(snapshotsOff.systemd.services ? "victoriametrics-snapshot");
   };
 
-  # --- L1: the snapshot-key assertion follows the process that serves /snapshot ---
+  # --- eval: the snapshot-key assertion follows the process that serves /snapshot ---
 
   cluster-snapshots-key-flag-assertion-hangs-off-storage = table "cluster-snapshots-key-assertion" {
     "storage.extraFlags with the key flag is rejected, naming that option" =
@@ -215,7 +215,7 @@ in
       }) == [ ];
   };
 
-  # --- L1: self-monitoring ---
+  # --- eval: self-monitoring ---
 
   cluster-self-monitoring-pushes-to-vminsert = table "cluster-self-monitoring" {
     "vmstorage" = hasPush fullOn "vmstorage" "vmstorage" insertPush;
@@ -269,7 +269,7 @@ in
       lib.length (lib.unique jobs) == lib.length jobs;
   };
 
-  # --- L3 ---
+  # --- booted ---
 
   cluster-snapshot-creates-and-skips-when-stopped = pkgs.testers.nixosTest {
     name = "victoria-stack-cluster-snapshot";

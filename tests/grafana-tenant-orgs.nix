@@ -1,8 +1,8 @@
 { pkgs, nixosModule }:
 
 # Per-tenant Grafana datasources (tenants.<name>.grafanaOrgId + readTokenFile,
-# docs/decisions/0032-tenants-in-token-files.md): the provisioned settings and assertions (L1), and the
-# real stack with the runbook's steps (L3, a VM because it switches
+# docs/decisions/0032-tenants-in-token-files.md): the provisioned settings and assertions (eval-only), and the
+# real stack with the runbook's steps (booted, a VM because it switches
 # configurations, like the operator's deploy does).
 let
   inherit (pkgs) lib;
@@ -60,7 +60,7 @@ let
   tokenA = "/run/secrets/grafana-a-token";
   tokenB = "/run/secrets/grafana-b-token";
 
-  # ---- L1: the provisioned settings -------------------------------------
+  # ---- eval: the provisioned settings -------------------------------------
   settingsOf = evaluated: evaluated.config.services.grafana.provision.datasources.settings;
   vmauthUrl = "http://127.0.0.1:4204";
   headerFor = n: "$__file{/run/grafana/vmauth-authorization-${n}}";
@@ -268,7 +268,7 @@ let
         }"
     );
 
-  # ---- L1: assertions ---------------------------------------------------
+  # ---- eval: assertions ---------------------------------------------------
   repeat = n: c: lib.concatStrings (lib.genList (_: c) n);
   rejectCases = {
     org-id-without-token-file = {
@@ -356,7 +356,7 @@ let
         throw "accepted but should be refused: ${builtins.toJSON wrongly}"
     );
 
-  # ---- L3: the runbook, step by step in a VM -----------------------------
+  # ---- booted: the runbook, step by step in a VM -----------------------------
   tokenFixtureA = "tenant-a-grafana-token"; # gitleaks:allow
   tokenFixtureB = "tenant-b-grafana-token"; # gitleaks:allow
   secretDir = "/var/lib/grafana-tenant-secrets";

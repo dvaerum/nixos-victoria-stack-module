@@ -8,6 +8,10 @@ packages' binaries (`vmauth` ships in `pkgs.victoriametrics`). They do not impor
 configure nixpkgs' own `services.victoriametrics`/`services.victorialogs`/
 `services.victoriatraces` modules at all.
 
+Update: `metrics.package` is now the cluster package
+([0007](./0007-package-override-options.md),
+[0033](./0033-metrics-cluster-replaces-single-node.md)); the decision itself still holds.
+
 ## Why
 
 Both real deployments this module generalizes from independently hit the same wall and independently built the same

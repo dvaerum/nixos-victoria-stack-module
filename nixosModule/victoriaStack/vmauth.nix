@@ -10,8 +10,8 @@ let
   cfg = topCfg.vmauth;
 
   anyBackendEnabled = topCfg.metrics.enable || topCfg.logs.enable || topCfg.traces.enable;
-  # Reads go to vmselect, writes to vminsert, each under a tenant prefix.
-  # Tenant 0 only for now.
+  # Reads go to vmselect, writes to vminsert, each under the default tenant 0
+  # prefix; tenant tokens are retargeted from it (vmauth-jq/tenant-routes.jq).
   metricsReadPrefix = "${topCfg.metrics.effectiveSelectUrl}/select/0/prometheus/";
   metricsWritePrefix = "${topCfg.metrics.effectiveInsertUrl}/insert/0/";
   selfMonitoring = import ./self-monitoring.nix { inherit lib; };
@@ -135,16 +135,13 @@ let
   # stripped `/victoria`; vmauth has no subpath awareness of its own.
   #
   # Read via each backend's own effectiveUrl (docs/decisions/0019), not
-  # listenAddress directly -- MCP's own listenAddress stays a direct
-  # read: those proxies are tightly coupled to a co-located backend by
-  # construction, not a meaningful target for future remote-backend
-  # support the way the 3 storage services are.
+  # listenAddress. The MCP routes below dial the MCP listenAddress
+  # directly: those units are co-located by construction.
   #
   # Curated allow-lists, NOT a blanket "/metrics/.*"-style passthrough
   # (docs/decisions/0021): a blanket passthrough let a read-tier
   # credential reach /api/v1/import (write arbitrary data) and
-  # /api/v1/admin/tsdb/delete_series (permanently delete data) --
-  # verified live, a real, severe privilege-escalation bug. Fails
+  # /api/v1/admin/tsdb/delete_series (permanently delete data). Fails
   # closed: a future backend release's new endpoint not yet added here
   # is rejected by default, not silently allowed (the opposite failure
   # mode of the bug this fixes). New legitimate read endpoints need this
@@ -152,12 +149,10 @@ let
   readUrlMap =
     withExtraHeaders (
       lib.optional topCfg.metrics.enable {
-        # Confirmed from VictoriaMetrics' own "Reads" API docs, and this
-        # exact set (query/query_range/series/labels/label values) is also
-        # vmauth's own official per-tenant-authorization example -- not
-        # improvised. /api/v1/export* is a genuine read (dumps data out,
-        # distinct from /api/v1/import*, the write path); /federate is
-        # Prometheus's own federation read endpoint.
+        # query/query_range/series/labels/label values is vmauth's own
+        # documented per-tenant-authorization example. /api/v1/export* is a
+        # read (unlike /api/v1/import*); /federate is Prometheus's
+        # federation read endpoint; /metadata is a read.
         src_paths = [
           "/metrics/api/v1/query"
           "/metrics/api/v1/query_range"

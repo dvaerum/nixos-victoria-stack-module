@@ -186,7 +186,7 @@ let
   # posts a genuinely valid OTLP body to the real ingest path and returns
   # (http_status, body), so an assertion on vmauth's own answer (401 "missing
   # 'Authorization'", 401 "Unauthorized", 400 "missing route") proves vmauth, not
-  # the backend, refused it. Measured against vmauth 1.153.
+  # the backend, refused it. Measured against vmauth.
   otlpTestPython = ''
     def otlp_status(machine, url, auth=""):
         machine.succeed("${otlpMetricGenerator}/bin/gen-otlp-metric victoria_stack_negative_control 1 > /tmp/otlp-probe.bin")
@@ -286,9 +286,8 @@ let
 
   # Test-script snippet: one request, answered as (http_status, body). For
   # negative controls that must name WHO refused: vmauth says 401 "missing
-  # 'Authorization'" / 401 "Unauthorized" / 400 "... missing route ...", while a
-  # bare `curl -sf` failing only proves some refusal happened (a backend 4xx, a
-  # connection error). Measured against vmauth 1.153.
+  # 'Authorization'" / 401 "Unauthorized" / 400 "... missing route ..." (see
+  # otlpTestPython for why a bare `curl -sf` is too weak a control).
   httpTestPython = ''
     def http(machine, url, auth="", extra=""):
         out = machine.succeed(f"curl -s -w '\\n%{{http_code}}' {auth} {extra} '{url}'")

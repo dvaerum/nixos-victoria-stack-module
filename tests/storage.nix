@@ -523,7 +523,7 @@ in
     serviceAttr = "traces";
   };
 
-  # Previously untested for logs/traces: retentionPeriod, extraFlags, and a
+  # retentionPeriod, extraFlags, and a
   # listenAddress override all reaching ExecStart / effectiveUrl correctly.
   # Metrics' equivalent is the exec-start table in metrics-cluster-units.nix.
   logs-retention-extraoptions-listenaddress-reach-execstart = mkExecStartOptionsCheck {
@@ -662,12 +662,8 @@ in
       mode = machine.succeed("stat -c %a /data/victoria/metrics").strip()
       assert mode == "750", f"expected /data/victoria/metrics to be 0750, got {mode!r}"
 
-      # User+ownership alone doesn't prove the service can actually write
-      # to and read from that directory -- a real ingest/query roundtrip
-      # against the static-user + custom-dataDir combination specifically
-      # (the default-dynamicUser combination already has its own
-      # roundtrip test above; this confirms the same path isn't broken
-      # by the static-user/custom-dataDir option combination).
+      # Ownership alone does not prove the service can write and read there:
+      # a real ingest/query roundtrip with the static user and custom dataDir.
       machine.succeed(
           "curl -sf -X POST --data-binary "
           "'victoria_stack_static_user_test_metric{label=\"roundtrip\"} 7' "
@@ -1170,7 +1166,7 @@ in
       '';
     };
 
-  # Disk-usage retention is logs/traces only -- victoria-metrics has no
+  # Disk-usage retention is logs/traces only -- vmstorage has no
   # such flag (its own `-help`).
   disk-usage-retention-reaches-execstart-for-logs-and-traces =
     pkgs.runCommand "disk-usage-retention" { }
@@ -2891,8 +2887,7 @@ in
     in
     pkgs.runCommand "retention-minimum-matches-the-real-binaries" { } ''
       mkdir failures
-      # vmstorage also listens on two RPC ports (8400/8401 by default), which
-      # the concurrent probes would fight over.
+      # RPC ports: see retention-and-size-grammar-matches-the-real-binaries.
       extra_flags() {
         case "$1" in
           */vmstorage) echo "-vminsertAddr=127.0.0.1:0 -vmselectAddr=127.0.0.1:0" ;;
@@ -2947,8 +2942,7 @@ in
     in
     pkgs.runCommand "retention-maximum-matches-the-real-binaries" { } ''
       mkdir failures
-      # vmstorage also listens on two RPC ports (8400/8401 by default), which
-      # the concurrent probes would fight over.
+      # RPC ports: see retention-and-size-grammar-matches-the-real-binaries.
       extra_flags() {
         case "$1" in
           */vmstorage) echo "-vminsertAddr=127.0.0.1:0 -vmselectAddr=127.0.0.1:0" ;;

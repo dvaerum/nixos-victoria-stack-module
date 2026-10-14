@@ -52,6 +52,10 @@ plain `wait4x --timeout 5m` left a crashed unit in `activating (start-post)` for
 whole five minutes. The deadline therefore only bounds how long a *live* but
 unready process is waited for; a slow start is still given all of it.
 
+Update: the metrics cluster units (`vmstorage`, `vminsert`, `vmselect`) probe `/health`
+instead of `/ping`, and `LimitNOFILE` sits on the cluster processes that carry it
+([0033](./0033-metrics-cluster-replaces-single-node.md)).
+
 Hardening is also applied to `vmauth.nix` and `mcp.nix`'s three services,
 each with its own probe target: vmauth is checked with a TCP probe
 (`<listen address>`, 90s deadline: with `-httpInternalListenAddr`

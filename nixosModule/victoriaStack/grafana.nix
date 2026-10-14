@@ -141,12 +141,10 @@ in
         isDefault = false on all but one (README, "Escape hatches").
       '';
 
-    # Neither VictoriaMetrics nor VictoriaLogs is what Grafana's built-in
-    # "prometheus"/"loki" datasource types actually expect on the wire
-    # (VictoriaLogs speaks its own LogsQL, not LogQL) -- these are the
-    # real, VictoriaMetrics-authored plugins for exactly this. Traces need
-    # no plugin: VictoriaTraces implements the real Jaeger HTTP API, so
-    # Grafana's built-in "jaeger" type works directly.
+    # VictoriaMetrics' own datasource plugins are used; VictoriaLogs speaks
+    # LogsQL, not LogQL, so the built-in "loki" type does not fit. Traces
+    # need no plugin: VictoriaTraces implements the Jaeger HTTP API, so the
+    # built-in "jaeger" type works.
     services.grafana.declarativePlugins = lib.mkMerge [
       (lib.mkIf topCfg.metrics.enable [ pkgs.grafanaPlugins.victoriametrics-metrics-datasource ])
       (lib.mkIf topCfg.logs.enable [ pkgs.grafanaPlugins.victoriametrics-logs-datasource ])

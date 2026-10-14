@@ -23,8 +23,7 @@ buildGoModule (finalAttrs: {
 
   subPackages = [ "cmd/mcp-victoriametrics" ];
 
-  # Upstream requires Go 1.26+; keep the nixpkgs Go at or above that (no
-  # toolchain override).
+  # Upstream requires Go 1.26+; keep the nixpkgs Go at or above that.
 
   meta = {
     description = "Model Context Protocol (MCP) server for VictoriaMetrics";

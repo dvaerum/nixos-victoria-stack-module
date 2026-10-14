@@ -21,7 +21,7 @@ let
 
   # Same shape as storage.nix's mkHardeningCheck, minus LimitNOFILE --
   # no nixpkgs module to confirm a LimitNOFILE value against here. The
-  # readiness probe itself (mcp.nix) has its own dedicated eval
+  # readiness probe itself has its own dedicated eval
   # check below, not folded into this one.
   mkMcpHardeningCheck =
     {
@@ -138,7 +138,7 @@ in
   # logLevel/logFormat are genuinely shared/inert-unless-configured
   # across all 3 backends -- exercised via logs here (not metrics, see
   # the dedicated disabledTools-union tests below for why metrics' own
-  # disabledTools behavior needs separate, more specific coverage now).
+  # disabledTools behavior needs separate, more specific coverage).
   mcp-log-and-disabled-tools-options-are-inert-unless-configured =
     pkgs.runCommand "mcp-log-and-disabled-tools-inert-unless-configured" { }
       (
@@ -790,9 +790,8 @@ in
         new = recorded()[len(before):]
         assert all(l.split(" | ")[0].startswith("GET /select/jaeger/api/services/") for l in new) and len(new) <= 1, \
             f"an absolute-URL service name must stay on the same backend, got {new!r}"
-        # FINDING: the traces MCP does not validate `tenant` (logs does): it goes out
-        # as the ProjectID header, never into the path. Stage 1's vmauth-stamped
-        # tenant is what bounds it; today it is only data in a header value.
+        # The traces MCP does not validate `tenant` (logs does): it goes out as a
+        # header, never into the path, and vmauth's stamped tenant is what bounds it.
         before = recorded()
         _, _, sid = open_session(recorder, "traces", ADMIN)
         call(recorder, "traces", ADMIN, sid, "services", {"tenant": "0:0/../../flags"})
@@ -1178,7 +1177,6 @@ in
 
   # MCP's listenAddress left at its loopback default: the unit must come up
   # cleanly and stay loopback-only -- no crash loop, no surprise wildcard bind.
-  # (Replaces the vmauth-off variant, see mcp-binds-a-wildcard-listen-address.)
   mcp-stays-loopback-by-default = pkgs.testers.nixosTest {
     name = "victoria-stack-mcp-loopback-default";
 

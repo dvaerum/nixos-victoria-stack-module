@@ -91,25 +91,16 @@ in
       '';
 
       virtualHosts."victoria-stack" = {
-        # "victoria-stack" is a stable, documented, intentional public
-        # extension point (ADR 0022), not an internal implementation
-        # detail -- this module deliberately has no TLS/ACME option of
-        # its own (options.nix: "deliberately has no ACME/TLS opinion").
-        # An operator wanting HTTPS configures it directly on this same
-        # virtualHost, e.g.:
+        # "victoria-stack" is a public extension point (ADR 0022): the module
+        # has no TLS/ACME option of its own, so HTTPS is configured on this
+        # same virtualHost, e.g.:
         #
         #   services.nginx.virtualHosts."victoria-stack" = {
         #     forceSSL = true;
         #     enableACME = true;
         #   };
         #
-        # NixOS's module system merges that operator config with
-        # everything this module defines on the same attribute name --
-        # same philosophy as ADR 0010 (the consumer owns services.grafana's
-        # users and settings; this module only adds provisioning, the
-        # read-token wiring and a root_url default). Renaming this key is a
-        # breaking change for any such operator config, same severity as
-        # changing an option's own name.
+        # Renaming this key breaks any such operator config.
         locations = {
           # Reads only (docs/decisions/0025): the read prefixes are
           # proxied to vmauth, with "/victoria" stripped by hand -- a

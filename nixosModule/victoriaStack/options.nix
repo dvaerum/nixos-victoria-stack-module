@@ -627,7 +627,7 @@ let
             (docs/decisions/0021) apply to every tool call. A tool whose
             backend endpoint is outside that list fails with vmauth's
             `400 missing route`; the module hides the ones that always do
-            (`alerts`, `rules`, `prettify_query`, `metric_statistics`, ...). A request without a valid token (for
+            (`alerts`, `rules`, `prettify_query`, `metric_statistics`). A request without a valid token (for
             example one sent straight to this listener) is answered with
             vmauth's 401 by the tool call.
 
@@ -684,12 +684,12 @@ let
             on the wire; this option takes a real Nix list and joins it).
             `[ ]` (the default) adds nothing beyond what the binary
             disables on its own and what this module disables by default:
-            tools that read `/flags` or `/api/v1/status/tsdb` or show other
-            users' query text (`flags` for logs; `active_queries`,
-            `top_queries` and `tsdb_status` for metrics; none for traces).
-            Other tools outside vmauth's allow-list stay visible and fail
-            with `400 missing route` (docs/decisions/0023); there is no
-            option to un-hide the default set. Each binary's
+            tools that show other users' query text or call endpoints outside
+            vmauth's read allow-list (`flags` for logs; `active_queries`,
+            `top_queries`, `tsdb_status`, `alerts`, `rules`,
+            `metric_statistics` and `prettify_query` for metrics; none for
+            traces; docs/decisions/0023). There is no option to un-hide the
+            default set. Each binary's
             own README documents its available tool names -- e.g.
             `documentation` disables an embedded vector-database tool
             that's otherwise the dominant source of that MCP server's
@@ -751,8 +751,9 @@ in
           '';
           startupTimeout = ''
 
-            This bounds the wait for vmstorage, and the snapshot options
-            (`snapshots.*`) apply to vmstorage as well.
+            This bounds the readiness wait and `TimeoutStartSec` of each of the
+            three processes (vmstorage, vminsert, vmselect). The snapshot options
+            (`snapshots.*`) apply to vmstorage.
           '';
         };
       }
@@ -860,8 +861,8 @@ in
               type = types.ints.between 0 4294967295;
               example = 7;
               description = ''
-                The AccountID VictoriaLogs and VictoriaTraces store this tenant's data
-                under (a 32-bit unsigned number). Together with `projectId` it must be
+                The AccountID this tenant's metrics, VictoriaLogs and VictoriaTraces
+                data is stored under (a 32-bit unsigned number). Together with `projectId` it must be
                 unique among the declared tenants. It is the permanent key of the data:
                 changing it later leaves the data stored under the old number, where
                 nothing reads it any more.
@@ -1281,7 +1282,7 @@ in
             - token: "tracing-only-host-secret"
               backends: ["traces"]               # scoped
             - token: "team-a-host-secret"
-              tenant: team-a                     # logs and traces of tenant team-a
+              tenant: team-a                     # logs, traces and metrics of tenant team-a
           ```
 
           **Breaking change:** entries used to be bare strings
@@ -1408,8 +1409,8 @@ in
         default = [ ];
         example = [
           {
-            src_paths = [ "/write" ];
-            url_prefix = "http://127.0.0.1:4201/";
+            src_paths = [ "/api/v1/import/prometheus" ];
+            url_prefix = "http://127.0.0.1:4209/insert/0/prometheus/";
           }
         ];
         description = ''
@@ -1429,8 +1430,9 @@ in
           entries are NOT validated against the allow-list ADR 0021
           established for the built-in routes (a pattern matching every
           path only draws a warning). Real use: VictoriaMetrics' own
-          `/write` (InfluxDB line protocol) or `/api/v1/write` (Prometheus
-          remote write), which this module opens no door for by default.
+          `/api/v1/import/prometheus` or `/api/v1/write` (Prometheus remote
+          write), which this module opens no door for by default; target
+          vminsert, under `/insert/<accountID>/prometheus/`.
         '';
       };
     };
