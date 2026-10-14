@@ -121,6 +121,70 @@ let
       }
     ];
   };
+  # --- tenant write tokens (examples/tenant-fleet.nix) ---
+
+  # Gateway-side token file: one write token per tenant host, one tenant-less.
+  tenantWriteTokensFixture = pkgs.writeText "collector-test-tenant-write-tokens.yaml" ''
+    tokens:
+      - token: collector-test-tenant-a-write # gitleaks:allow
+        tenant: a
+      - token: collector-test-tenant-b-write # gitleaks:allow
+        tenant: b
+      - token: collector-test-plain-write # gitleaks:allow
+  '';
+  tenantReadTokensFixture = pkgs.writeText "collector-test-tenant-read-tokens.yaml" ''
+    tokens:
+      - token: collector-test-tenant-a-read # gitleaks:allow
+        tenant: a
+      - token: collector-test-tenant-b-read # gitleaks:allow
+        tenant: b
+      - token: collector-test-plain-read # gitleaks:allow
+  '';
+  tenantAWriteFile = pkgs.writeText "collector-test-tenant-a-write" "collector-test-tenant-a-write";
+  tenantBWriteFile = pkgs.writeText "collector-test-tenant-b-write" "collector-test-tenant-b-write";
+
+  mkTenantStack =
+    { metrics }:
+    {
+      virtualisation.vlans = [ 1 ];
+      imports = [
+        stackModule
+        testLib.testStartupTimeouts
+      ];
+      services.victoriaStack = {
+        logs.enable = true;
+        metrics.enable = metrics;
+        tenants = {
+          a.accountId = 1;
+          b.accountId = 2;
+        };
+        vmauth = {
+          writeTokensFile = "${tenantWriteTokensFixture}";
+          readTokensFile = "${tenantReadTokensFixture}";
+          listenAddress = "0.0.0.0:4204";
+        };
+      };
+      networking.firewall.allowedTCPPorts = [ 4204 ];
+    };
+
+  # Rows of a logs query through vmauth's read tier with a given read token.
+  tenantReadPython = ''
+    import json
+    import shlex
+
+
+    def read_rows(token, query):
+        out = stack.succeed(
+            "curl -s -w '\\n%{http_code}' -X POST "
+            f"-H {shlex.quote('Authorization: Bearer ' + token)} "
+            f"--data-urlencode {shlex.quote('query=' + query)} "
+            "http://127.0.0.1:4204/logs/select/logsql/query"
+        )
+        body, code = out.rsplit("\n", 1)
+        assert code.strip() == "200", (token, code, body)
+        return [json.loads(l)["_msg"] for l in body.splitlines() if l.strip()]
+  '';
+
 in
 {
   # The one genuinely novel integration risk this whole project called
@@ -3671,6 +3735,214 @@ in
           "-d 'query=victoria_case_marker' | grep -q victoria_case_marker",
           timeout=120,
       )
+    '';
+  };
+
+  # examples/tenant-fleet.nix is operator documentation: evaluate it with the
+  # test's token files so it cannot drift from the option set.
+  tenant-fleet-example-evaluates = pkgs.runCommand "tenant-fleet-example-evaluates" { } (
+    let
+      fleet = import ../examples/tenant-fleet.nix { };
+      gateway = testLib.evalWith {
+        imports = [ fleet.gateway ];
+        services.victoriaStack.vmauth = {
+          writeTokensFile = lib.mkForce "${tenantWriteTokensFixture}";
+          readTokensFile = lib.mkForce "${tenantReadTokensFixture}";
+        };
+      };
+      a = evalWithCollector {
+        imports = [
+          (fleet.collector {
+            hostType = "server";
+            writeTokenFile = "${tenantAWriteFile}";
+          })
+        ];
+      };
+      b = evalWithCollector {
+        imports = [
+          (fleet.collector {
+            hostType = "server";
+            writeTokenFile = "${tenantBWriteFile}";
+            traces = true;
+          })
+        ];
+      };
+      ownFailed' =
+        e:
+        lib.filter (lib.hasInfix "services.victoria") (
+          map (x: x.message) (builtins.filter (x: !x.assertion) e.config.assertions)
+        );
+      logsOnly =
+        e:
+        e.config.services.victoriaCollector.logs.enable
+        && !e.config.services.victoriaCollector.metrics.enable;
+      checks = {
+        "gateway: two tenants declared" =
+          lib.attrNames gateway.config.services.victoriaStack.tenants == [
+            "acme"
+            "globex"
+          ];
+        "gateway: no failed assertions" = ownFailed' gateway == [ ];
+        "collectors: no failed assertions" = ownFailed' a == [ ] && ownFailed' b == [ ];
+        "collectors: logs on, metrics off" = logsOnly a && logsOnly b;
+        "collectors: only the second ships traces" =
+          !a.config.services.victoriaCollector.traces.enable
+          && b.config.services.victoriaCollector.traces.enable;
+      };
+      failed = lib.filterAttrs (_: ok: !ok) checks;
+    in
+    if failed == { } then
+      "echo OK > $out"
+    else
+      throw "examples/tenant-fleet.nix broken: ${builtins.toJSON (builtins.attrNames failed)}"
+  );
+
+  # A collector host's tenant is the write token it uses: each host's journal,
+  # shipped through the real journal-upload path, lands in its own tenant and is
+  # visible only to that tenant's read token.
+  tenant-write-token-lands-logs-in-that-tenant = pkgs.testers.nixosTest {
+    name = "victoria-collector-tenant-write-token-lands-logs-in-that-tenant";
+
+    containers.stack = mkTenantStack { metrics = false; };
+
+    containers.collector-a = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        logs.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${tenantAWriteFile}";
+        hostType = "server";
+      };
+    };
+
+    containers.collector-b = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        logs.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${tenantBWriteFile}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      import time
+      ${testLib.waitActivePython}
+      ${tenantReadPython}
+
+      start_all()
+      wait_active(stack, "victorialogs.service")
+      wait_active(stack, "vmauth.service")
+      for c in (collector_a, collector_b):
+          wait_active(c, "systemd-journal-upload.service", max_restarts=None)
+      for m in (stack, collector_a, collector_b):
+          m.systemctl("start network-online.target")
+          m.wait_for_unit("network-online.target")
+      for c in (collector_a, collector_b):
+          c.wait_until_succeeds("ping -c 1 stack")
+
+      MARK_A = "tenant_fleet_marker_from_a"
+      MARK_B = "tenant_fleet_marker_from_b"
+      collector_a.succeed(f"logger --tag tenant-fleet {MARK_A}")
+      collector_b.succeed(f"logger --tag tenant-fleet {MARK_B}")
+
+
+      def poll_until(token, marker, timeout=180):
+          # Delivery is asynchronous (uploader batches, retries): poll.
+          deadline = time.monotonic() + timeout
+          while time.monotonic() < deadline:
+              if any(marker in m for m in read_rows(token, marker)):
+                  return
+              time.sleep(2)
+          raise AssertionError(f"{marker} never became readable with {token}")
+
+
+      poll_until("collector-test-tenant-a-read", MARK_A)
+      poll_until("collector-test-tenant-b-read", MARK_B)
+
+      # Both markers have arrived, so a marker absent from the other tenant is
+      # isolation, not slow delivery.
+      assert not any(MARK_B in m for m in read_rows("collector-test-tenant-a-read", MARK_B))
+      assert not any(MARK_A in m for m in read_rows("collector-test-tenant-b-read", MARK_A))
+      # Nothing leaked into the default tenant 0:0 either.
+      for mark in (MARK_A, MARK_B):
+          assert not any(mark in m for m in read_rows("collector-test-plain-read", mark)), mark
+    '';
+  };
+
+  # Pins the documented limit: tenant write tokens have no metrics route yet, so a
+  # tenant host with metrics.enable = true gets vmauth's `400 missing route` for the
+  # push while its logs still arrive in the tenant.
+  tenant-write-token-metrics-push-is-refused = pkgs.testers.nixosTest {
+    name = "victoria-collector-tenant-write-token-metrics-push-is-refused";
+
+    containers.stack = mkTenantStack { metrics = true; };
+
+    containers.collector = {
+      virtualisation.vlans = [ 1 ];
+      imports = [ collectorModule ];
+      services.victoriaCollector = {
+        metrics.enable = true;
+        logs.enable = true;
+        writeEndpoint = "http://stack:4204";
+        writeTokenFile = "${tenantAWriteFile}";
+        hostType = "server";
+      };
+    };
+
+    testScript = ''
+      import time
+      ${testLib.waitActivePython}
+      ${tenantReadPython}
+
+      start_all()
+      wait_active(stack, "victorialogs.service")
+      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "vmauth.service")
+      wait_active(collector, "alloy.service")
+      wait_active(collector, "systemd-journal-upload.service", max_restarts=None)
+      for m in (stack, collector):
+          m.systemctl("start network-online.target")
+          m.wait_for_unit("network-online.target")
+      collector.wait_until_succeeds("ping -c 1 stack")
+
+
+      def push(token):
+          out = stack.succeed(
+              "curl -s -w '\\n%{http_code}' -X POST "
+              f"-H {shlex.quote('Authorization: Bearer ' + token)} "
+              "-H 'Content-Type: application/x-protobuf' --data-binary @/dev/null "
+              "http://127.0.0.1:4204/opentelemetry/v1/metrics"
+          )
+          body, code = out.rsplit("\n", 1)
+          return code.strip(), body
+
+
+      # The tenant token: exact refusal. The tenant-less token on the same
+      # route is not refused for lack of a route, so the backend is really there.
+      code, body = push("collector-test-tenant-a-write")
+      assert code == "400" and body.strip().endswith('missing route for "/opentelemetry/v1/metrics"'), (code, body)
+      code, body = push("collector-test-plain-write")
+      assert "missing route" not in body, (code, body)
+
+      # Alloy's own push is refused the same way (it logs the status, not vmauth's body).
+      refused = "/opentelemetry/v1/metrics responded with HTTP Status Code 400"
+      deadline = time.monotonic() + 180
+      while refused not in collector.succeed("journalctl -u alloy.service --no-pager"):
+          assert time.monotonic() < deadline, "alloy never logged the refused metrics push"
+          time.sleep(2)
+
+      # ...and the logs of the same host still arrive in the tenant.
+      collector.succeed("logger --tag tenant-fleet tenant_fleet_metrics_host_marker")
+      deadline = time.monotonic() + 180
+      while not any(
+          "tenant_fleet_metrics_host_marker" in m
+          for m in read_rows("collector-test-tenant-a-read", "tenant_fleet_metrics_host_marker")
+      ):
+          assert time.monotonic() < deadline, "tenant logs never arrived"
+          time.sleep(2)
     '';
   };
 }

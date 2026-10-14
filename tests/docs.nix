@@ -50,7 +50,11 @@ let
             victoriaCollector = ${nixosModule.nixosModules.victoriaCollector};
           };
         in
-        ${builtins.replaceStrings [ "./fleet.nix" ] [ (toString ../examples/fleet.nix) ] block}
+        ${builtins.replaceStrings
+          [ "./fleet.nix" "./tenant-fleet.nix" ]
+          [ (toString ../examples/fleet.nix) (toString ../examples/tenant-fleet.nix) ]
+          block
+        }
       '';
     in
     import (pkgs.path + "/nixos/lib/eval-config.nix") {
