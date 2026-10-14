@@ -3596,8 +3596,8 @@ The tenants VictoriaLogs and VictoriaTraces keep data apart for\. A tenant is an
 AccountID/ProjectID pair the data is stored under; the attribute name is the
 name that vmauth token files will use to refer to it\. A name is 1 to 63
 characters of lower-case letters, digits and hyphens, not starting or ending
-with a hyphen, and ` all ` is reserved (it will mean every tenant in a read
-token)\.
+with a hyphen, and ` all ` is reserved (in a read token it means every
+declared tenant)\.
 
 The default tenant 0:0, where tokens without a tenant keep working as before,
 is implicit and cannot be declared here\.
