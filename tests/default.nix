@@ -13,6 +13,7 @@ let
     cluster-options = import ./metrics-cluster-options.nix { inherit pkgs nixosModule; };
     cluster-units = import ./metrics-cluster-units.nix { inherit pkgs nixosModule; };
     cluster-snapshots = import ./metrics-cluster-snapshots.nix { inherit pkgs nixosModule; };
+    cluster-frontends = import ./metrics-cluster-frontends.nix { inherit pkgs nixosModule; };
     vmauth = import ./vmauth.nix { inherit pkgs nixosModule; };
     vmauth-cluster = import ./vmauth-cluster.nix { inherit pkgs nixosModule; };
     grafana = import ./grafana.nix { inherit pkgs nixosModule; };

@@ -31,7 +31,7 @@ let
       instanceType ? null, # only VM_INSTANCE_TYPE needs a value; VL/VT don't use this env var at all
       packagePath, # directory name under ../../packages
       binaryName,
-      backendUnit, # "victoriametrics.service" | "victorialogs.service" | "victoriatraces.service"
+      backendUnit, # "victoriametrics.service" | "vmselect.service" | "victorialogs.service" | "victoriatraces.service"
       vmauthPrefix, # read-tier path prefix: "metrics" | "logs" | "traces"
       # mcp-victoriametrics hardcodes these as its fallback when
       # MCP_DISABLED_TOOLS is unset (pinned version 1.20.2); logs/traces have
@@ -157,10 +157,16 @@ in
       name = "metrics";
       serviceCfg = topCfg.metrics;
       envPrefix = "VM";
+      # Stays "single" in cluster mode too: "cluster" would build
+      # <entrypoint>/select/<tenant>/prometheus/api/v1/..., which vmauth's
+      # read tier does not allow. The single-node paths on its `/metrics`
+      # prefix are what vmauth rewrites onto vmselect, and the token (not an MCP
+      # option) decides the tenant.
       instanceType = "single";
       packagePath = "mcp-victoriametrics";
       binaryName = "mcp-victoriametrics";
-      backendUnit = "victoriametrics.service";
+      backendUnit =
+        if topCfg.metrics.mode == "cluster" then "vmselect.service" else "victoriametrics.service";
       vmauthPrefix = "metrics";
       # mcp-victoriametrics' own config.go, pinned version 1.20.2 --
       # confirmed directly from source, not assumed.

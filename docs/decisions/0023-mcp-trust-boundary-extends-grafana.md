@@ -32,6 +32,13 @@ reach, and tool arguments cannot steer a request outside that list (a `..`
 or percent-encoded name is no allow-listed path: vmauth answers `400 missing
 route`).
 
+Update: with `metrics.mode = "cluster"` the metrics MCP server is unchanged
+(`VM_INSTANCE_TYPE=single`, entrypoint `/metrics`, no tenant option). The
+`cluster` type would build `<entrypoint>/select/<tenant>/prometheus/api/v1/...`,
+which is no allow-listed route (vmauth's 400); the single-node paths are what
+vmauth rewrites onto vmselect. Only the unit ordering changes: after
+`vmselect.service` instead of `victoriametrics.service`.
+
 Consequences:
 
 - `metrics.mcp.enable`, `logs.mcp.enable` and `traces.mcp.enable` require
