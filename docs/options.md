@@ -2600,6 +2600,8 @@ Only letters, digits and ` . _ / - ` are allowed (an absolute path
 with no space, ` % ` or quote); anything else fails the build for
 an enabled service, since the path is written into unit files\.
 
+With ` mode = "cluster" ` the data lives in vmstorage, which reads this\.
+
 
 
 *Type:*
@@ -2676,6 +2678,10 @@ rejected at build time too: the snapshot timer sends no key, so it
 would fail every run\. Drop the flag, or disable ` snapshots.enable ` and
 take snapshots yourself\.
 
+With ` mode = "cluster" ` these go to vmselect, the process behind
+` listenAddress `; ` insert.extraFlags ` and ` storage.extraFlags ` take
+the flags of the other two processes\.
+
 
 
 *Type:*
@@ -2704,6 +2710,76 @@ list of string
 
 
 
+## services\.victoriaStack\.metrics\.insert\.extraFlags
+
+
+
+Extra command-line flags passed straight through to vminsert\. The
+flags the module renders itself are rejected at build time:
+` -httpListenAddr* `, ` -storageNode `, ` -tls* `, ` -http.pathPrefix* ` and
+` -httpAuth.* `\.
+
+Only used while ` mode = "cluster" `\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "-maxLabelsPerTimeseries=60"
+]
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.metrics\.insert\.listenAddress
+
+
+
+Address vminsert, the write API of the cluster, listens on\. Same
+rules as ` listenAddress ` (loopback by default, an IPv6 address
+starts the process with ` -enableTCP6 `)\. The two internal ports
+between the processes are fixed on loopback (127\.0\.0\.1:4211 for
+vminsert’s store, 127\.0\.0\.1:4212 for vmselect’s) and checked against
+every other listener\.
+
+Only used while ` mode = "cluster" `\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"127.0.0.1:4209"
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
 ## services\.victoriaStack\.metrics\.listenAddress
 
 
@@ -2716,6 +2792,10 @@ what you want\. An IPv6 address (` [::1]:4201 `) works: the unit is
 then started with ` -enableTCP6 `, which the binary needs to bind
 IPv6 at all (an operator-supplied ` -enableTCP6 ` in ` extraFlags ` is
 not repeated)\. ` :port ` binds IPv4 only without that flag\.
+
+With ` mode = "cluster" ` this is the READ API (vmselect)\. The write API
+is ` insert.listenAddress `; vmstorage’s own HTTP address is
+` storage.listenAddress `\.
 
 
 
@@ -3026,6 +3106,8 @@ value (` 1201 `, ` 37231d `) makes victoria-metrics refuse to start, and
 evaluation warns about it\. At most 10 digits before and 9 after the
 decimal point are accepted\.
 
+With ` mode = "cluster" ` this is vmstorage’s ` -retentionPeriod `\.
+
 
 
 *Type:*
@@ -3233,6 +3315,9 @@ Format: one or more whole numbers with a unit of ` s `, ` m ` or ` h `
 (` 90s `, ` 5m `, ` 1h30m `) of at most 6 digits each; zero is not
 allowed\.
 
+With ` mode = "cluster" ` this bounds the wait for vmstorage, and the
+snapshot options (` snapshots.* `) apply to vmstorage as well\.
+
 
 
 *Type:*
@@ -3252,6 +3337,74 @@ string matching the pattern (\[0-9]{1,6}\[smh])+
 
 ```nix
 "20m"
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.metrics\.storage\.extraFlags
+
+
+
+Extra command-line flags passed straight through to vmstorage\. The
+flags the module renders itself are rejected at build time:
+` -httpListenAddr* `, ` -vminsertAddr `, ` -vmselectAddr `,
+` -storageDataPath `, ` -retentionPeriod `, ` -tls* `, ` -http.pathPrefix* `
+and ` -httpAuth.* `\.
+
+Only used while ` mode = "cluster" `\.
+
+
+
+*Type:*
+list of string
+
+
+
+*Default:*
+
+```nix
+[ ]
+```
+
+
+
+*Example:*
+
+```nix
+[
+  "-dedup.minScrapeInterval=30s"
+]
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.metrics\.storage\.listenAddress
+
+
+
+Address vmstorage’s own HTTP server listens on (health, snapshots),
+not the data path between the processes\. Same rules as
+` listenAddress `\.
+
+Only used while ` mode = "cluster" `\.
+
+
+
+*Type:*
+string
+
+
+
+*Default:*
+
+```nix
+"127.0.0.1:4210"
 ```
 
 *Declared by:*
@@ -3329,8 +3482,6 @@ true
 
 
 ## services\.victoriaStack\.nginx\.domain
-
-
 
 Optional FQDN for the vhost’s ` server_name `\. ` null ` (the
 default) serves on plain IP/hostname with no domain-specific
@@ -3438,6 +3589,8 @@ string matching the pattern \[0-9]+\[kKmMgG]?
 
 
 ## services\.victoriaStack\.tenants
+
+
 
 The tenants VictoriaLogs and VictoriaTraces keep data apart for\. A tenant is an
 AccountID/ProjectID pair the data is stored under; the attribute name is the
