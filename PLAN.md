@@ -884,6 +884,11 @@ token, so vmauth stays the single authority.
   in `alloy.tlsCaFile`, `trustedCertificateFile` and `queue.directory`.
   A `:` in a `LoadCredential=` path is in fact harmless (systemd splits at
   the first one), so the collector's `:` rule is stricter than needed.
+  Update: the `:` rule is gone for `writeTokenFile`, `alloy.tlsCaFile` and
+  `trustedCertificateFile` (the Alloy config reads fixed credential paths, so
+  the value only reaches `LoadCredential=`, `ConditionPathExists=`,
+  `PathExists=` and `PathChanged=`); the maximal boot test uses `:` in all
+  three.
 - Known and accepted: the traces `tenant` tool argument is not validated by the
   binary and goes out as a header; only stage 1's vmauth tenant stamping
   bounds it. A `..` run that stays inside `/select/` is an allowed read.

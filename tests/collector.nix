@@ -804,8 +804,8 @@ in
 
   # A relative path makes both path units refuse to load ("path is not absolute")
   # and the credential is looked up in the credential store, so nothing starts the
-  # consumers and nothing says why. `:` breaks LoadCredential's ID:PATH split and
-  # `%` is a systemd specifier.
+  # consumers and nothing says why. `%` is a systemd specifier; `:` is legal
+  # (LoadCredential= splits ID:PATH at the first colon).
   write-token-file-must-be-an-absolute-path =
     pkgs.runCommand "write-token-file-must-be-an-absolute-path" { }
       (
@@ -824,7 +824,6 @@ in
             "token"
             "./token"
             ""
-            "/run/secrets/a:b"
             "/run/s/cert %h"
             "/run/secrets/a b"
             "/run/secrets/a\nb"
@@ -834,6 +833,9 @@ in
             null
             "/run/secrets/write-token"
             "/run/secrets/my_write-token.v2"
+            # systemd splits LoadCredential=ID:PATH at the first colon only.
+            "/run/secrets/a:b"
+            "/run/secrets/a:b:c.token"
           ];
         in
         if lib.all (x: x) mustFire && !(lib.any (x: x) mustNotFire) then
@@ -844,8 +846,8 @@ in
 
   # Every other collector path option that reaches a systemd setting verbatim:
   # `%` is a specifier (LoadCredential, ReadWritePaths, tmpfiles `d`) and
-  # whitespace splits those lists/rules; `:` only breaks LoadCredential's ID:PATH
-  # split, so it stays legal for queue.directory.
+  # whitespace splits those lists/rules; `:` is legal everywhere (LoadCredential=
+  # splits ID:PATH at the first colon).
   collector-path-options-reject-systemd-special-characters =
     pkgs.runCommand "collector-path-options-reject-systemd-special-characters" { }
       (
@@ -854,17 +856,14 @@ in
             {
               name = "alloy.tlsCaFile";
               set = value: { alloy.tlsCaFile = value; };
-              colonBreaks = true;
             }
             {
               name = "trustedCertificateFile";
               set = value: { trustedCertificateFile = value; };
-              colonBreaks = true;
             }
             {
               name = "queue.directory";
               set = value: { queue.directory = value; };
-              colonBreaks = false;
             }
           ];
           fires =
@@ -883,16 +882,15 @@ in
             "/run/secrets/a\nb"
             "/run/secrets/a\tb"
           ];
-          rejected = o: always ++ lib.optional o.colonBreaks "/run/secrets/a:b";
-          accepted =
-            o:
-            [
-              "/run/secrets/my_ca-bundle.v2.pem"
-              "/var/lib/alloy"
-              "/var/lib/alloy/queue"
-              "/srv/data/nested/dir"
-            ]
-            ++ lib.optional (!o.colonBreaks) "/srv/a:b";
+          rejected = _: always;
+          accepted = _: [
+            "/run/secrets/my_ca-bundle.v2.pem"
+            "/var/lib/alloy"
+            "/var/lib/alloy/queue"
+            "/srv/data/nested/dir"
+            "/srv/a:b"
+            "/run/secrets/a:b:c.pem"
+          ];
           wrongRejects = lib.concatMap (
             o: map (v: "${o.name} must reject ${builtins.toJSON v}") (lib.filter (v: !(fires o v)) (rejected o))
           ) options;

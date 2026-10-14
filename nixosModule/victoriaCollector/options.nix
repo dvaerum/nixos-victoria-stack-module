@@ -136,7 +136,7 @@ in
         vmauth's own `writeTokensFile` list on the gateway side)
         authorizing this host's write traffic. Required whenever the
         gateway's own `requireAuthForWrites` is `true` (the default).
-        Must be an absolute path with no whitespace, `%` or `:`; the build
+        Must be an absolute path with no whitespace or `%`; the build
         fails otherwise.
 
         The file may appear after boot: until it exists Alloy's start is skipped
@@ -276,7 +276,7 @@ in
           below, which only covers journald-upload's own HTTPS case (a
           different, non-Alloy code path). `null` (the default) omits the
           block entirely, matching Alloy's own default (system CA trust).
-          Must not contain whitespace, `%` or `:` (it reaches
+          Must not contain whitespace or `%` (it reaches
           `LoadCredential=`); the build fails otherwise.
         '';
       };
@@ -349,7 +349,7 @@ in
       description = ''
         CA bundle used to verify the gateway's own server certificate for
         journald-upload's HTTPS case. Defaults to the system's normal CA
-        bundle. Must not contain whitespace, `%` or `:` (it reaches
+        bundle. Must not contain whitespace or `%` (it reaches
         `LoadCredential=`); the build fails otherwise.
       '';
     };

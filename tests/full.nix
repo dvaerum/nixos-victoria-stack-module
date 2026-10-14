@@ -299,10 +299,22 @@ in
         logs.enable = true;
         traces.enable = true;
         writeEndpoint = "https://stack:8443";
-        writeTokenFile = "${collectorWriteTokenFixture}";
+        # `:` in each secret path: systemd splits LoadCredential=ID:PATH at the
+        # first colon only. Three distinct files, so a mis-read of any one breaks
+        # delivery (token -> 401, Alloy CA / uploader CA -> failed TLS verify).
+        writeTokenFile = "/run/secrets/collector:write-token";
         hostType = "edge-device";
-        alloy.tlsCaFile = "${stackSelfSignedCert}/cert.pem";
-        trustedCertificateFile = "${stackSelfSignedCert}/cert.pem";
+        alloy.tlsCaFile = "/run/secrets/alloy:ca.pem";
+        trustedCertificateFile = "/run/secrets/journal:ca.pem";
+      };
+      systemd.tmpfiles.settings."10-colon-secrets" = {
+        "/run/secrets".d.mode = "0755";
+        "/run/secrets/collector:write-token".C = {
+          mode = "0600";
+          argument = "${collectorWriteTokenFixture}";
+        };
+        "/run/secrets/alloy:ca.pem".C.argument = "${stackSelfSignedCert}/cert.pem";
+        "/run/secrets/journal:ca.pem".C.argument = "${stackSelfSignedCert}/cert.pem";
       };
     };
 

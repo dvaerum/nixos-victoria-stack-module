@@ -31,23 +31,17 @@ in
             '';
           }
         ];
-      # Paths (types.path guarantees "absolute", not the characters) that reach
-      # systemd settings verbatim: `%` is a specifier and whitespace splits
-      # ReadWritePaths= and tmpfiles rules; `:` additionally breaks
-      # LoadCredential's ID:PATH split. Asserted, not escaped (the stack
-      # modules escape instead).
+      # Paths that reach systemd settings verbatim: `%` is a specifier and
+      # whitespace splits ReadWritePaths= and tmpfiles rules. `:` is legal:
+      # LoadCredential= splits ID:PATH at the first colon only. Asserted, not
+      # escaped (the stack modules escape instead).
       pathChecks =
-        {
-          name,
-          value,
-          colonBreaks,
-        }:
+        { name, value }:
         lib.optional (value != null) {
-          assertion =
-            lib.match (if colonBreaks then "[^[:space:]%:]+" else "[^[:space:]%]+") (toString value) != null;
+          assertion = lib.match "[^[:space:]%]+" (toString value) != null;
           message = ''
-            services.victoriaCollector.${name} must not contain whitespace, "%"${lib.optionalString colonBreaks " or \":\""} (got "${toString value}"): "%" is a systemd specifier, whitespace splits the
-            systemd setting${lib.optionalString colonBreaks " and \":\" breaks the LoadCredential= ID:PATH split"}.
+            services.victoriaCollector.${name} must not contain whitespace or "%" (got "${toString value}"):
+            "%" is a systemd specifier and whitespace splits the systemd setting.
           '';
         };
     in
@@ -56,34 +50,30 @@ in
       {
         name = "alloy.tlsCaFile";
         value = cfg.alloy.tlsCaFile;
-        colonBreaks = true;
       }
       {
         name = "trustedCertificateFile";
         value = cfg.trustedCertificateFile;
-        colonBreaks = true;
       }
       {
         name = "queue.directory";
         value = cfg.queue.directory;
-        colonBreaks = false;
       }
     ]
     ++ endpointChecks "journaldWriteEndpoint" cfg.journaldWriteEndpoint
     ++ [
       {
         # A relative path makes both path units refuse to load and the
-        # credential is then looked up in the credential store; `:` breaks
-        # LoadCredential's ID:PATH split and `%` is a systemd specifier.
+        # credential is then looked up in the credential store; `%` is a
+        # systemd specifier.
         assertion =
           cfg.writeTokenFile == null
-          || (lib.hasPrefix "/" cfg.writeTokenFile && lib.match "[^[:space:]%:]+" cfg.writeTokenFile != null);
+          || (lib.hasPrefix "/" cfg.writeTokenFile && lib.match "[^[:space:]%]+" cfg.writeTokenFile != null);
         message = ''
           services.victoriaCollector.writeTokenFile must be an absolute path
-          (starting with "/") without whitespace, "%" or ":" (got
+          (starting with "/") without whitespace or "%" (got
           "${toString cfg.writeTokenFile}"): a relative path keeps the systemd
-          path units from loading, "%" is a systemd specifier and ":" breaks
-          the LoadCredential= ID:PATH split.
+          path units from loading and "%" is a systemd specifier.
         '';
       }
       {
