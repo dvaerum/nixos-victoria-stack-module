@@ -709,6 +709,61 @@ in
       supportsDiskRetention = true;
     };
 
+    tenants = mkOption {
+      type = types.attrsOf (
+        types.submodule {
+          options = {
+            accountId = mkOption {
+              type = types.ints.between 0 4294967295;
+              example = 7;
+              description = ''
+                The AccountID VictoriaLogs and VictoriaTraces store this tenant's data
+                under (a 32-bit unsigned number). Together with `projectId` it must be
+                unique among the declared tenants. It is the permanent key of the data:
+                changing it later leaves the data stored under the old number, where
+                nothing reads it any more.
+              '';
+            };
+
+            projectId = mkOption {
+              type = types.ints.between 0 4294967295;
+              default = 0;
+              example = 1;
+              description = ''
+                The ProjectID half of the tenant's data key (a 32-bit unsigned number).
+                Like `accountId`, changing it later orphans the data stored under the
+                old number.
+              '';
+            };
+          };
+        }
+      );
+      default = { };
+      example = {
+        team-a = {
+          accountId = 7;
+        };
+        team-b = {
+          accountId = 7;
+          projectId = 1;
+        };
+      };
+      description = ''
+        The tenants VictoriaLogs and VictoriaTraces keep data apart for. A tenant is an
+        AccountID/ProjectID pair the data is stored under; the attribute name is the
+        name that vmauth token files will use to refer to it. A name is 1 to 63
+        characters of lower-case letters, digits and hyphens, not starting or ending
+        with a hyphen, and `all` is reserved (it will mean every tenant in a read
+        token).
+
+        The default tenant 0:0, where tokens without a tenant keep working as before,
+        is implicit and cannot be declared here.
+
+        Nothing uses this table yet: it takes effect only once token files reference
+        a tenant by name. Tenants for metrics are not supported yet (planned).
+      '';
+    };
+
     vmauth = {
       enable = mkOption {
         type = types.bool;

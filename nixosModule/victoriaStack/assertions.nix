@@ -6,6 +6,51 @@ let
   listen = import ./listen.nix { inherit lib; };
 
   active = cfg.vmauth.enable && anyBackendEnabled;
+
+  tenantNames = lib.attrNames cfg.tenants;
+  # `all` is the keyword of `tenants: all` in read tokens; 0:0 is the implicit
+  # default tenant of tokens without a tenant.
+  badTenantNames = lib.filter (
+    n: n != "all" && builtins.match "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" n == null
+  ) tenantNames;
+  tenantsByPair = lib.groupBy (
+    n:
+    "accountId ${toString cfg.tenants.${n}.accountId}, projectId ${toString cfg.tenants.${n}.projectId}"
+  ) tenantNames;
+  duplicatePairs = lib.filterAttrs (_: names: lib.length names > 1) tenantsByPair;
+  tenantOpt = n: "services.victoriaStack.tenants.${n}";
+  tenantAssertions =
+    map (n: {
+      assertion = false;
+      message = ''
+        services.victoriaStack.tenants: "${n}" is not a valid tenant name. A name is 1 to 63
+        characters of lower-case letters, digits and hyphens (a-z, 0-9, -), and does not
+        start or end with a hyphen.
+      '';
+    }) badTenantNames
+    ++ [
+      {
+        assertion = !(cfg.tenants ? all);
+        message = ''
+          ${tenantOpt "all"}: "all" is reserved. It is the keyword of `tenants: all` in a read
+          token (every tenant), so it cannot be the name of one tenant. Pick another name.
+        '';
+      }
+    ]
+    ++ lib.mapAttrsToList (pair: names: {
+      assertion = false;
+      message = ''
+        ${lib.concatMapStringsSep " and " tenantOpt names} both use ${pair}. Two tenants
+        must not share one AccountID/ProjectID pair: they would read and write the same data.
+      '';
+    }) duplicatePairs
+    ++ map (n: {
+      assertion = false;
+      message = ''
+        ${tenantOpt n} has accountId 0 and projectId 0. That pair is the implicit default
+        tenant (used by tokens without a tenant) and cannot be declared; give it another number.
+      '';
+    }) (lib.filter (n: cfg.tenants.${n}.accountId == 0 && cfg.tenants.${n}.projectId == 0) tenantNames);
   mcp = svc: cfg.${svc}.enable && cfg.${svc}.mcp.enable;
   # Listeners are tcp unless stated: a udp and a tcp socket may share a port.
   at = name: addr: {
@@ -503,7 +548,8 @@ let
     '';
 
   moduleAssertions =
-    extraFlagsAssertions
+    tenantAssertions
+    ++ extraFlagsAssertions
     ++ snapshotKeyAssertions
     ++ syslogFlagAssertions
     ++ syslogAssertions
