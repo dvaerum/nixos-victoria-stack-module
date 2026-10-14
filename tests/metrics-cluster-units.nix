@@ -16,7 +16,17 @@ let
       }
       // metrics;
     }).config;
-  clusterEval = extra: evalMetrics ({ mode = "cluster"; } // extra);
+  # The exact ExecStart lines below pin the process flags; the self-monitoring
+  # push flags are pinned in metrics-cluster-snapshots.nix.
+  clusterEval =
+    extra:
+    evalMetrics (
+      {
+        mode = "cluster";
+        selfMonitoring.enable = false;
+      }
+      // extra
+    );
 
   unitsOf =
     c:

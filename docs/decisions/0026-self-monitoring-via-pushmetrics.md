@@ -31,3 +31,11 @@ Enabling any of them requires `metrics.enable` (an assertion says so).
 - A metrics-only option: leaves three services unmonitored.
 - Leaving it to the collector: requires a collector on the stack host and
   scraping all four `/metrics` pages from the outside.
+
+## Update: metrics cluster
+
+With `metrics.mode = "cluster"` the push target is vminsert's tenant-0 import
+endpoint on its own address (`http://<insert.listenAddress>/insert/0/prometheus/api/v1/import/prometheus`),
+straight to it and not through vmauth. vmstorage, vminsert and vmselect each push
+their own metrics with `job="vmstorage"`, `"vminsert"` and `"vmselect"`, like the
+single-node process did, so `metrics.selfMonitoring` covers all three.

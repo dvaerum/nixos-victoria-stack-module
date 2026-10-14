@@ -32,6 +32,7 @@ let
   selfMonitoring = import ./self-monitoring.nix { inherit lib; };
   startupTimeout = import ./startup-timeout.nix { inherit lib; };
   readiness = import ./readiness.nix { inherit lib pkgs; };
+  snapshot = import ./snapshot.nix { inherit config lib pkgs; };
 
   listen = import ./listen.nix { inherit lib; };
   restartBackoff = import ../restart-backoff.nix;
@@ -87,9 +88,8 @@ let
     else
       retentionSeconds >= (maxRetentionMonths + 1) * monthSeconds;
 
-  # `mode` exists on metrics only. In cluster mode the units come from
-  # metrics-cluster-units.nix; the snapshot unit stays single-only until the
-  # snapshots move to vmstorage.
+  # `mode` exists on metrics only. In cluster mode the units (and the snapshot
+  # unit of vmstorage) come from metrics-cluster-units.nix.
   singleUnit = (cfg.mode or "single") == "single";
 
   inherit (import ./exec-escape.nix { inherit lib; }) escape escapeEnvironment;
@@ -205,15 +205,11 @@ in
                   ++ selfMonitoring.mkFlags {
                     selfMonitoring = cfg.selfMonitoring;
                     metricsEnabled = topCfg.metrics.enable;
-                    metricsUrl = topCfg.metrics.effectiveUrl;
+                    insertUrl = topCfg.metrics.effectiveInsertUrl;
+                    cluster = topCfg.metrics.mode == "cluster";
                     job = unitName;
                   }
-                  # null passes 0, which DISABLES pruning: omitting the flag would
-                  # leave the binaries' own 3d default in force (each binary's
-                  # -help), deleting snapshots the operator meant to keep.
-                  ++ lib.optional cfg.snapshots.enable "-snapshotsMaxAge=${
-                    if cfg.snapshots.maxAge == null then "0" else cfg.snapshots.maxAge
-                  }"
+                  ++ snapshot.maxAgeFlags cfg.snapshots
                   ++ lib.optional (
                     (cfg.retentionMaxDiskSpaceUsageBytes or null) != null
                   ) "-retention.maxDiskSpaceUsageBytes=${cfg.retentionMaxDiskSpaceUsageBytes}"
@@ -309,58 +305,19 @@ in
         ) tlsFiles;
       })
 
-      # Periodic snapshot creation: a oneshot that POSTs to the binary's
-      # own snapshot API over loopback (the same trust boundary as every
-      # other internal call in this module -- no credential), fired by a
-      # timer. Pruning is the binary's own -snapshotsMaxAge above, not
-      # this unit's job.
+      # Periodic snapshot creation (snapshot.nix).
       (lib.mkIf (cfg.snapshots.enable && singleUnit) {
-        systemd.services."${unitName}-snapshot" = {
-          description = "Create a ${name} snapshot";
-          # Ordering only, no Requires=: a Requires= start would bring back a
-          # service the operator stopped on purpose (restore/copy of dataDir).
-          # After= still makes a queued start of the service finish first, so a
-          # timer firing at boot never meets it half-started.
-          after = [ "${unitName}.service" ];
-          serviceConfig = {
-            Type = "oneshot";
-            # Exit 3 (not active) is in systemd's 1-254 "condition not met"
-            # range: the run is skipped, not failed. "+" runs it outside the
-            # sandbox below, whose AF_UNIX-less address list would otherwise
-            # keep systemctl from reaching systemd.
-            ExecCondition = "+${config.systemd.package}/bin/systemctl is-active --quiet ${unitName}.service";
-            ExecStart = lib.escapeShellArgs (
-              map escape [
-                (lib.getExe pkgs.curl)
-                "--silent"
-                "--show-error"
-                "--fail"
-                "--request"
-                "POST"
-                "http://${bindAddr}${snapshotCreatePath}"
-              ]
-            );
-            DynamicUser = true;
-            CapabilityBoundingSet = "";
-            NoNewPrivileges = true;
-            PrivateDevices = true;
-            PrivateTmp = true;
-            ProtectHome = true;
-            ProtectSystem = "strict";
-            RestrictAddressFamilies = [
-              "AF_INET"
-              "AF_INET6"
-            ];
-          };
-        };
-
-        systemd.timers."${unitName}-snapshot" = {
-          wantedBy = [ "timers.target" ];
-          timerConfig = {
-            OnCalendar = cfg.snapshots.schedule;
-            # Catch up a missed run after downtime rather than skipping it.
-            Persistent = true;
-          };
+        systemd = {
+          inherit
+            (snapshot.mkUnits {
+              inherit (cfg) snapshots;
+              service = unitName;
+              description = "Create a ${name} snapshot";
+              url = "http://${bindAddr}${snapshotCreatePath}";
+            })
+            services
+            timers
+            ;
         };
       })
     ]

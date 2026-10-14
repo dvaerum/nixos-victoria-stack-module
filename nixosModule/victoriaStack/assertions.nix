@@ -197,6 +197,9 @@ let
       ownedPrefixes = if clusterOn then clusterProcesses.select.ownedPrefixes else storageOwnedPrefixes;
       ownedNames = if clusterOn then clusterProcesses.select.ownedNames else [ ];
       snapshotKeyFlags = [ "snapshotAuthKey" ];
+      # The process serving /snapshot: vmstorage in cluster mode, not the one behind listenAddress.
+      snapshotFlagsOption = if clusterOn then "storage.extraFlags" else "extraFlags";
+      snapshotExtraFlags = if clusterOn then cfg.metrics.storage.extraFlags else cfg.metrics.extraFlags;
       alternative = "put nginx in front of the service";
     }
     {
@@ -273,7 +276,11 @@ let
   # loopback call), and the binary answers 401 once one of these flags is set
   # -- the timer would fail every run with no snapshot taken. The names are the
   # flags that gate that endpoint on each pinned binary (tests/storage.nix probes it).
-  snapshotKeyFlagsIn = svc: lib.filter (f: lib.elem (flagName f) svc.snapshotKeyFlags) svc.extraFlags;
+  snapshotKeyFlagsIn =
+    svc:
+    lib.filter (f: lib.elem (flagName f) svc.snapshotKeyFlags) (
+      svc.snapshotExtraFlags or svc.extraFlags
+    );
   snapshotKeyAssertions = map (
     svc:
     let
@@ -284,7 +291,9 @@ let
     {
       assertion = offending == [ ];
       message = ''
-        services.victoriaStack.${svc.name}.snapshots.enable is true but extraFlags contains ${
+        services.victoriaStack.${svc.name}.snapshots.enable is true but ${
+          svc.snapshotFlagsOption or "extraFlags"
+        } contains ${
           lib.concatMapStringsSep ", " (f: "`${f}`") offending
         }, which makes the snapshot endpoint require that key. The module's
         snapshot timer calls the endpoint without a key, so it would fail every

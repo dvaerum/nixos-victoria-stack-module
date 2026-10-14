@@ -60,7 +60,9 @@ let
       defaultText = lib.literalExpression "config.services.victoriaStack.metrics.enable";
       description = ''
         Whether ${binaryName} pushes its own `/metrics` page into the local
-        VictoriaMetrics instance.
+        VictoriaMetrics instance. With `metrics.mode = "cluster"` the push goes
+        straight to vminsert's address (`metrics.insert.listenAddress`, tenant 0),
+        not through vmauth.
 
         - On by default whenever `services.victoriaStack.metrics.enable` is
           true (there is then a database to push into).
@@ -849,6 +851,10 @@ in
               `-httpListenAddr*`, `-vminsertAddr`, `-vmselectAddr`,
               `-storageDataPath`, `-retentionPeriod`, `-tls*`, `-http.pathPrefix*`
               and `-httpAuth.*`.
+
+              While `snapshots.enable` is true, `-snapshotAuthKey` is rejected
+              here too: vmstorage serves the snapshot endpoint, and the snapshot
+              timer sends no key.
 
               Only used while `mode = "cluster"`.
             '';

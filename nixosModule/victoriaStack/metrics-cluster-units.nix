@@ -21,6 +21,8 @@ let
   readiness = import ./readiness.nix { inherit lib pkgs; };
   startupTimeout = import ./startup-timeout.nix { inherit lib; };
   restartBackoff = import ../restart-backoff.nix;
+  selfMonitoring = import ./self-monitoring.nix { inherit lib; };
+  snapshot = import ./snapshot.nix { inherit config lib pkgs; };
   inherit (import ./exec-escape.nix { inherit lib; }) escape;
 
   # The static user is the one storage-common.nix declares for `metrics`; the
@@ -61,6 +63,15 @@ let
                 "-httpListenAddr=${proc.listenAddr}"
               ]
               ++ cluster.tcp6Flags proc
+              # Each process pushes its own metrics to vminsert, like the
+              # single-node process did to itself (docs/decisions/0026).
+              ++ selfMonitoring.mkFlags {
+                selfMonitoring = cfg.selfMonitoring;
+                metricsEnabled = cfg.enable;
+                insertUrl = cfg.effectiveInsertUrl;
+                cluster = true;
+                job = proc.binary;
+              }
               ++ flags
               ++ proc.extraFlags
             )
@@ -78,76 +89,95 @@ let
   storage = procs.storage;
 in
 {
-  config = lib.mkIf cfg.enable {
-    services.victoriaStack.metrics.clusterPackage = lib.mkDefault (
-      pkgs.callPackage ../../packages/victoriametrics-cluster/package.nix { }
-    );
+  config = lib.mkIf cfg.enable (
+    lib.mkMerge [
+      {
+        services.victoriaStack.metrics.clusterPackage = lib.mkDefault (
+          pkgs.callPackage ../../packages/victoriametrics-cluster/package.nix { }
+        );
+      }
 
-    # Single mode: both are the one URL of the single-node server, so an
-    # override of `effectiveUrl` still reaches every consumer.
-    services.victoriaStack.metrics = {
-      effectiveSelectUrl = lib.mkDefault (
-        if on then "http://${listen.connectAddr cfg.listenAddress}" else cfg.effectiveUrl
-      );
-      effectiveInsertUrl = lib.mkDefault (
-        if on then "http://${listen.connectAddr cfg.insert.listenAddress}" else cfg.effectiveUrl
-      );
-    };
+      # Single mode: both are the one URL of the single-node server, so an
+      # override of `effectiveUrl` still reaches every consumer.
+      {
+        services.victoriaStack.metrics = {
+          effectiveSelectUrl = lib.mkDefault (
+            if on then "http://${listen.connectAddr cfg.listenAddress}" else cfg.effectiveUrl
+          );
+          effectiveInsertUrl = lib.mkDefault (
+            if on then "http://${listen.connectAddr cfg.insert.listenAddress}" else cfg.effectiveUrl
+          );
+        };
+      }
 
-    systemd.services = lib.mkIf on {
-      vmstorage = mkUnit {
-        proc = storage;
-        description = "VictoriaMetrics cluster storage (vmstorage)";
-        flags = [
-          "-storageDataPath=${toString cfg.dataDir}"
-        ]
-        ++ lib.optional (cfg.retentionPeriod != null) "-retentionPeriod=${cfg.retentionPeriod}"
-        ++ [
-          "-vminsertAddr=${cluster.rpc.vminsertAddr}"
-          "-vmselectAddr=${cluster.rpc.vmselectAddr}"
-        ];
-        # Waits for dataDir's own mount (e.g. a ZFS dataset) before starting.
-        unitConfig.RequiresMountsFor = toString cfg.dataDir;
-        serviceConfig = lib.mkMerge [
-          { LimitNOFILE = 1048576; }
-          (
-            if cfg.dynamicUser then
-              {
-                DynamicUser = true;
-                StateDirectory = staticUser;
-                StateDirectoryMode = "0700";
-              }
-            else
-              {
-                DynamicUser = false;
-                User = staticUser;
-                Group = staticUser;
-                ReadWritePaths = [ (toString cfg.dataDir) ];
-              }
-          )
-        ];
-      };
+      # The snapshot API is vmstorage's: it is the process that owns the data.
+      (lib.mkIf (on && cfg.snapshots.enable) {
+        systemd = snapshot.mkUnits {
+          inherit (cfg) snapshots;
+          service = "vmstorage";
+          description = "Create a vmstorage snapshot";
+          url = "http://${listen.connectAddr storage.listenAddr}/snapshot/create";
+        };
+      })
 
-      # Both start after vmstorage so their probe finds it listening, but neither
-      # needs it to start: vminsert and vmselect come up and retry the RPC
-      # connection themselves, so the ordering is about probe quality only.
-      vminsert = mkUnit {
-        proc = procs.insert;
-        description = "VictoriaMetrics cluster write API (vminsert)";
-        flags = [ "-storageNode=${cluster.rpc.vminsertAddr}" ];
-        after = [ "vmstorage.service" ];
-        serviceConfig.DynamicUser = true;
-      };
+      (lib.mkIf on {
+        systemd.services = {
+          vmstorage = mkUnit {
+            proc = storage;
+            description = "VictoriaMetrics cluster storage (vmstorage)";
+            flags = [
+              "-storageDataPath=${toString cfg.dataDir}"
+            ]
+            ++ lib.optional (cfg.retentionPeriod != null) "-retentionPeriod=${cfg.retentionPeriod}"
+            ++ [
+              "-vminsertAddr=${cluster.rpc.vminsertAddr}"
+              "-vmselectAddr=${cluster.rpc.vmselectAddr}"
+            ]
+            ++ snapshot.maxAgeFlags cfg.snapshots;
+            # Waits for dataDir's own mount (e.g. a ZFS dataset) before starting.
+            unitConfig.RequiresMountsFor = toString cfg.dataDir;
+            serviceConfig = lib.mkMerge [
+              { LimitNOFILE = 1048576; }
+              (
+                if cfg.dynamicUser then
+                  {
+                    DynamicUser = true;
+                    StateDirectory = staticUser;
+                    StateDirectoryMode = "0700";
+                  }
+                else
+                  {
+                    DynamicUser = false;
+                    User = staticUser;
+                    Group = staticUser;
+                    ReadWritePaths = [ (toString cfg.dataDir) ];
+                  }
+              )
+            ];
+          };
 
-      # No -cacheDataPath: the cache is not persisted by default and the
-      # temporary query results go to /tmp, which PrivateTmp provides.
-      vmselect = mkUnit {
-        proc = procs.select;
-        description = "VictoriaMetrics cluster read API (vmselect)";
-        flags = [ "-storageNode=${cluster.rpc.vmselectAddr}" ];
-        after = [ "vmstorage.service" ];
-        serviceConfig.DynamicUser = true;
-      };
-    };
-  };
+          # Both start after vmstorage so their probe finds it listening, but neither
+          # needs it to start: vminsert and vmselect come up and retry the RPC
+          # connection themselves, so the ordering is about probe quality only.
+          vminsert = mkUnit {
+            proc = procs.insert;
+            description = "VictoriaMetrics cluster write API (vminsert)";
+            flags = [ "-storageNode=${cluster.rpc.vminsertAddr}" ];
+            after = [ "vmstorage.service" ];
+            serviceConfig.DynamicUser = true;
+          };
+
+          # No -cacheDataPath: the cache is not persisted by default and the
+          # temporary query results go to /tmp, which PrivateTmp provides.
+          vmselect = mkUnit {
+            proc = procs.select;
+            description = "VictoriaMetrics cluster read API (vmselect)";
+            flags = [ "-storageNode=${cluster.rpc.vmselectAddr}" ];
+            after = [ "vmstorage.service" ];
+            serviceConfig.DynamicUser = true;
+          };
+        };
+      })
+    ]
+  );
 }

@@ -1,6 +1,7 @@
-# Shared by the 3 storage services and vmauth: all four binaries have the
-# same -pushmetrics.* flag family, which makes the service itself push its
-# own /metrics page to a URL on an interval -- no extra unit or timer.
+# Shared by the 3 storage services, vmauth and the metrics cluster's three
+# processes: all of these binaries have the same -pushmetrics.* flag family,
+# which makes the service itself push its own /metrics page to a URL on an
+# interval -- no extra unit or timer.
 { lib }:
 {
   # The flags for one service, as RAW strings (the caller does any shell
@@ -11,14 +12,20 @@
     {
       selfMonitoring, # services.victoriaStack.<svc>.selfMonitoring
       metricsEnabled,
-      metricsUrl, # services.victoriaStack.metrics.effectiveUrl (only read when enabled)
+      # services.victoriaStack.metrics.effectiveInsertUrl (only read when
+      # enabled): the instance's own write address, bypassing vmauth.
+      insertUrl,
+      # metrics.mode = "cluster": the write API is vminsert's tenant-0 path.
+      cluster ? false,
       job,
     }:
     lib.optionals (selfMonitoring.enable && metricsEnabled) [
-      "-pushmetrics.url=${metricsUrl}/api/v1/import/prometheus"
+      "-pushmetrics.url=${insertUrl}${
+        if cluster then "/insert/0/prometheus" else ""
+      }/api/v1/import/prometheus"
       "-pushmetrics.interval=${selfMonitoring.interval}"
       # Without a per-service job, series like the Go runtime's would
-      # collide across the four services.
+      # collide across the services.
       "-pushmetrics.extraLabel=job=\"${job}\""
     ];
 }

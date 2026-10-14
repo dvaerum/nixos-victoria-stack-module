@@ -677,7 +677,8 @@ in
             selfMonitoring.mkFlags {
               selfMonitoring = cfg.selfMonitoring;
               metricsEnabled = topCfg.metrics.enable;
-              metricsUrl = topCfg.metrics.effectiveUrl;
+              insertUrl = topCfg.metrics.effectiveInsertUrl;
+              cluster = topCfg.metrics.mode == "cluster";
               job = "vmauth";
             }
           )
