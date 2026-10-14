@@ -1,7 +1,7 @@
 { pkgs, nixosModule }:
 
 # The declared tenants table: names, number ranges and the build-time
-# assertions. Nothing renders tenants into vmauth yet.
+# assertions. How token entries use them is in tenant-isolation.nix.
 let
   inherit (pkgs) lib;
   testLib = import ./lib.nix { inherit pkgs nixosModule; };

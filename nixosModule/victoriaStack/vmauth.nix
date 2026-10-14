@@ -267,6 +267,26 @@ let
     }
   );
 
+  # The data routes a tenant applies to: only logs and traces have native
+  # tenants. Not the MCP prefixes: a tenant token gets no MCP route.
+  tenantRoutePrefixesFile = pkgs.writeText "vmauth-tenant-route-prefixes.json" (
+    builtins.toJSON {
+      read = {
+        logs = [ "/logs" ];
+        traces = [ "/traces" ];
+      };
+      write = {
+        logs = [ "/insert/journald" ];
+        traces = [ "/insert/opentelemetry/v1/traces" ];
+      };
+    }
+  );
+  tenantsFile = pkgs.writeText "vmauth-tenants.json" (
+    builtins.toJSON (lib.mapAttrs (_: t: { inherit (t) accountId projectId; }) topCfg.tenants)
+  );
+  # The jq library and program of the render script (token entries to users).
+  jqLibrary = ./vmauth-jq;
+
   readUrlMapFile = pkgs.writeText "vmauth-read-url-map.json" (builtins.toJSON readUrlMap);
   openIngestPathsFile = pkgs.writeText "vmauth-open-ingest-paths.json" (
     builtins.toJSON (withExtraHeaders cfg.openIngestPaths)
@@ -330,7 +350,7 @@ let
         if ! jq -e 'type == "array"' <<<"$tokens_json" >/dev/null; then
           # Reports only the JSON type, never the contents: the file holds
           # secrets and this lands in the journal.
-          echo "vmauth-render-config: $label must contain a top-level 'tokens:' key whose value is a YAML list of objects, each with a string \`token\` key and an optional \`backends\` list of strings (optionally with inline '#' comments) -- got a value of type: $(jq -r type <<<"$tokens_json")" >&2
+          echo "vmauth-render-config: $label must contain a top-level 'tokens:' key whose value is a YAML list of objects, each with a string \`token\` key and optional \`backends\`, \`tenant\` and \`tenants\` keys (optionally with inline '#' comments) -- got a value of type: $(jq -r type <<<"$tokens_json")" >&2
           exit 1
         fi
         # Per-entry shape errors name the entry and the offending key and only
@@ -344,15 +364,19 @@ let
             elif ($e.token | type) as $t | $t != "string" and $t != "null" then "entry #\($n): token must be a string, got \($e.token | type); quote it in YAML (token: \"...\")"
             elif ($e.backends // [] | type) != "array" then "entry #\($n): backends must be a list, got \($e.backends | type)"
             elif ($e.backends // [] | map(select(type != "string")) | length) > 0 then "entry #\($n): backends must be a list of strings, got an item of type \($e.backends | map(select(type != "string"))[0] | type)"
+            elif ($e | has("tenant") and has("tenants")) then "entry #\($n) has both `tenant` and `tenants`; an entry takes one of them"
+            elif ($e | has("tenant")) and ($e.tenant | type) != "string" then "entry #\($n): tenant must be a tenant name (a string), got \($e.tenant | type)"
+            elif ($e | has("tenants")) and ($e.tenants | type) != "array" and $e.tenants != "all" then "entry #\($n): tenants must be a list of tenant names or the word all, got \(if ($e.tenants | type) == "string" then "a string other than all" else ($e.tenants | type) end)"
+            elif ($e | has("tenants")) and ($e.tenants | type) == "array" and ($e.tenants | map(select(type != "string")) | length) > 0 then "entry #\($n): tenants must be a list of strings, got an item of type \($e.tenants | map(select(type != "string"))[0] | type)"
             else empty end] | join("; ")' <<<"$tokens_json")
         if [ -n "$shape_errors" ]; then
           echo "vmauth-render-config: $label is malformed: $shape_errors" >&2
           exit 1
         fi
         local bad
-        bad=$(jq -r '[to_entries[] | select((.value | keys - ["token", "backends"]) | length > 0) | "#\(.key + 1)"] | join(", ")' <<<"$tokens_json")
+        bad=$(jq -r '[to_entries[] | select((.value | keys - ["token", "backends", "tenant", "tenants"]) | length > 0) | "#\(.key + 1)"] | join(", ")' <<<"$tokens_json")
         if [ -n "$bad" ]; then
-          echo "vmauth-render-config: $label entry $bad has an unknown key (only 'token' and 'backends' are allowed)" >&2
+          echo "vmauth-render-config: $label entry $bad has an unknown key (only 'token', 'backends', 'tenant' and 'tenants' are allowed)" >&2
           exit 1
         fi
         # vmauth itself dies on a duplicate and prints the token in its fatal line.
@@ -379,57 +403,17 @@ let
       # with an empty url_map, and the caller then gets the plain 401 of an
       # unknown token). An unknown backend name is warned about and ignored.
       # Warnings name the option and entry number, never a token. Echoes the old
-      # users array plus these.
+      # users array plus these. The jq program (vmauth-jq/token-users.jq) also
+      # applies the `tenant`/`tenants` keys.
       append_token_users() {
-        local label="$1" users="$2" tokens_json="$3" urlmap_file="$4" prefixes_file="$5"
+        local label="$1" users="$2" tokens_json="$3" urlmap_file="$4" prefixes_file="$5" tier="$6"
         local result
-        # The label travels in the environment: no data may reach jq as a
+        # The label and tier travel in the environment: no data may reach jq as a
         # command-line argument (guarded in tests/vmauth.nix).
-        result=$(label="$label" jq --slurpfile tokens <(printf '%s' "$tokens_json") --slurpfile urlmap "$urlmap_file" \
-          --slurpfile prefixes "$prefixes_file" \
-          '$ENV.label as $label
-           | ($prefixes[0] | keys) as $known
-           | ($tokens[0] | to_entries | map(
-               (.key + 1) as $n
-               | .value as $t
-               | ($t.token // "") as $tok
-               | ($tok | test("^\\s*$")) as $blank
-               | ($t | has("backends")) as $scoped
-               | (($t.backends // []) | unique) as $req
-               | ($req - $known) as $unknown
-               | ($req - $unknown) as $valid
-               | (if $scoped then
-                    (if ($valid | length) == 0 then []
-                     else ($valid | map($prefixes[0][.]) | add) as $pfx
-                       | $urlmap[0]
-                       | map(
-                           (.src_paths |= ((. // []) | map(select(
-                               . as $p
-                               | ($p | contains("|") | not)
-                               and any($pfx[]; . as $pre
-                                   | ($p | startswith($pre))
-                                   and (($p[($pre | length):]) | (. == "" or (.[0:1] | test("[A-Za-z0-9_-]") | not))))))))
-                           | select((.src_paths | length) > 0))
-                     end)
-                  else $urlmap[0] end) as $um
-               | {
-                   user: (if ($blank | not) and ($um | length) > 0 then {bearer_token: $tok, url_map: $um} else null end),
-                   warnings: (
-                     if $blank then ["\($label) entry #\($n) has an empty or whitespace-only token -- skipped"]
-                     else
-                       (if ($unknown | length) > 0
-                        then ["\($label) entry #\($n) names unknown backend(s): \($unknown | join(", ")) -- ignored (valid names: \($known | join(", ")))"]
-                        else [] end)
-                       + (if $scoped and ($valid | length) == 0
-                          then ["\($label) entry #\($n) has no valid backend (an empty or all-unknown backends list) -- the token gets no access and is left out of the configuration"]
-                          elif ($um | length) == 0 and $scoped
-                          then ["\($label) entry #\($n) is scoped to [\($valid | join(", "))], none of which is enabled -- the token gets no access and is left out of the configuration"]
-                          elif ($um | length) == 0
-                          then ["\($label) entry #\($n) has no routes to grant -- the token gets no access and is left out of the configuration"]
-                          else [] end)
-                     end)
-                 })) as $entries
-           | {users: (. + [$entries[] | .user | select(. != null)]), warnings: [$entries[] | .warnings[]]}' <<<"$users")
+        result=$(label="$label" tier="$tier" jq -L ${jqLibrary} -f ${jqLibrary}/token-users.jq \
+          --slurpfile tokens <(printf '%s' "$tokens_json") --slurpfile urlmap "$urlmap_file" \
+          --slurpfile prefixes "$prefixes_file" --slurpfile tenants "$TENANTS_FILE" \
+          --slurpfile tenantprefixes "$TENANT_ROUTE_PREFIXES_FILE" <<<"$users")
         jq -r '.warnings[] | "vmauth-render-config: warning: " + .' <<<"$result" >&2
         jq '.users' <<<"$result"
       }
@@ -467,20 +451,29 @@ let
 
       if [ -n "$read_tokens_json" ]; then
         users_json=$(append_token_users readTokensFile "$users_json" \
-          "$read_tokens_json" "$READ_URL_MAP_FILE" "$READ_BACKEND_PREFIXES_FILE")
+          "$read_tokens_json" "$READ_URL_MAP_FILE" "$READ_BACKEND_PREFIXES_FILE" read)
       fi
 
       if [ -n "$write_tokens_json" ]; then
         users_json=$(append_token_users writeTokensFile "$users_json" \
-          "$write_tokens_json" "$WRITE_URL_MAP_FILE" "$WRITE_BACKEND_PREFIXES_FILE")
+          "$write_tokens_json" "$WRITE_URL_MAP_FILE" "$WRITE_BACKEND_PREFIXES_FILE" write)
       fi
 
-      jq -n \
+      # With tenants declared the anonymous door is tenant 0:0 like a token
+      # without a tenant key.
+      jq -n -L ${jqLibrary} \
         --slurpfile users <(printf '%s' "$users_json") \
         --slurpfile openmap "$OPEN_INGEST_PATHS_FILE" \
-        '{}
-         + (if ($ENV.REQUIRE_AUTH_FOR_WRITES == "false") and (($openmap[0] | length) > 0)
-            then {unauthorized_user: {access_log: {}, url_map: $openmap[0]}}
+        --slurpfile tenants "$TENANTS_FILE" \
+        --slurpfile tenantprefixes "$TENANT_ROUTE_PREFIXES_FILE" \
+        'include "tenant-routes";
+         ($openmap[0]
+          | if ($tenants[0] | length) > 0
+            then on_paths_under($tenantprefixes[0].write | [.[][]]; add_headers(["AccountID: 0", "ProjectID: 0"]))
+            else . end) as $open
+         | {}
+         + (if ($ENV.REQUIRE_AUTH_FOR_WRITES == "false") and (($open | length) > 0)
+            then {unauthorized_user: {access_log: {}, url_map: $open}}
             else {} end)
          + {users: (if $ENV.ACCESS_LOG == "true" then ($users[0] | map(. + {access_log: {}})) else $users[0] end)}' \
         >/run/vmauth/config.json
@@ -619,6 +612,8 @@ in
           "WRITE_URL_MAP_FILE=${writeUrlMapFile}"
           "READ_BACKEND_PREFIXES_FILE=${readBackendPrefixesFile}"
           "WRITE_BACKEND_PREFIXES_FILE=${writeBackendPrefixesFile}"
+          "TENANTS_FILE=${tenantsFile}"
+          "TENANT_ROUTE_PREFIXES_FILE=${tenantRoutePrefixesFile}"
           "REQUIRE_AUTH_FOR_WRITES=${lib.boolToString cfg.requireAuthForWrites}"
           "ACCESS_LOG=${lib.boolToString cfg.accessLog}"
         ];
