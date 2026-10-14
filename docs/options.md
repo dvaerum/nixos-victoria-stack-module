@@ -249,6 +249,8 @@ Alloy’s OTLP exporters specifically (` otelcol.exporter.otlphttp `’s
 below, which only covers journald-upload’s own HTTPS case (a
 different, non-Alloy code path)\. ` null ` (the default) omits the
 block entirely, matching Alloy’s own default (system CA trust)\.
+Must not contain whitespace, ` % ` or ` : ` (it reaches
+` LoadCredential= `); the build fails otherwise\.
 
 
 
@@ -555,7 +557,9 @@ null
 
 
 
-Directory Alloy’s disk-backed write-back queue is stored in\.
+Directory Alloy’s disk-backed write-back queue is stored in\. Must not
+contain whitespace or ` % ` (it reaches ` ReadWritePaths= ` and a
+tmpfiles rule); the build fails otherwise\.
 
 
 
@@ -707,7 +711,8 @@ is already taken\.
 
 CA bundle used to verify the gateway’s own server certificate for
 journald-upload’s HTTPS case\. Defaults to the system’s normal CA
-bundle\.
+bundle\. Must not contain whitespace, ` % ` or ` : ` (it reaches
+` LoadCredential= `); the build fails otherwise\.
 
 
 
