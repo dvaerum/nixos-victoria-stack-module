@@ -79,55 +79,28 @@ happen automatically.
 
 ## Connection topology
 
-```
-                                    ┌─────────────────────────┐
-                                    │   external / fleet       │
-                                    │   collector hosts         │
-                                    └───────────┬───────────────┘
-                                                │ (only via vmauth.https /
-                                                │  vmauth.http, ADR 0025)
-                                                ▼
-┌───────────────────────────────────────────────────────────────────┐
-│ this host                                                            │
-│                                                                      │
-│   ┌──────────┐       ┌───────────────────────────────────────┐      │
-│   │  nginx    │──────▶│              vmauth                    │      │
-│   │ (:80,     │ /victoria/                                     │      │
-│   │  public)  │       │  readUrlMap / openIngestPaths /         │      │
-│   │           │       │  writeUrlMap (docs/decisions/0014)       │      │
-│   │           │       └──┬──────┬──────┬──────┬──────┬──────┬───┘      │
-│   │           │          │      │      │      │      │      │          │
-│   │           │ /grafana/│      │      │      │      │      │          │
-│   │           │──────────┼──────┼──────┼──────┼──────┼──────┼──┐       │
-│   └──────────┘          │      │      │      │      │      │  │       │
-│                          ▼      ▼      ▼      ▼      ▼      ▼  │       │
-│                       metrics logs  traces mcp-×3 (each       │       │
-│                       :4201  :4202  :4203  calls vmauth's      │       │
-│                                            read tier)          │       │
-│                                                                 ▼       │
-│                                                             Grafana     │
-│                                                          (:3000, own    │
-│                                                           auth; its     │
-│                                                           datasources   │
-│                                                           call vmauth's │
-│                                                           read tier,    │
-│                                                           ADR 0029)     │
-│                                                                      │
-│   ┌──────────────────────────────────────────────────────┐          │
-│   │ victoriaCollector (can be this SAME host -- or any      │          │
-│   │ other host on the fleet)                                │          │
-│   │                                                          │          │
-│   │  systemd-journal-upload ───────────────────────────────┼──▶ vmauth's open/write-tier
-│   │  (logs, bypasses Alloy entirely -- ADR 0005)            │          │   ingest routes, via
-│   │                                                          │          │   writeEndpoint
-│   │  Alloy (metrics + traces, OTLP) ────────────────────────┼──▶ (same path)
-│   │   └─ local OTLP receiver :4317/4318, loopback-only,     │          │
-│   │      for apps ALREADY on this host that speak OTLP      │          │
-│   │      themselves (only with traces.enable; no network    │          │
-│   │      exposure, by design)                               │          │
-│   └──────────────────────────────────────────────────────┘          │
-└───────────────────────────────────────────────────────────────────┘
-```
+Who talks to whom, by default. "Read tier" and "write tier" are vmauth's two
+credential tiers (ADR 0003); the admin password is a read-tier credential.
+
+| Component | Listens on (default) | Reached by | Talks to | Auth (which tier) |
+|---|---|---|---|---|
+| collector: `systemd-journal-upload` (logs) | nothing | -- | vmauth `https`/`http` door via `writeEndpoint` | write token (write tier) |
+| collector: Alloy (metrics, traces) | nothing; with `traces.enable` a local OTLP receiver on `127.0.0.1:4317` (gRPC) / `:4318` (HTTP) | apps on the same host (receiver) | vmauth `https`/`http` door via `writeEndpoint` | write token (write tier); the receiver has none |
+| vmauth, public doors (opt-in) | `https` `0.0.0.0:8443`, `http` `0.0.0.0:8080` | collectors; remote Grafana and MCP clients | the same routes as the internal listener | per request: write or read token |
+| vmauth, internal listener | `127.0.0.1:4204` (data), `127.0.0.1:4208` (own pages only) | nginx, local Grafana and MCP servers, local callers | vminsert, vmselect, logs, traces, the three MCP servers | per request: write tier (ingest routes) or read tier (read routes and `/mcp/*`) |
+| vminsert (metrics writes) | `127.0.0.1:4209` | vmauth; the stack's own self-monitoring pushes | vmstorage (RPC `127.0.0.1:4211`) | none (loopback) |
+| vmselect (metrics reads) | `127.0.0.1:4201` | vmauth | vmstorage (RPC `127.0.0.1:4212`) | none (loopback) |
+| vmstorage | `127.0.0.1:4210` (own HTTP) | vminsert, vmselect over its RPC ports | disk | none (loopback) |
+| VictoriaLogs | `127.0.0.1:4202`; opt-in `syslog` slots on 514 (udp, tcp) / 6514 (tls) | vmauth; syslog devices (slots) | disk | none; the slots take no token and bypass vmauth (ADR 0031) |
+| VictoriaTraces | `127.0.0.1:4203` | vmauth | disk | none (loopback) |
+| MCP servers (metrics, logs, traces) | `127.0.0.1:4205` / `4206` / `4207` | vmauth, at `/mcp/<service>` | vmauth's read tier (internal listener), with the caller's own token | the caller's read token, checked by vmauth |
+| Grafana (consumer's own) | `127.0.0.1:3000` | nginx at `/grafana/`; browsers | vmauth's read tier (internal listener) through the provisioned datasources | Grafana's own login; its datasources use a read token (ADR 0029) |
+| nginx (opt-in) | `:80`, all interfaces | browsers and remote clients | vmauth internal listener for `/victoria/{metrics,logs,traces,mcp}` (reads only, other `/victoria/` paths get 404); Grafana for `/grafana/` | none of its own; the read tier at vmauth, Grafana's login for `/grafana/` |
+
+Data flow: collectors send writes to a vmauth public door, and vmauth's write
+tier routes them to vminsert, VictoriaLogs and VictoriaTraces. Grafana and the
+MCP servers (and anything behind nginx's `/victoria/`) read through vmauth's
+read tier, which routes to vmselect, VictoriaLogs and VictoriaTraces.
 
 ## Client addresses behind a reverse proxy
 
@@ -148,7 +121,7 @@ What you still have behind a proxy:
   failed requests -- only the LAST entry, the one your proxy added, can be
   trusted, because a client can put anything before it.
 
-## Key properties this diagram makes explicit
+## Key properties this wiring makes explicit
 
 - **Grafana reaches the backends only through vmauth's read tier** (ADR 0029),
   with its own read token; nginx's `/grafana/` location proxies to Grafana
@@ -172,8 +145,8 @@ What you still have behind a proxy:
   `traces.receiver.grpcPort`/`httpPort`), a separate, loopback-only endpoint
   for host-local OTLP-speaking applications, unrelated to the fleet-shipping
   path the same Alloy instance also runs.
-- **The stack's own services push their metrics straight to the local
-  metrics instance's `listenAddress` (loopback by default), bypassing
+- **The stack's own services push their metrics straight to the metrics cluster's
+  vminsert (`metrics.insert.listenAddress`, loopback by default), bypassing
   vmauth** (`selfMonitoring`, on by default with `metrics.enable`;
   ADR 0026).
 - **Nothing in this topology is reachable from another host until you
