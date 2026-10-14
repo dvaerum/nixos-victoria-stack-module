@@ -1038,8 +1038,8 @@ rejected at build time too: the snapshot timer sends no key, so it
 would fail every run\. Drop the flag, or disable ` snapshots.enable ` and
 take snapshots yourself\.
 
-The ` syslog.udp ` / ` syslog.tcp ` options own the ` -syslog.listenAddr.* `
-and ` -syslog.extraFields.* ` arrays of their transport (and the
+The ` syslog.udp ` / ` syslog.tcp ` options own the ` -syslog.listenAddr.* `,
+` -syslog.extraFields.* ` and ` -syslog.tenantID.* ` arrays of their transport (and the
 ` -syslog.tls `, ` -syslog.tlsCertFile ` and ` -syslog.tlsKeyFile ` arrays
 while a tcp or a tls slot is enabled): those arrays are positional with
 the listeners, so a flag of the same array here is rejected at build
@@ -1047,7 +1047,7 @@ time\. Every other ` -syslog.* ` flag, and the ` unix ` transport, can be
 passed here freely\.
 
 The ` tcp ` and ` tls ` slots are the first and second tcp listener, so a
-` -syslog.<name>.tcp ` flag given once (` tenantID `, ` streamFields `,
+` -syslog.<name>.tcp ` flag given once (` streamFields `,
 ` compressMethod `, …) applies to the ` tcp ` slot only and the ` tls ` slot
 keeps the default; with both slots enabled evaluation warns about it\. Give
 such a flag twice, the ` tcp ` slot’s value first and the ` tls ` slot’s
@@ -1951,6 +1951,46 @@ false
 
 
 
+## services\.victoriaStack\.logs\.syslog\.tcp\.tenant
+
+
+
+Name of the tenant (` services.victoriaStack.tenants.<name> `) every
+entry received on this listener is stored under
+(` -syslog.tenantID.* `)\. ` null ` keeps the default tenant 0:0\.
+
+Syslog does not pass through vmauth, so this is the ONLY place the
+tenant of a device’s logs is decided: the sender cannot choose it, and
+every device that sends to this listener lands in this tenant\. Give
+devices of different tenants their own listener (their own port)\.
+A name that is not a declared tenant is a build error\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"lab"
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
 ## services\.victoriaStack\.logs\.syslog\.tls\.enable
 
 
@@ -2218,6 +2258,46 @@ false
 
 
 
+## services\.victoriaStack\.logs\.syslog\.tls\.tenant
+
+
+
+Name of the tenant (` services.victoriaStack.tenants.<name> `) every
+entry received on this listener is stored under
+(` -syslog.tenantID.* `)\. ` null ` keeps the default tenant 0:0\.
+
+Syslog does not pass through vmauth, so this is the ONLY place the
+tenant of a device’s logs is decided: the sender cannot choose it, and
+every device that sends to this listener lands in this tenant\. Give
+devices of different tenants their own listener (their own port)\.
+A name that is not a declared tenant is a build error\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"lab"
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
 ## services\.victoriaStack\.logs\.syslog\.udp\.enable
 
 
@@ -2409,6 +2489,46 @@ boolean
 
 ```nix
 false
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.syslog\.udp\.tenant
+
+
+
+Name of the tenant (` services.victoriaStack.tenants.<name> `) every
+entry received on this listener is stored under
+(` -syslog.tenantID.* `)\. ` null ` keeps the default tenant 0:0\.
+
+Syslog does not pass through vmauth, so this is the ONLY place the
+tenant of a device’s logs is decided: the sender cannot choose it, and
+every device that sends to this listener lands in this tenant\. Give
+devices of different tenants their own listener (their own port)\.
+A name that is not a declared tenant is a build error\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"lab"
 ```
 
 *Declared by:*
@@ -3319,8 +3439,6 @@ string matching the pattern \[0-9]+\[kKmMgG]?
 
 ## services\.victoriaStack\.tenants
 
-
-
 The tenants VictoriaLogs and VictoriaTraces keep data apart for\. A tenant is an
 AccountID/ProjectID pair the data is stored under; the attribute name is the
 name that vmauth token files will use to refer to it\. A name is 1 to 63
@@ -3479,6 +3597,8 @@ package
 
 
 ## services\.victoriaStack\.traces\.dataDir
+
+
 
 Directory the victoria-traces binary stores its data in
 (` -storageDataPath `)\. Changing this away from the default
