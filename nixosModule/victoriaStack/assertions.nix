@@ -310,6 +310,17 @@ let
     }
   ];
 
+  syslogTenants = map (s: {
+    assertion = s.slot.tenant == null || cfg.tenants ? ${s.slot.tenant};
+    message = ''
+      services.victoriaStack.logs.syslog.${s.name}.tenant is "${s.slot.tenant}", which is
+      not a declared tenant. Declared tenants: ${
+        if tenantNames == [ ] then "none" else lib.concatStringsSep ", " tenantNames
+      }. Declare it
+      under services.victoriaStack.tenants, or set the option to null for the default tenant.
+    '';
+  }) (lib.filter (s: s.slot.enable) (syslogLib.slotsOf cfg.logs.syslog));
+
   syslogSlotNames = [
     "udp"
     "tcp"
@@ -553,6 +564,7 @@ let
     ++ snapshotKeyAssertions
     ++ syslogFlagAssertions
     ++ syslogAssertions
+    ++ syslogTenants
     ++ syslogTlsFiles
     ++ syslogRequiresLogs
     ++ addressAssertions

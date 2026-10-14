@@ -4,7 +4,8 @@
 # transport: entry N belongs to the Nth -syslog.listenAddr.<transport>. Each
 # slot is one listener, so all arrays are generated from the one ordered list
 # of active slots, and a slot with nothing to say gets a blank entry (the
-# binary treats a blank as its default).
+# binary treats a blank as its default; a slot without tenant renders the
+# default tenant 0:0 once another slot of its transport has one).
 { lib }:
 let
   listen = import ./listen.nix { inherit lib; };
@@ -57,6 +58,7 @@ rec {
         [
           "syslog.listenAddr.${transport}"
           "syslog.extraFields.${transport}"
+          "syslog.tenantID.${transport}"
         ]
         ++ lib.optionals (transport == "tcp") [
           "syslog.tlsCertFile"
@@ -74,7 +76,11 @@ rec {
   isSharedTcpArray =
     name:
     (lib.hasPrefix "syslog." name && lib.hasSuffix ".tcp" name)
-    && !(lib.hasPrefix "syslog.listenAddr." name || lib.hasPrefix "syslog.extraFields." name)
+    && !(
+      lib.hasPrefix "syslog.listenAddr." name
+      || lib.hasPrefix "syslog.extraFields." name
+      || lib.hasPrefix "syslog.tenantID." name
+    )
     || name == "syslog.tlsCipherSuites";
 
   bothTcpSlots =
@@ -117,9 +123,19 @@ rec {
       syslog-tls-key = syslog.tls.keyFile;
     };
 
+  # `<accountId>:<projectId>` of a slot's tenant (the array item format of
+  # -syslog.tenantID.*); 0:0 is the binary's own default tenant. An unknown name
+  # is reported by an assertion, so it falls back instead of aborting evaluation.
+  tenantIdOf =
+    tenants: name:
+    let
+      t = if name == null then null else tenants.${name} or null;
+    in
+    if t == null then "0:0" else "${toString t.accountId}:${toString t.projectId}";
+
   # Flags are returned already escaped for systemd.
   mkFlags =
-    syslog:
+    tenants: syslog:
     lib.concatMap (
       transport:
       let
@@ -134,11 +150,17 @@ rec {
           ) entries
           ++ map (s: "-syslog.tlsKeyFile=${lib.optionalString (s.name == "tls") "%d/syslog-tls-key"}") entries
         );
+        # Only rendered once a slot of the transport names a tenant, so a stack
+        # without tenants keeps its flags unchanged.
+        tenantIds = map (s: tenantIdOf tenants s.tenant) slots;
         fields = map (s: if s.extraFields == { } then "" else builtins.toJSON s.extraFields) slots;
       in
       map (s: "-syslog.listenAddr.${transport}=${escape (listen.hostPort s.ipAddress s.port)}") slots
       ++ lib.optionals (lib.any (f: f != "") fields) (
         map (f: "-syslog.extraFields.${transport}=${escape f}") fields
+      )
+      ++ lib.optionals (lib.any (s: s.tenant != null) slots) (
+        map (t: "-syslog.tenantID.${transport}=${t}") tenantIds
       )
       ++ tlsFlags
     ) transports;

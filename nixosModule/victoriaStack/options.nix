@@ -184,6 +184,23 @@ let
         '';
       };
 
+      tenant = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "lab";
+        description = ''
+          Name of the tenant (`services.victoriaStack.tenants.<name>`) every
+          entry received on this listener is stored under
+          (`-syslog.tenantID.*`). `null` keeps the default tenant 0:0.
+
+          Syslog does not pass through vmauth, so this is the ONLY place the
+          tenant of a device's logs is decided: the sender cannot choose it, and
+          every device that sends to this listener lands in this tenant. Give
+          devices of different tenants their own listener (their own port).
+          A name that is not a declared tenant is a build error.
+        '';
+      };
+
       suppressExposureWarning = mkOption {
         type = types.bool;
         default = false;
@@ -394,8 +411,8 @@ let
         ''
         + lib.optionalString supportsSyslog ''
 
-          The `syslog.udp` / `syslog.tcp` options own the `-syslog.listenAddr.*`
-          and `-syslog.extraFields.*` arrays of their transport (and the
+          The `syslog.udp` / `syslog.tcp` options own the `-syslog.listenAddr.*`,
+          `-syslog.extraFields.*` and `-syslog.tenantID.*` arrays of their transport (and the
           `-syslog.tls`, `-syslog.tlsCertFile` and `-syslog.tlsKeyFile` arrays
           while a tcp or a tls slot is enabled): those arrays are positional with
           the listeners, so a flag of the same array here is rejected at build
@@ -403,7 +420,7 @@ let
           passed here freely.
 
           The `tcp` and `tls` slots are the first and second tcp listener, so a
-          `-syslog.<name>.tcp` flag given once (`tenantID`, `streamFields`,
+          `-syslog.<name>.tcp` flag given once (`streamFields`,
           `compressMethod`, ...) applies to the `tcp` slot only and the `tls` slot
           keeps the default; with both slots enabled evaluation warns about it. Give
           such a flag twice, the `tcp` slot's value first and the `tls` slot's

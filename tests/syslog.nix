@@ -339,6 +339,216 @@ in
         fields { note = "50%h$HOME"; } == [ ''-syslog.extraFields.tcp={"note":"50%%h$$HOME"}'' ];
     };
 
+  # A slot's tenant renders as the positional -syslog.tenantID.<transport> array
+  # (`<accountId>:<projectId>`, 0:0 for a slot without tenant); with no tenant
+  # anywhere the flags are the ones the module always rendered.
+  slot-tenant-renders-positional-tenant-ids =
+    let
+      tenants = {
+        a = {
+          accountId = 1;
+        };
+        b = {
+          accountId = 2;
+          projectId = 7;
+        };
+      };
+      flagsOf =
+        syslog:
+        map (f: lib.removeSuffix "'" (lib.removePrefix "'" f)) (
+          lib.filter (lib.hasInfix "-syslog.") (
+            lib.splitString " " (
+              (evalWith {
+                services.victoriaStack = {
+                  inherit tenants;
+                  logs = {
+                    enable = true;
+                    inherit syslog;
+                  };
+                };
+              }).config.systemd.services.victorialogs.serviceConfig.ExecStart
+            )
+          )
+        );
+      tenantFlags = syslog: lib.filter (lib.hasInfix "-syslog.tenantID.") (flagsOf syslog);
+      withTenant = s: t: s // { tenant = t; };
+      all3 = tenant: {
+        udp = withTenant (slot "192.0.2.10" 5514) tenant;
+        tcp = withTenant (slot "192.0.2.10" 5515) tenant;
+        tls = withTenant (tlsSlot "192.0.2.10" 6514) tenant;
+      };
+      plain = {
+        udp = slot "192.0.2.10" 5514;
+        tcp = slot "192.0.2.10" 5515;
+        tls = tlsSlot "192.0.2.10" 6514;
+      };
+      mixed = {
+        udp = withTenant (slot "192.0.2.10" 5514) "b";
+        tcp = withTenant (slot "192.0.2.10" 5515) "a";
+        tls = tlsSlot "192.0.2.10" 6514;
+      };
+    in
+    mkTableCheck "syslog-slot-tenant-flags" {
+      "no tenant anywhere renders no tenant flag" = tenantFlags plain == [ ];
+      "no tenant: flags unchanged by declared tenants" = flagsOf plain == syslogFlags plain;
+      "no tenant: the tls arrays are still in place" = lib.elem "-syslog.tls=true" (flagsOf plain);
+      "udp slot with tenant a" =
+        tenantFlags { udp = withTenant (slot "192.0.2.10" 5514) "a"; } == [ "-syslog.tenantID.udp=1:0" ];
+      "the projectId is rendered" =
+        tenantFlags { udp = withTenant (slot "192.0.2.10" 5514) "b"; } == [ "-syslog.tenantID.udp=2:7" ];
+      "tcp slot alone" =
+        tenantFlags { tcp = withTenant (slot "192.0.2.10" 5515) "a"; } == [ "-syslog.tenantID.tcp=1:0" ];
+      "tls slot alone" =
+        tenantFlags { tls = withTenant (tlsSlot "192.0.2.10" 6514) "b"; } == [ "-syslog.tenantID.tcp=2:7" ];
+      # tcp slot first, tls second: the tcp arrays carry a then the default.
+      "tcp with tenant a, tls without: 1:0 then 0:0" =
+        tenantFlags {
+          tcp = withTenant (slot "192.0.2.10" 5515) "a";
+          tls = tlsSlot "192.0.2.10" 6514;
+        } == [
+          "-syslog.tenantID.tcp=1:0"
+          "-syslog.tenantID.tcp=0:0"
+        ];
+      "tcp without tenant, tls with b: 0:0 then 2:7" =
+        tenantFlags {
+          tcp = slot "192.0.2.10" 5515;
+          tls = withTenant (tlsSlot "192.0.2.10" 6514) "b";
+        } == [
+          "-syslog.tenantID.tcp=0:0"
+          "-syslog.tenantID.tcp=2:7"
+        ];
+      "mixed: each transport has its own array, in slot order" =
+        tenantFlags mixed == [
+          "-syslog.tenantID.tcp=1:0"
+          "-syslog.tenantID.tcp=0:0"
+          "-syslog.tenantID.udp=2:7"
+        ];
+      "a tenant on udp adds nothing to the tcp arrays" =
+        tenantFlags {
+          udp = withTenant (slot "192.0.2.10" 5514) "a";
+          tcp = slot "192.0.2.10" 5515;
+        } == [ "-syslog.tenantID.udp=1:0" ];
+      "a disabled slot takes no position" =
+        tenantFlags {
+          tcp = (withTenant (slot "192.0.2.10" 5515) "a") // {
+            enable = false;
+          };
+          tls = withTenant (tlsSlot "192.0.2.10" 6514) "b";
+        } == [ "-syslog.tenantID.tcp=2:7" ];
+      "all three on one tenant" =
+        tenantFlags (all3 "a") == [
+          "-syslog.tenantID.tcp=1:0"
+          "-syslog.tenantID.tcp=1:0"
+          "-syslog.tenantID.udp=1:0"
+        ];
+      "the other flags of a tenanted slot are untouched" =
+        lib.filter (f: !(lib.hasInfix "-syslog.tenantID." f)) (flagsOf mixed)
+        == syslogFlags (lib.mapAttrs (_: s: removeAttrs s [ "tenant" ]) mixed);
+      "suppressExposureWarning is independent of the tenant" =
+        (evalWith {
+          services.victoriaStack = {
+            inherit tenants;
+            logs = {
+              enable = true;
+              syslog.udp = (withTenant (slot "0.0.0.0" 5514) "a") // {
+                suppressExposureWarning = true;
+              };
+            };
+          };
+        }).config.warnings == [ ];
+    };
+
+  syslog-tenant-must-be-declared-fires = mkAssertionFiresCheck {
+    name = "syslog-tenant-must-be-declared-fires";
+    expectMessageSubstring = ''services.victoriaStack.logs.syslog.tcp.tenant is "nope"'';
+    module = {
+      services.victoriaStack = {
+        tenants.a.accountId = 1;
+        logs = {
+          enable = true;
+          syslog.tcp = (slot "192.0.2.10" 5514) // {
+            tenant = "nope";
+          };
+        };
+      };
+    };
+  };
+
+  # The message names the option, the unknown name and every declared tenant.
+  syslog-tenant-assertion-message-and-controls =
+    let
+      messagesFor =
+        { tenants, syslog }:
+        lib.filter (lib.hasInfix "syslog.") (
+          lib.filter (lib.hasInfix ".tenant is") (
+            map (a: a.message) (
+              builtins.filter (a: !a.assertion)
+                (evalWith {
+                  services.victoriaStack = {
+                    inherit tenants;
+                    logs = {
+                      enable = true;
+                      inherit syslog;
+                    };
+                  };
+                }).config.assertions
+            )
+          )
+        );
+      declared = {
+        a.accountId = 1;
+        b.accountId = 2;
+      };
+      m = messagesFor {
+        tenants = declared;
+        syslog.tls = (tlsSlot "192.0.2.10" 6514) // {
+          tenant = "nope";
+        };
+      };
+      text = lib.concatStringsSep "\n" m;
+    in
+    mkTableCheck "syslog-tenant-assertion" {
+      "one message" = lib.length m == 1;
+      "names the slot option" = lib.hasInfix "services.victoriaStack.logs.syslog.tls.tenant" text;
+      "names the unknown name" = lib.hasInfix ''"nope"'' text;
+      "names the declared tenants" = lib.hasInfix "a, b" text;
+      "says so when none is declared" = lib.hasInfix "Declared tenants: none" (
+        lib.concatStringsSep "\n" (messagesFor {
+          tenants = { };
+          syslog.udp = (slot "192.0.2.10" 5514) // {
+            tenant = "a";
+          };
+        })
+      );
+      "a declared tenant passes" =
+        messagesFor {
+          tenants = declared;
+          syslog.udp = (slot "192.0.2.10" 5514) // {
+            tenant = "b";
+          };
+        } == [ ];
+      "null passes" =
+        messagesFor {
+          tenants = { };
+          syslog.udp = slot "192.0.2.10" 5514;
+        } == [ ];
+      "every slot is checked" =
+        lib.length (messagesFor {
+          tenants = declared;
+          syslog = {
+            udp = (slot "192.0.2.10" 5514) // {
+              tenant = "x";
+            };
+            tcp = (slot "192.0.2.10" 5515) // {
+              tenant = "y";
+            };
+            tls = (tlsSlot "192.0.2.10" 6514) // {
+              tenant = "z";
+            };
+          };
+        }) == 3;
+    };
+
   # Same mechanism as vmauth (docs/decisions/0015): the unit keeps its empty
   # capability set unless a syslog port is below 1024.
   low-port-capability-table =
@@ -580,6 +790,19 @@ in
       "tls key file with only a tls slot" = rejected tlsOnly "--syslog.tlsKeyFile=/run/fake-key.pem";
       "tcp listenAddr with only a tls slot" = rejected tlsOnly "-syslog.listenAddr.tcp=:7514";
       "tlsMinVersion is free with a tls slot" = free tlsOnly "-syslog.tlsMinVersion=TLS12";
+      "tcp tenantID with a tcp slot" = rejected tcp "-syslog.tenantID.tcp=1:0";
+      "tcp tenantID, double dash" = rejected tcp "--syslog.tenantID.tcp=1:0";
+      "tcp tenantID with only a tls slot" = rejected tlsOnly "-syslog.tenantID.tcp=1:0";
+      "udp tenantID with a udp slot" = rejected udp "-syslog.tenantID.udp=1:0";
+      "tcp tenantID message names the tcp and tls slots" = explains tcp "-syslog.tenantID.tcp=1:0" [
+        "tcp"
+        "tls"
+      ];
+      "udp tenantID message names the udp slot" = explains udp "-syslog.tenantID.udp=1:0" [ "udp" ];
+      "tcp tenantID is free with only a udp slot" = free udp "-syslog.tenantID.tcp=1:0";
+      "udp tenantID is free with only a tcp slot" = free tcp "-syslog.tenantID.udp=1:0";
+      "unix tenantID is free with slots" = free tcp "-syslog.tenantID.unix=1:0";
+      "tenantID is free with no slot" = free { } "-syslog.tenantID.tcp=1:0";
       "udp listenAddr with a udp slot" = rejected udp "-syslog.listenAddr.udp=:6514";
       "udp extraFields with a udp slot" = rejected udp "-syslog.extraFields.udp={}";
       "tcp listenAddr is free with only a udp slot" = free udp "-syslog.listenAddr.tcp=:6514";
@@ -724,7 +947,6 @@ in
         );
       warns = args: warningsFor args != [ ];
       knobs = [
-        "tenantID"
         "streamFields"
         "compressMethod"
         "ignoreFields"
@@ -743,7 +965,7 @@ in
       );
       text = lib.concatStringsSep "\n" (warningsFor {
         syslog = both;
-        flags = [ "-syslog.tenantID.tcp=1:0" ];
+        flags = [ "-syslog.streamFields.tcp=host" ];
       });
     in
     mkTableCheck "syslog-shared-tcp-arrays-warn" (
@@ -766,9 +988,9 @@ in
             tls = tlsSlot "127.0.0.1" 6514;
             tcp = slot "127.0.0.1" 5514;
           };
-          flags = [ "-syslog.tenantID.tcp=1:0" ];
+          flags = [ "-syslog.streamFields.tcp=host" ];
         };
-        "the warning names the flag" = lib.hasInfix "-syslog.tenantID.tcp=1:0" text;
+        "the warning names the flag" = lib.hasInfix "-syslog.streamFields.tcp=host" text;
         "the warning explains the positions" =
           lib.hasInfix "first tcp listener" text && lib.hasInfix "second" text;
         "the warning says how to give the second entry" = lib.hasInfix "twice" text;
@@ -776,20 +998,20 @@ in
           lib.length (warningsFor {
             syslog = both;
             flags = [
-              "-syslog.tenantID.tcp=1:0"
               "-syslog.streamFields.tcp=host"
+              "-syslog.compressMethod.tcp=gzip"
             ];
           }) == 1;
         # Controls: everything that does not combine the two slots with such a flag.
         "tcp slot alone" =
           !(warns {
             syslog.tcp = slot "127.0.0.1" 5514;
-            flags = [ "-syslog.tenantID.tcp=1:0" ];
+            flags = [ "-syslog.streamFields.tcp=host" ];
           });
         "tls slot alone" =
           !(warns {
             syslog.tls = tlsSlot "127.0.0.1" 6514;
-            flags = [ "-syslog.tenantID.tcp=1:0" ];
+            flags = [ "-syslog.streamFields.tcp=host" ];
           });
         "tcp and udp" =
           !(warns {
@@ -797,7 +1019,7 @@ in
               tcp = slot "127.0.0.1" 5514;
               udp = slot "127.0.0.1" 5514;
             };
-            flags = [ "-syslog.tenantID.tcp=1:0" ];
+            flags = [ "-syslog.streamFields.tcp=host" ];
           });
         "tls and udp" =
           !(warns {
@@ -805,7 +1027,7 @@ in
               tls = tlsSlot "127.0.0.1" 6514;
               udp = slot "127.0.0.1" 5514;
             };
-            flags = [ "-syslog.tenantID.tcp=1:0" ];
+            flags = [ "-syslog.streamFields.tcp=host" ];
           });
         "both slots, no such flag" =
           !(warns {
@@ -815,12 +1037,12 @@ in
         "both slots, the udp array" =
           !(warns {
             syslog = both;
-            flags = [ "-syslog.tenantID.udp=1:0" ];
+            flags = [ "-syslog.streamFields.udp=host" ];
           });
         "both slots, the unix array" =
           !(warns {
             syslog = both;
-            flags = [ "-syslog.tenantID.unix=1:0" ];
+            flags = [ "-syslog.streamFields.unix=host" ];
           });
         "both slots, a scalar flag" =
           !(warns {
@@ -843,12 +1065,12 @@ in
                 enable = false;
               };
             };
-            flags = [ "-syslog.tenantID.tcp=1:0" ];
+            flags = [ "-syslog.streamFields.tcp=host" ];
           });
         "logs disabled" =
           !(warns {
             syslog = both;
-            flags = [ "-syslog.tenantID.tcp=1:0" ];
+            flags = [ "-syslog.streamFields.tcp=host" ];
             logs = false;
           });
         "the flag stays allowed (no assertion)" =
@@ -859,7 +1081,7 @@ in
                   services.victoriaStack.logs = {
                     enable = true;
                     syslog = both;
-                    extraFlags = [ "-syslog.tenantID.tcp=1:0" ];
+                    extraFlags = [ "-syslog.streamFields.tcp=host" ];
                   };
                 }).config.assertions
             )
@@ -1361,6 +1583,91 @@ in
       custom.succeed("${send} --proto tcp --port 5514 --format 3164 CUSTOMTCPMARK")
       r = rows(custom, "CUSTOMTCPMARK")[0]
       assert r["source"] == "syslog" and "site" not in r, r
+    '';
+  };
+
+  # Syslog bypasses vmauth, so the slot's tenant is the only thing that gives a
+  # device's rows their tenant: each message must be readable under its slot's
+  # tenant and under no other (read straight from VictoriaLogs with the
+  # AccountID/ProjectID headers).
+  syslog-slot-tenant-lands-rows-in-that-tenant = pkgs.testers.nixosTest {
+    name = "victoria-stack-syslog-slot-tenant";
+
+    containers.main = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+        (tlsFilesFrom certOne)
+      ];
+      environment.systemPackages = tools;
+      services.victoriaStack = {
+        tenants = {
+          a.accountId = 1;
+          b = {
+            accountId = 2;
+            projectId = 5;
+          };
+        };
+        logs = {
+          enable = true;
+          syslog = {
+            udp = (slot "127.0.0.1" 5514) // {
+              tenant = "a";
+            };
+            tcp = (slot "127.0.0.1" 5515) // {
+              tenant = "b";
+            };
+            tls = (slot "127.0.0.1" 6514) // runtimeCert;
+          };
+        };
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      ${queryPython}
+
+      def tenant_query(machine, account, project, marker):
+          cmd = (
+              "curl -sf http://127.0.0.1:4202/select/logsql/query"
+              f" -H 'AccountID: {account}' -H 'ProjectID: {project}'"
+              f" --data-urlencode {shlex.quote('query=_msg:' + marker)}"
+          )
+          return cmd
+
+      def seen_in(machine, account, project, marker):
+          return marker in machine.succeed(tenant_query(machine, account, project, marker))
+
+      def wait_in(machine, account, project, marker, resend=None):
+          # Polls with a timeout; UDP is resent because the datagram may be lost.
+          pre = f"{resend}; sleep 1; " if resend else ""
+          machine.wait_until_succeeds(
+              f"{pre}{tenant_query(machine, account, project, marker)} | grep -F {marker}",
+              timeout=90,
+          )
+
+      start_all()
+      wait_active(main, "victorialogs.service")
+      main.wait_for_open_port(5515)
+      main.wait_for_open_port(6514)
+
+      udp_send = "${send} --proto udp --port 5514 --format 5424 TENANTUDPMARK"
+      main.succeed("${send} --proto tcp --port 5515 --format 5424 TENANTTCPMARK")
+      main.succeed("${send} --proto tls --port 6514 --cacert ${certOne}/cert.pem --format 5424 TENANTTLSMARK")
+
+      wait_in(main, 1, 0, "TENANTUDPMARK", resend=udp_send)
+      wait_in(main, 2, 5, "TENANTTCPMARK")
+      wait_in(main, 0, 0, "TENANTTLSMARK")
+
+      # Each row is visible under its own tenant only.
+      where = {
+          "TENANTUDPMARK": (1, 0),
+          "TENANTTCPMARK": (2, 5),
+          "TENANTTLSMARK": (0, 0),
+      }
+      for marker, home in where.items():
+          for tenant in [(0, 0), (1, 0), (2, 5), (2, 0), (1, 5)]:
+              assert seen_in(main, tenant[0], tenant[1], marker) == (tenant == home), (marker, tenant)
     '';
   };
 

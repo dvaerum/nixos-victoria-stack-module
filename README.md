@@ -174,7 +174,8 @@ listener on a non-loopback address until you set that slot's
 the `tls` slot is encrypted but still unauthenticated, so its warning says so).
 Ports below 1024 give the
 VictoriaLogs unit `CAP_NET_BIND_SERVICE` and nothing else. Anything beyond the
-three slots (unix sockets, tenants, stream fields) goes through `logs.extraFlags`;
+three slots (unix sockets, stream fields) goes through `logs.extraFlags`; a slot's
+`tenant` names the declared tenant its rows are stored under (default: tenant 0:0);
 see [`docs/decisions/0031`](./docs/decisions/0031-victorialogs-syslog-listeners.md).
 
 ### Fleet topology

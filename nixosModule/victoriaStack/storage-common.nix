@@ -217,7 +217,7 @@ in
                   ) "-retention.maxDiskUsagePercent=${toString cfg.retentionMaxDiskUsagePercent}"
                 )
                 # Escaped by the helper itself: the TLS flags carry raw %d.
-                ++ lib.optionals supportsSyslog (syslog.mkFlags cfg.syslog)
+                ++ lib.optionals supportsSyslog (syslog.mkFlags topCfg.tenants cfg.syslog)
                 ++ map escape cfg.extraFlags
               );
               Restart = "on-failure";

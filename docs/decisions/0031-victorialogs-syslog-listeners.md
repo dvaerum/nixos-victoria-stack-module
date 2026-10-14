@@ -20,6 +20,14 @@ stream fields, compression, `-syslog.timezone`) goes through `logs.extraFlags`.
   at 1024 or above the empty capability set stays untouched.
 - **No tenant option.** The module has no tenant plumbing on the query side, so
   everything stays in tenant 0:0 where the read tier, Grafana and the MCP server see it.
+  - **Update:** each slot now has `tenant` (null = tenant 0:0, as above), naming a
+    `services.victoriaStack.tenants.<name>` (an unknown name is an assertion). It
+    renders the positional `-syslog.tenantID.<transport>` array (`<accountId>:<projectId>`,
+    `0:0` for a slot without tenant, only once a slot of that transport has one), and
+    `-syslog.tenantID.*` joined the flags `extraFlags` may not carry while a slot of
+    that transport is enabled. Syslog bypasses vmauth, so the slot is the only place a
+    device's tenant is decided; the statement about the read tier below holds for
+    tenant 0:0 rows only.
 
 ## Why
 
@@ -65,7 +73,8 @@ after they arrive.
   arrays are positional, so a stray entry shifts every slot after it. The unix
   transport and the scalar flags (`-syslog.timezone`, `-syslog.tlsMinVersion`) stay
   free; `-syslog.tls` is owned by exact name for that reason.
-- The other `-syslog.<name>.tcp` arrays (`tenantID`, `streamFields`, ...) stay
+- The other `-syslog.<name>.tcp` arrays (`streamFields`, ...; `tenantID` since the
+  Update above) stay
   allowed, but with both the `tcp` and `tls` slots enabled one entry reaches the
   first tcp listener only (the `tcp` slot), so evaluation **warns**: give the flag
   twice, the `tcp` slot's value first.
