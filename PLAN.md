@@ -916,3 +916,26 @@ Tenants, stage 1 (logs and traces; the plan's stage 1):
   a guard check and the weekly bump workflow follow it) and the option layout
   and ports exist (ADR 0033). The transitional `metrics.mode` switch is gone: the
   cluster replaced the single-node unit and every test was ported.
+
+Metrics cluster, stage 2 (the plan's stage 2):
+- The VictoriaMetrics cluster replaces single-node for everyone (ADR 0033):
+  `vmstorage` (data, retention, snapshots), `vminsert` (writes, 4209) and
+  `vmselect` (reads, `metrics.listenAddress`, 4201) on one host, built from the
+  upstream `v<version>-cluster` tag (`packages/victoriametrics-cluster`, the
+  same version as `pkgs.victoriametrics`, guard check and weekly bump kept).
+  `metrics.mode` and `metrics.clusterPackage` were transitional and are gone;
+  `vmauth.package` stays `pkgs.victoriametrics`.
+- vmauth maps the unchanged client paths onto `/insert/0/...` and
+  `/select/0/prometheus/...`; Grafana and the metrics MCP server go through
+  vmauth's read tier as before. The MCP keeps `VM_INSTANCE_TYPE=single`
+  (`cluster` builds `/select/<tenant>/...` paths the read tier rejects).
+- Snapshots run against vmstorage (`vmstorage-snapshot`, skipped while it is
+  stopped); each process pushes its own metrics into vminsert.
+- The units have `After=` but no `Wants=` between them (a `Wants=` cut the
+  restart backoff short). Idle RSS measured: about 20/8/14 MB
+  (vmstorage/vminsert/vmselect).
+- Operator-visible: `extraFlags` per process, plain `-httpListenAddr` rejected
+  in `extraFlags`; Prometheus-path `openIngestPaths`/`extraWriteUrlMap` entries
+  need a `.../insert/0/prometheus/` `url_prefix` (tested).
+- Gate: the full suite on the merged tree read `gate-rc=0` (commit `c102e64`).
+- Next: stage 3 (metrics tenants, per-tenant MCP, Grafana orgs).
