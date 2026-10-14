@@ -285,7 +285,15 @@ writes to that tenant's own path of the metrics cluster (`/select/<accountId>/..
 header. Metrics have no project, so a tenant's `projectId` is ignored for them.
 The admin password reads the default tenant's metrics.
 
-Limits: tenant tokens get no `/mcp/*` routes and none of the routes added through
+The MCP servers work with tenant tokens: a `tenant` token reaches `/mcp/metrics`,
+`/mcp/logs` and `/mcp/traces` (within its `backends`) and sees only its tenant,
+because the server sends the caller's own token on to vmauth's read tier, which
+stamps it; the `tenant` argument of a logs or traces tool changes nothing for it.
+A `tenants` token reaches the MCP routes too, but the metrics tools send no
+`AccountID`, so its metrics calls end in vmauth's 400; its logs and traces tools
+pick a listed tenant with the `tenant` argument (`1` or `1:0`).
+
+Limits: tenant tokens get none of the routes added through
 `extraReadUrlMap`/`extraWriteUrlMap`; tokens without a tenant keep working and are
 stamped tenant 0:0 once any tenant is declared; the admin password is not bound to
 a tenant. The rules and the reasons:

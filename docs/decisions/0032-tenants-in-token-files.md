@@ -109,3 +109,27 @@ metrics) and the anonymous write door stays 0. Only the module's own tenant-0
 metrics routes are retargeted: an operator route under the metrics prefixes with
 another `url_prefix` (`extraWriteUrlMap`) is not given to a tenant token. Tenant
 tokens still get no `/mcp/*` routes and no extra routes until the later tasks.
+
+Update: a tenant token now gets the module's own `/mcp/metrics`, `/mcp/logs` and
+`/mcp/traces` routes (within its `backends`), without a stamp of their own. Each MCP
+server forwards the caller's `Authorization` to the read tier
+([0023](./0023-mcp-trust-boundary-extends-grafana.md)), where the tenant stamp
+applies, so vmauth alone bounds the tenant. Probed on the pinned binaries
+(`tests/tenant-mcp.nix`):
+
+- `tenant: a`: every tool of the three servers returns only a's data. The logs and
+  traces `tenant` argument goes out as `AccountID`/`ProjectID` headers (and defaults
+  to `0`/`0`); vmauth's stamped headers replace them, so naming another tenant still
+  returns a's data. The metrics tools take no tenant and cannot move the path.
+- `tenants: [a, b]` / `all`: the routes exist, but the metrics tools send no
+  `AccountID`, so their calls are vmauth's 400 `missing route` (a tool error). The
+  logs and traces tools default to `AccountID: 0`, also a 400; the `tenant`
+  argument (`1`, `1:9`) picks a listed tenant (the project is forced), an unlisted
+  one is the 400, and under `all` a declared tenant nobody wrote to is empty.
+- Hostile arguments (`x/../../select/2/...`, absolute URL, CRLF) never reach the
+  backend as anything but a path segment under the tenant's own `/select/<id>/`
+  or vmauth's 400, as for a tenant-less token.
+- vmauth decodes and cleans the request path before routing (`..`, `%2e%2e`,
+  `%2f`): a path that cleans into a route the token holds is that route, any other
+  is the 400 `missing route` naming the cleaned path. `extraReadUrlMap` routes are
+  still not given to a tenant token.

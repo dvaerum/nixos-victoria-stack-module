@@ -272,7 +272,8 @@ let
   );
 
   # The data routes a tenant applies to: logs and traces by header, metrics by
-  # path (`metrics`). Not the MCP prefixes: a tenant token gets no MCP route.
+  # path (`metrics`). `mcp` are the MCP routes' exact src_paths, granted to a
+  # tenant token unstamped (the read tier they call stamps it).
   tenantRoutePrefixesFile = pkgs.writeText "vmauth-tenant-route-prefixes.json" (
     builtins.toJSON {
       read = {
@@ -287,6 +288,11 @@ let
         read = [ "/metrics" ];
         write = [ "/opentelemetry" ];
       };
+      mcp = [
+        "/mcp/metrics(/.*)?"
+        "/mcp/logs(/.*)?"
+        "/mcp/traces(/.*)?"
+      ];
     }
   );
   tenantsFile = pkgs.writeText "vmauth-tenants.json" (

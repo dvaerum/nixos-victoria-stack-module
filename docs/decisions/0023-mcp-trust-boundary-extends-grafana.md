@@ -100,4 +100,8 @@ Update: with declared tenants ([0032](./0032-tenants-in-token-files.md)) a
 tenant token gets no `/mcp/*` routes, and a tenant-less token is stamped
 `0:0`, so "all data is tenant `0:0`" no longer holds for tenant tokens.
 
+Update: a tenant token does get the `/mcp/*` routes now: the servers send its own
+token to the read tier, which stamps the tenant, so the `tenant` argument cannot
+widen it ([0032](./0032-tenants-in-token-files.md), `tests/tenant-mcp.nix`).
+
 A separate MCP credential tier is not part of this decision.

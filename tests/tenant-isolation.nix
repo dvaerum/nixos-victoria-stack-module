@@ -47,6 +47,13 @@ let
     }
     WRITE_METRICS = {"src_paths": ["/opentelemetry.*"]}
 
+    # The MCP routes: the module's own, the caller's Authorization kept (the MCP server sends it
+    # back to the read tier, which stamps it).
+    def mcp(svc):
+        return {"src_paths": [f"/mcp/{svc}(/.*)?"], "drop_src_path_prefix_parts": 2, "headers": []}
+
+    MCP_ALL = [mcp("metrics"), mcp("logs"), mcp("traces")]
+
     def mroute(base, pick=None):
         # A metrics route carries its tenant in the url_prefix, not in headers.
         r = dict(base)
@@ -177,12 +184,12 @@ in
       write_map = load_json_file(unit_env("WRITE_URL_MAP_FILE"))
 
       # tenant: the entry's logs and traces routes carry the tenant, its metrics routes the
-      # tenant's backend path, nothing else (no MCP route).
+      # tenant's backend path, and the MCP routes are unstamped (the read tier they call stamps).
       assert bare(users["read-single-a"]["url_map"]) == [
-          mroute(READ_METRICS), route(READ_LOGS, 1, 0), route(READ_TRACES, 1, 0),
+          mroute(READ_METRICS), route(READ_LOGS, 1, 0), route(READ_TRACES, 1, 0), *MCP_ALL,
       ], users["read-single-a"]
       assert backend_paths(users["read-single-a"]["url_map"]) == ["select/1/prometheus/"]
-      assert bare(users["read-single-c-logs-only"]["url_map"]) == [route(READ_LOGS, 3, 7)]
+      assert bare(users["read-single-c-logs-only"]["url_map"]) == [route(READ_LOGS, 3, 7), mcp("logs")]
       assert bare(users["write-single-a"]["url_map"]) == [
           mroute(WRITE_METRICS), route(WRITE_LOGS, 1, 0), route(WRITE_TRACES, 1, 0),
       ], users["write-single-a"]
@@ -192,6 +199,7 @@ in
       assert bare(users["read-list-a-c"]["url_map"]) == [
           mroute(READ_METRICS, 1), route(READ_LOGS, 1, 0, pick=True), route(READ_TRACES, 1, 0, pick=True),
           mroute(READ_METRICS, 3), route(READ_LOGS, 3, 7, pick=True), route(READ_TRACES, 3, 7, pick=True),
+          *MCP_ALL,
       ], users["read-list-a-c"]
       assert backend_paths(users["read-list-a-c"]["url_map"]) == ["select/1/prometheus/", "select/3/prometheus/"]
 
@@ -200,7 +208,7 @@ in
           x
           for a, p in [(1, 0), (2, 0), (3, 7)]
           for x in (mroute(READ_METRICS, a), route(READ_LOGS, a, p, pick=True), route(READ_TRACES, a, p, pick=True))
-      ], users["read-all"]
+      ] + MCP_ALL, users["read-all"]
       assert backend_paths(users["read-all"]["url_map"]) == [f"select/{a}/prometheus/" for a in (1, 2, 3)]
 
       # No key: tenant 0:0 on logs and traces; every other route exactly as before.
@@ -222,10 +230,13 @@ in
       assert any(r["src_paths"][0].startswith("/metrics") and "AccountID: 0" not in r["headers"]
                  for r in users["read-plain"]["url_map"])
 
-      # Tenant tokens never get MCP routes.
-      for token in ("read-single-a", "read-list-a-c", "read-all", "read-single-c-logs-only", "write-single-a"):
-          for r in users[token]["url_map"]:
-              assert not r["src_paths"][0].startswith("/mcp"), (token, r)
+      # Read tenant tokens get exactly the module's MCP routes; a write token has none (the MCP
+      # servers are read-tier clients).
+      for token in ("read-single-a", "read-list-a-c", "read-all"):
+          got = [r for r in users[token]["url_map"] if r["src_paths"][0].startswith("/mcp")]
+          assert bare(got) == MCP_ALL, (token, got)
+          assert [r["url_prefix"] for r in got] == [r["url_prefix"] for r in read_map if r["src_paths"][0].startswith("/mcp")]
+      assert not any(r["src_paths"][0].startswith("/mcp") for r in users["write-single-a"]["url_map"])
 
       # The admin tier is never stamped: the full read map, untouched.
       admin = next(u for u in render()["users"] if u.get("username") == "admin")
@@ -312,22 +323,22 @@ in
           assert token not in users, token
 
       # A name that is not declared is ignored; the others stay.
-      assert [r["src_headers"] for r in bare(users["read-list-one-undeclared"]["url_map"])] == [
-          ["AccountID: 1"], ["AccountID: 1"], ["AccountID: 1"]
+      assert [r.get("src_headers") for r in bare(users["read-list-one-undeclared"]["url_map"])] == [
+          ["AccountID: 1"], ["AccountID: 1"], ["AccountID: 1"], None, None, None
       ], users["read-list-one-undeclared"]
       # Two tenants of one account: the first stays (metrics, logs, traces).
       assert [r["headers"][-2:] for r in bare(users["read-list-same-account"]["url_map"])] == [
-          ["Authorization:"], ["AccountID: 1", "ProjectID: 0"], ["AccountID: 1", "ProjectID: 0"]
+          ["Authorization:"], ["AccountID: 1", "ProjectID: 0"], ["AccountID: 1", "ProjectID: 0"], [], [], []
       ], users["read-list-same-account"]
       assert backend_paths(users["read-list-same-account"]["url_map"]) == ["select/1/prometheus/"]
-      assert sorted({r["src_headers"][0] for r in users["read-all-same-account"]["url_map"]}) == [
+      assert sorted({r["src_headers"][0] for r in users["read-all-same-account"]["url_map"] if "src_headers" in r}) == [
           "AccountID: 1", "AccountID: 2", "AccountID: 3"
       ]
       # A tenant entry scoped to metrics keeps exactly the metrics route, in the tenant's path.
-      assert bare(users["read-metrics-only"]["url_map"]) == [mroute(READ_METRICS)], users["read-metrics-only"]
+      assert bare(users["read-metrics-only"]["url_map"]) == [mroute(READ_METRICS), mcp("metrics")], users["read-metrics-only"]
       assert backend_paths(users["read-metrics-only"]["url_map"]) == ["select/1/prometheus/"]
       # A tenant entry scoped to traces keeps exactly that.
-      assert bare(users["read-good"]["url_map"]) == [route(READ_TRACES, 2, 0)]
+      assert bare(users["read-good"]["url_map"]) == [route(READ_TRACES, 2, 0), mcp("traces")]
       assert bare(users["write-good"]["url_map"]) == [route(WRITE_LOGS, 1, 0)]
 
       # vmauth keeps running; no token reaches the journal.
@@ -672,16 +683,15 @@ in
       for hdrs in (["AccountID: 4"], []):
           missing_route(http(SERVICES, "read-all", hdrs), SERVICES)
 
-      # ---- MCP: tenant tokens get no /mcp/* route in this stage -------------------
+      # ---- MCP: every read token kind reaches the MCP routes (tests/tenant-mcp.nix covers the data) ----
       INIT = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
           "protocolVersion": "2024-11-05", "capabilities": {},
           "clientInfo": {"name": "victoria-stack-test", "version": "1.0"}}})
       MCP_HDRS = ["Content-Type: application/json", "Accept: application/json, text/event-stream"]
       for route, name in [("logs", "VictoriaLogs"), ("traces", "VictoriaTraces")]:
           path = f"/mcp/{route}"
-          for token in ["read-a", "read-b", "read-list-a-b", "read-all"]:
-              missing_route(http(path, token, MCP_HDRS, "POST", INIT), path)
-          for token, basic in [("read-plain", None), (None, admin)]:
+          for token, basic in [("read-a", None), ("read-b", None), ("read-list-a-b", None), ("read-all", None),
+                               ("read-plain", None), (None, admin)]:
               code, body = http(path, token, MCP_HDRS, "POST", INIT, basic)
               assert code == "200" and name in body, (route, token, code, body)
 

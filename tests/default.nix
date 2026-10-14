@@ -7,6 +7,7 @@ let
     tenants = import ./tenants.nix { inherit pkgs nixosModule; };
     tenant-isolation = import ./tenant-isolation.nix { inherit pkgs nixosModule; };
     tenant-isolation-metrics = import ./tenant-isolation-metrics.nix { inherit pkgs nixosModule; };
+    tenant-mcp = import ./tenant-mcp.nix { inherit pkgs nixosModule; };
     listen = import ./listen.nix { inherit pkgs nixosModule; };
     docs = import ./docs.nix { inherit pkgs nixosModule; };
     storage = import ./storage.nix { inherit pkgs nixosModule; };

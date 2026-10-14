@@ -12,9 +12,11 @@ include "tenant-routes";
 # Tenants: `tenant: x` stamps x on every logs and traces route of the entry
 # and retargets its metrics routes to x's path; `tenants: [..]`/`all` (read
 # tier) emits those routes once per tenant, picked by the client's AccountID.
-# MCP routes are never given to a
-# tenant token (the MCP servers cannot bound tenants). Metrics routes are
-# retargeted to the tenant's `/select/<id>/prometheus/` or `/insert/<id>/`.
+# The module's own MCP routes (tenantprefixes.mcp, exact src_paths) are
+# granted to a tenant token unchanged: the MCP server forwards the caller's
+# Authorization to the read tier, where the stamp applies, so vmauth alone
+# bounds the tenant (docs/decisions/0032). Metrics routes are retargeted to
+# the tenant's `/select/<id>/prometheus/` or `/insert/<id>/`.
 # Without a tenant key and with tenants declared, the logs and
 # traces routes are stamped 0:0, so a client header cannot reach another
 # tenant. With no tenant declared nothing differs from a render without tenants.
@@ -27,6 +29,7 @@ $ENV.label as $label
 | ($tenantprefixes[0][$tier] | [.[][]]) as $header_pfx
 | $tenantprefixes[0].metrics[$tier] as $metrics_pfx
 | ($header_pfx + $metrics_pfx) as $tenant_pfx
+| $tenantprefixes[0].mcp as $mcp_paths
 | ($tokens[0] | to_entries | map(
     (.key + 1) as $n
     | .value as $t
@@ -70,8 +73,11 @@ $ENV.label as $label
        elif ($tn | length) == 0 then []
        else
          ($um | keep_paths((contains("|") | not) and under($tenant_pfx))) as $r
-         | if $mode == "single" then $r | stamp($table[$tn[0]]; $metrics_pfx)
-           else $r | per_tenant($table; $tn; $metrics_pfx) end
+         | (if $mode == "single" then $r | stamp($table[$tn[0]]; $metrics_pfx)
+            else $r | per_tenant($table; $tn; $metrics_pfx) end) as $data
+         # Only alongside data routes: an MCP route without the read tier it calls is useless.
+         | if ($data | length) == 0 then []
+           else $data + ($um | keep_paths(. as $p | $mcp_paths | index([$p]) != null)) end
        end) as $routes
     | (if $misuse then null
        elif $mode == "none" or ($tn | length) > 0 then null
