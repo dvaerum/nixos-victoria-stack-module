@@ -939,3 +939,29 @@ Metrics cluster, stage 2 (the plan's stage 2):
   need a `.../insert/0/prometheus/` `url_prefix` (tested).
 - Gate: the full suite on the merged tree read `gate-rc=0` (commit `c102e64`).
 - Next: stage 3 (metrics tenants, per-tenant MCP, Grafana orgs).
+
+Tenants, stage 3 (metrics tenants, per-caller MCP, Grafana orgs; the plan's stage 3):
+- vmauth stamps the metrics tenant per tenant token: reads go to vmselect
+  `/select/<accountId>/prometheus/`, writes to vminsert `/insert/<accountId>/`,
+  client paths unchanged. List/`all` read tokens get one copy of the metrics
+  routes per allowed tenant, matched on `AccountID`; a missing or unlisted pick is
+  a 400. A client path naming another tenant is outside the allow-list (400).
+  `projectId` is ignored for metrics. Admin stays unstamped (tenant 0 for metrics).
+- Tenant tokens now get the module's own `/mcp/*` routes within their `backends`
+  scope. The MCP servers forward the caller's token to the read tier, so vmauth's
+  stamp decides the tenant: a logs/traces `tenant` tool argument cannot override
+  it. Metrics MCP calls from list/`all` tokens end in vmauth's 400 (the MCP sends
+  no `AccountID`); that is intended and documented. vmauth cleans `..` before
+  routing, so `/mcp/metrics/../logs` reaches the token's own logs route and
+  nothing beyond its own routes (pinned in `tests/tenant-mcp.nix`).
+- Grafana: `tenants.<name>.grafanaOrgId` + `readTokenFile` provision that
+  tenant's datasources into an org the operator created (runbook
+  `docs/runbooks/grafana-tenant-org.md`). A missing org makes Grafana fail
+  provisioning and restart-loop, so create the org first.
+- Tests: `tests/tenant-isolation-metrics.nix` (token kinds x operations on the real
+  cluster, plus the metrics/logs/traces combined matrix), `tests/tenant-mcp.nix`,
+  `tests/grafana-tenant-orgs.nix`.
+- Not automated: the Firefox walk-through of the Grafana runbook and of the Metrics
+  browser (a manual pass); the metrics datasource of a tenant org is covered by
+  eval checks, not by a boot test.
+- Gate: the full suite on the merged tree read `gate-rc=0`.
