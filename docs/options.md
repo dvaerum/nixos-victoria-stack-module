@@ -1199,10 +1199,11 @@ true
 
 
 Tools to switch back on that this module disables by default\.
-The MCP server calls its backend directly, so its tools are
-NOT limited to vmauth’s read-tier endpoint allow-list
-(docs/decisions/0021): a read token reaches anything a tool
-can call\. The module therefore disables the tools whose
+The metrics and logs MCP servers go through vmauth’s read tier,
+so a lifted tool whose endpoint is off its allow-list
+(docs/decisions/0021) only answers with vmauth’s 400\. The
+traces server calls its backend directly\. The module
+disables the tools whose
 endpoint is off that list or that show other users’ query
 text: ` flags ` for logs; ` active_queries `, ` top_queries ` and
 ` tsdb_status ` for metrics; none for traces\. Naming one here
@@ -1313,20 +1314,30 @@ list of string
 
 Address the MCP server listens on\. Defaults to loopback-only
 (reach it via ` services.victoriaStack.vmauth `’s own ` /mcp/* `
-routing); override to expose it directly if ` vmauth ` is
-disabled and that’s what you want\. Requires this service’s own
-` enable = true ` – there is nothing for the MCP server to proxy
-to otherwise (see docs/decisions/0002-opt-in-everything\.md)\.
+routing); override to expose it directly if you really want
+that\. Requires this service’s own ` enable = true ` – there is
+nothing for the MCP server to proxy to otherwise (see
+docs/decisions/0002-opt-in-everything\.md)\. The metrics and logs
+MCP servers also require ` vmauth.enable = true ` (the traces one
+does not, yet)\.
 
-The MCP server has no authentication, so an address beyond
-loopback bypasses vmauth’s tiers and warns (silence it with
-` suppressExposureWarning `)\. The port must be 1024 or above: the
-unit has no capability to bind a privileged port\.
+The MCP server has no authentication of its own, so an address
+beyond loopback bypasses vmauth’s ` /mcp/* ` token check and warns
+(silence it with ` suppressExposureWarning `)\. The port must be 1024
+or above: the unit has no capability to bind a privileged port\.
 
-The MCP tools sit behind vmauth’s read tier but OUTSIDE its
-endpoint allow-list: the server calls the backend directly on
-loopback\. Tools that would reach beyond that list are off by
-default (see ` enabledTools `)\.
+The metrics and logs MCP servers forward the caller’s own
+` Authorization ` header to vmauth’s read tier, so the caller’s
+token tier, backend scope and the closed endpoint allow-list
+(docs/decisions/0021) apply to every tool call\. A tool whose
+backend endpoint is outside that list (` alerts `, ` rules `,
+` prettify_query `, ` metric_statistics `, …) fails with vmauth’s
+` 400 missing route `\. A request without a valid token (for
+example one sent straight to this listener) is answered with
+vmauth’s 401 by the tool call\. The traces MCP server still
+calls its backend directly on loopback, outside the allow-list;
+tools that would reach beyond it are off by default (see
+` enabledTools `)\.
 
 When reached through vmauth (e\.g\. ` /mcp/metrics `,
 ` /mcp/logs `, ` /mcp/traces `): request it with NO trailing
@@ -2716,10 +2727,11 @@ true
 
 
 Tools to switch back on that this module disables by default\.
-The MCP server calls its backend directly, so its tools are
-NOT limited to vmauth’s read-tier endpoint allow-list
-(docs/decisions/0021): a read token reaches anything a tool
-can call\. The module therefore disables the tools whose
+The metrics and logs MCP servers go through vmauth’s read tier,
+so a lifted tool whose endpoint is off its allow-list
+(docs/decisions/0021) only answers with vmauth’s 400\. The
+traces server calls its backend directly\. The module
+disables the tools whose
 endpoint is off that list or that show other users’ query
 text: ` flags ` for logs; ` active_queries `, ` top_queries ` and
 ` tsdb_status ` for metrics; none for traces\. Naming one here
@@ -2830,20 +2842,30 @@ list of string
 
 Address the MCP server listens on\. Defaults to loopback-only
 (reach it via ` services.victoriaStack.vmauth `’s own ` /mcp/* `
-routing); override to expose it directly if ` vmauth ` is
-disabled and that’s what you want\. Requires this service’s own
-` enable = true ` – there is nothing for the MCP server to proxy
-to otherwise (see docs/decisions/0002-opt-in-everything\.md)\.
+routing); override to expose it directly if you really want
+that\. Requires this service’s own ` enable = true ` – there is
+nothing for the MCP server to proxy to otherwise (see
+docs/decisions/0002-opt-in-everything\.md)\. The metrics and logs
+MCP servers also require ` vmauth.enable = true ` (the traces one
+does not, yet)\.
 
-The MCP server has no authentication, so an address beyond
-loopback bypasses vmauth’s tiers and warns (silence it with
-` suppressExposureWarning `)\. The port must be 1024 or above: the
-unit has no capability to bind a privileged port\.
+The MCP server has no authentication of its own, so an address
+beyond loopback bypasses vmauth’s ` /mcp/* ` token check and warns
+(silence it with ` suppressExposureWarning `)\. The port must be 1024
+or above: the unit has no capability to bind a privileged port\.
 
-The MCP tools sit behind vmauth’s read tier but OUTSIDE its
-endpoint allow-list: the server calls the backend directly on
-loopback\. Tools that would reach beyond that list are off by
-default (see ` enabledTools `)\.
+The metrics and logs MCP servers forward the caller’s own
+` Authorization ` header to vmauth’s read tier, so the caller’s
+token tier, backend scope and the closed endpoint allow-list
+(docs/decisions/0021) apply to every tool call\. A tool whose
+backend endpoint is outside that list (` alerts `, ` rules `,
+` prettify_query `, ` metric_statistics `, …) fails with vmauth’s
+` 400 missing route `\. A request without a valid token (for
+example one sent straight to this listener) is answered with
+vmauth’s 401 by the tool call\. The traces MCP server still
+calls its backend directly on loopback, outside the allow-list;
+tools that would reach beyond it are off by default (see
+` enabledTools `)\.
 
 When reached through vmauth (e\.g\. ` /mcp/metrics `,
 ` /mcp/logs `, ` /mcp/traces `): request it with NO trailing
@@ -3647,10 +3669,11 @@ true
 
 
 Tools to switch back on that this module disables by default\.
-The MCP server calls its backend directly, so its tools are
-NOT limited to vmauth’s read-tier endpoint allow-list
-(docs/decisions/0021): a read token reaches anything a tool
-can call\. The module therefore disables the tools whose
+The metrics and logs MCP servers go through vmauth’s read tier,
+so a lifted tool whose endpoint is off its allow-list
+(docs/decisions/0021) only answers with vmauth’s 400\. The
+traces server calls its backend directly\. The module
+disables the tools whose
 endpoint is off that list or that show other users’ query
 text: ` flags ` for logs; ` active_queries `, ` top_queries ` and
 ` tsdb_status ` for metrics; none for traces\. Naming one here
@@ -3761,20 +3784,30 @@ list of string
 
 Address the MCP server listens on\. Defaults to loopback-only
 (reach it via ` services.victoriaStack.vmauth `’s own ` /mcp/* `
-routing); override to expose it directly if ` vmauth ` is
-disabled and that’s what you want\. Requires this service’s own
-` enable = true ` – there is nothing for the MCP server to proxy
-to otherwise (see docs/decisions/0002-opt-in-everything\.md)\.
+routing); override to expose it directly if you really want
+that\. Requires this service’s own ` enable = true ` – there is
+nothing for the MCP server to proxy to otherwise (see
+docs/decisions/0002-opt-in-everything\.md)\. The metrics and logs
+MCP servers also require ` vmauth.enable = true ` (the traces one
+does not, yet)\.
 
-The MCP server has no authentication, so an address beyond
-loopback bypasses vmauth’s tiers and warns (silence it with
-` suppressExposureWarning `)\. The port must be 1024 or above: the
-unit has no capability to bind a privileged port\.
+The MCP server has no authentication of its own, so an address
+beyond loopback bypasses vmauth’s ` /mcp/* ` token check and warns
+(silence it with ` suppressExposureWarning `)\. The port must be 1024
+or above: the unit has no capability to bind a privileged port\.
 
-The MCP tools sit behind vmauth’s read tier but OUTSIDE its
-endpoint allow-list: the server calls the backend directly on
-loopback\. Tools that would reach beyond that list are off by
-default (see ` enabledTools `)\.
+The metrics and logs MCP servers forward the caller’s own
+` Authorization ` header to vmauth’s read tier, so the caller’s
+token tier, backend scope and the closed endpoint allow-list
+(docs/decisions/0021) apply to every tool call\. A tool whose
+backend endpoint is outside that list (` alerts `, ` rules `,
+` prettify_query `, ` metric_statistics `, …) fails with vmauth’s
+` 400 missing route `\. A request without a valid token (for
+example one sent straight to this listener) is answered with
+vmauth’s 401 by the tool call\. The traces MCP server still
+calls its backend directly on loopback, outside the allow-list;
+tools that would reach beyond it are off by default (see
+` enabledTools `)\.
 
 When reached through vmauth (e\.g\. ` /mcp/metrics `,
 ` /mcp/logs `, ` /mcp/traces `): request it with NO trailing
