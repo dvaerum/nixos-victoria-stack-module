@@ -178,6 +178,92 @@ three slots (unix sockets, stream fields) goes through `logs.extraFlags`; a slot
 `tenant` names the declared tenant its rows are stored under (default: tenant 0:0);
 see [`docs/decisions/0031`](./docs/decisions/0031-victorialogs-syslog-listeners.md).
 
+### Tenants
+
+A tenant keeps logs and traces of different teams or sites apart: its data is
+stored under an AccountID/ProjectID pair, and a token only reads or writes the
+tenant it names. Declare the tenants once; token files refer to them by name
+(the number is the permanent key of the stored data, so it lives in one place):
+
+```nix
+# gateway host
+{
+  imports = [ victoria-stack-module.nixosModules.victoriaStack ];
+  services.victoriaStack = {
+    tenants = {
+      team-a.accountId = 7;
+      team-b.accountId = 8;
+    };
+    logs = {
+      enable = true;
+      # No authentication on syslog: the slot decides the tenant of every device on it.
+      syslog.udp = {
+        enable = true;
+        ipAddress = "192.0.2.10";
+        tenant = "team-a";
+      };
+    };
+    traces.enable = true;
+    vmauth = {
+      writeTokensFile = "/run/secrets/victoria-write-tokens.yaml";
+      readTokensFile = "/run/secrets/victoria-read-tokens.yaml";
+    };
+  };
+}
+```
+
+```yaml
+# victoria-write-tokens.yaml: one tenant per write token
+tokens:
+  - token: "team-a-host-secret"
+    tenant: team-a
+  - token: "team-b-host-secret"
+    tenant: team-b
+```
+
+```yaml
+# victoria-read-tokens.yaml
+tokens:
+  - token: "team-a-reader-secret"
+    tenant: team-a                # reads team-a only
+  - token: "ops-reader-secret"
+    tenants: [team-a, team-b]     # the client picks; `tenants: all` lists every tenant
+```
+
+A collector host belongs to the tenant of its write token, so it needs nothing
+else; it ships logs and traces only:
+
+```nix
+# a team-a host: its write token file holds team-a-host-secret (tenant team-a)
+{
+  imports = [ victoria-stack-module.nixosModules.victoriaCollector ];
+  services.victoriaCollector = {
+    logs.enable = true;
+    traces.enable = true;
+    writeEndpoint = "https://victoria-gateway.example.internal:8443";
+    writeTokenFile = "/run/secrets/victoria-collector-write-token";
+    hostType = "server";
+  };
+}
+```
+
+A client with a `tenants` token picks the tenant with the `AccountID` header (the
+number from the table). A missing header, or an account outside the list, gets
+vmauth's `400 missing route`:
+
+```sh
+curl -H "Authorization: Bearer $(cat /run/secrets/ops-reader-token)" -H "AccountID: 8" \
+  --data-urlencode 'query=*' \
+  https://victoria-gateway.example.internal:8443/logs/select/logsql/query
+```
+
+Limits: metrics have no tenants yet (planned), so a tenant token gets no metrics
+route and a tenant host does not ship metrics; tenant tokens get no `/mcp/*`
+routes; tokens without a tenant keep working and are stamped tenant 0:0 once any
+tenant is declared; the admin password is not bound to a tenant. The rules and
+the reasons:
+[`docs/decisions/0032`](./docs/decisions/0032-tenants-in-token-files.md).
+
 ### Fleet topology
 
 One gateway host running `victoriaStack`, N other hosts running

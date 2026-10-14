@@ -155,6 +155,10 @@ What you still have behind a proxy:
   out, with one exception: the opt-in `logs.syslog` slots, extra
   VictoriaLogs listeners with no authentication that bypass vmauth
   (ADR 0031).
+- **Tenants are decided at the gateway, for logs and traces only** (ADR 0032):
+  vmauth stamps the tenant of a token's entry on its logs and traces routes, so
+  the client cannot pick another; the admin tier is not stamped. The syslog slots
+  bypass vmauth and carry their own `tenant`. Metrics have no tenants yet.
 - **The collector's local OTLP receiver has no relationship to vmauth at
   all** — it's a separate, loopback-only endpoint for host-local
   OTLP-speaking applications, unrelated to the fleet-shipping path the

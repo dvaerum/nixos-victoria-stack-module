@@ -29,16 +29,21 @@ let
   # The README's fleet snippets, evaluated the way a user pastes them: only what
   # the snippet itself imports, so a missing module import fails here (the fleet
   # example test supplies the modules itself and cannot see that).
-  readmeBlocks =
+  readmeFenced =
+    lang:
     let
-      pieces = lib.splitString "```nix\n" (builtins.readFile ../README.md);
+      pieces = lib.splitString "```${lang}\n" (builtins.readFile ../README.md);
     in
     map (piece: lib.head (lib.splitString "```" piece)) (lib.tail pieces);
+  readmeBlocks = readmeFenced "nix";
   fleetBlocks = lib.filter (lib.hasInfix "fleet.") readmeBlocks;
-  evalSnippet =
+  tenantBlocks = lib.filter (lib.hasInfix "tenant") readmeBlocks;
+  tenantYamlBlocks = lib.filter (lib.hasInfix "tenant") (readmeFenced "yaml");
+
+  evalBlock =
     block:
     let
-      file = builtins.toFile "readme-fleet-snippet.nix" ''
+      file = builtins.toFile "readme-snippet.nix" ''
         let
           victoria-stack-module.nixosModules = {
             victoriaStack = ${nixosModule.nixosModules.victoriaStack};
@@ -47,15 +52,44 @@ let
         in
         ${builtins.replaceStrings [ "./fleet.nix" ] [ (toString ../examples/fleet.nix) ] block}
       '';
-      evaluated = import (pkgs.path + "/nixos/lib/eval-config.nix") {
-        inherit (pkgs) system;
-        modules = [
-          file
-          { system.stateVersion = lib.trivial.release; }
-        ];
-      };
     in
-    builtins.tryEval (builtins.length evaluated.config.assertions > 0);
+    import (pkgs.path + "/nixos/lib/eval-config.nix") {
+      inherit (pkgs) system;
+      modules = [
+        file
+        {
+          system.stateVersion = lib.trivial.release;
+          # Not what the snippets are about, but a NixOS system asserts on them.
+          boot.loader.grub.enable = false;
+          fileSystems."/" = {
+            device = "none";
+            fsType = "tmpfs";
+          };
+        }
+      ];
+    };
+  evalSnippet = block: builtins.tryEval (builtins.length (evalBlock block).config.assertions > 0);
+
+  # The tenant snippets are the documented way to set tenants up, so they must
+  # also pass the module's own assertions (an unknown tenant name, a bad port).
+  failedAssertions =
+    block: map (a: a.message) (lib.filter (a: !a.assertion) (evalBlock block).config.assertions);
+  evalTenantSnippet = block: builtins.tryEval (builtins.deepSeq (failedAssertions block) true);
+  # The tenants the README declares: its token-file snippets may name only these.
+  readmeTenantNames = lib.unique (
+    lib.concatMap (
+      block:
+      let
+        r = builtins.tryEval (
+          lib.attrNames (lib.attrByPath [ "services" "victoriaStack" "tenants" ] { } (evalBlock block).config)
+        );
+      in
+      if r.success then r.value else [ ]
+    ) tenantBlocks
+  );
+  tenantYamlFile = builtins.toFile "readme-tenant-tokens.yaml" (
+    lib.concatStringsSep "\n---\n" tenantYamlBlocks
+  );
 
   # Cases docs-check must reject: each is one file added to an otherwise clean tree.
   # The words are split so this file does not trip the guard it tests.
@@ -99,6 +133,57 @@ in
       pkgs.runCommand "docs-readme-fleet-snippets-evaluate" { } "touch $out"
     else
       throw "a README fleet snippet does not evaluate as written (missing module import?)";
+
+  readme-tenant-snippets-evaluate =
+    assert lib.length tenantBlocks >= 2;
+    assert readmeTenantNames != [ ];
+    let
+      failed = lib.concatMap failedAssertions (
+        lib.filter (b: (evalTenantSnippet b).success) tenantBlocks
+      );
+    in
+    if lib.all (b: (evalTenantSnippet b).success) tenantBlocks && failed == [ ] then
+      pkgs.runCommand "docs-readme-tenant-snippets-evaluate" { } "touch $out"
+    else
+      throw "a README tenant snippet does not evaluate as written (unknown option, missing import) or fails an assertion: ${lib.concatStringsSep " | " failed}";
+
+  # Token-file snippets: valid YAML, only keys the render script accepts, and
+  # only tenants the README's own Nix snippet declares.
+  readme-tenant-token-yaml-parses =
+    assert tenantYamlBlocks != [ ];
+    pkgs.runCommand "docs-readme-tenant-token-yaml-parses"
+      {
+        nativeBuildInputs = [
+          pkgs.yq-go
+          pkgs.jq
+        ];
+      }
+      ''
+        yq -o=json ea '[.]' ${tenantYamlFile} > docs.json
+        jq -e --argjson declared ${lib.escapeShellArg (builtins.toJSON readmeTenantNames)} '
+          def known: . as $t | $declared | index([$t]) != null;
+          all(.[];
+            (.tokens | type == "array")
+            and all(.tokens[];
+              (keys - ["token", "backends", "tenant", "tenants"] | length == 0)
+              and (.token | type == "string")
+              and (.tenant == null or (.tenant | known))
+              and ((.tenants // []) | if . == "all" then true else all(.[]; known) end)))
+        ' docs.json
+        touch $out
+      '';
+
+  # The ADR links the ADRs it builds on, and the README links the ADR.
+  tenants-adr-links-its-related-adrs =
+    pkgs.runCommand "docs-tenants-adr-links-its-related-adrs" { }
+      ''
+        adr=${../docs/decisions/0032-tenants-in-token-files.md}
+        for n in 0003 0021 0023 0030 0031; do
+          grep -qE "\]\($n-[a-z0-9-]+\.md\)" "$adr" || { echo "ADR 0032 does not link $n" >&2; exit 1; }
+        done
+        grep -q '0032-tenants-in-token-files.md' ${../README.md} || { echo "README does not link ADR 0032" >&2; exit 1; }
+        touch $out
+      '';
 
   narrative-guard-rejects-known-forms =
     pkgs.runCommand "docs-narrative-guard-rejects-known-forms"
