@@ -159,10 +159,14 @@ What you still have behind a proxy:
   out, with one exception: the opt-in `logs.syslog` slots, extra
   VictoriaLogs listeners with no authentication that bypass vmauth
   (ADR 0031).
-- **Tenants are decided at the gateway, for logs and traces only** (ADR 0032):
-  vmauth stamps the tenant of a token's entry on its logs and traces routes, so
-  the client cannot pick another; the admin tier is not stamped. The syslog slots
-  bypass vmauth and carry their own `tenant`. Metrics have no tenants yet.
+- **Tenants are decided at the gateway** (ADR 0032): vmauth stamps the tenant of
+  a token's entry on its logs and traces routes and sends its metrics to that
+  tenant's own cluster path, so the client cannot pick another; the admin tier
+  is not stamped. The syslog slots bypass vmauth and carry their own `tenant`.
+- **The MCP servers call vmauth's read tier with the caller's own token**
+  (`<svc>.mcp.enable` requires `vmauth.enable`), so vmauth alone decides which
+  tools work; those outside the read allow-list get vmauth's 400
+  (ADR 0023).
 - **The collector's local OTLP receiver has no relationship to vmauth at
   all** — it exists only with `traces.enable` (ports
   `traces.receiver.grpcPort`/`httpPort`), a separate, loopback-only endpoint

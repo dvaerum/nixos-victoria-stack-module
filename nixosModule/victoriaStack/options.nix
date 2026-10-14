@@ -922,7 +922,7 @@ in
         };
       };
       description = ''
-        The tenants VictoriaLogs and VictoriaTraces keep data apart for. A tenant is an
+        The tenants the stack keeps data apart for. A tenant is an
         AccountID/ProjectID pair the data is stored under; the attribute name is the
         name that vmauth token files will use to refer to it. A name is 1 to 63
         characters of lower-case letters, digits and hyphens, not starting or ending
@@ -933,8 +933,7 @@ in
         is implicit and cannot be declared here.
 
         The table takes effect once token files reference a tenant by name
-        (`tenant`/`tenants`, see `vmauth.readTokensFile`). Tenants for metrics are
-        not supported yet (planned).
+        (`tenant`/`tenants`, see `vmauth.readTokensFile`).
       '';
     };
 
