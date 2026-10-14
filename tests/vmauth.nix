@@ -1599,7 +1599,6 @@ in
         vmauth = {
           adminPasswordFile = "${adminPasswordFixture}";
           readTokensFile = "${readTokensFixture}";
-          requireAuthForWrites = false;
         };
       };
     };
