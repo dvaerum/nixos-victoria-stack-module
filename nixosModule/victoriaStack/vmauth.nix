@@ -14,7 +14,7 @@ let
 
   # Applied only to user-supplied text: the module's own %d
   # credential-directory flags must stay raw.
-  inherit (import ./exec-escape.nix { inherit lib; }) escape;
+  inherit (import ./exec-escape.nix { inherit lib; }) escape escapeEnvironment;
   listen = import ./listen.nix { inherit lib; };
   restartBackoff = import ../restart-backoff.nix;
   readiness = import ./readiness.nix { inherit lib pkgs; };
@@ -31,6 +31,11 @@ let
   httpsCertSource =
     if cfg.https.acmeCertName != null then "${acmeDir}/fullchain.pem" else cfg.https.certFile;
   httpsKeySource = if cfg.https.acmeCertName != null then "${acmeDir}/key.pem" else cfg.https.keyFile;
+
+  # LoadCredential= and PathChanged= expand systemd specifiers, so a `%` in an
+  # operator's path is doubled. A `:` needs nothing: only the first one splits
+  # ID:PATH.
+  credential = id: path: "${id}:${escapeEnvironment (toString path)}";
 
   # Files vmauth only reads at start (LoadCredential= copies them, the render
   # script runs once). ACME certs are excluded: reloadServices covers them. A
@@ -580,18 +585,22 @@ in
           timeout = readinessTimeout;
         };
         LoadCredential =
-          lib.optional (cfg.adminPasswordFile != null) "admin-password:${cfg.adminPasswordFile}"
-          ++ lib.optional (cfg.readTokensFile != null) "read-tokens:${cfg.readTokensFile}"
-          ++ lib.optional (cfg.writeTokensFile != null) "write-tokens:${cfg.writeTokensFile}"
+          lib.optional (cfg.adminPasswordFile != null) (credential "admin-password" cfg.adminPasswordFile)
+          ++ lib.optional (cfg.readTokensFile != null) (credential "read-tokens" cfg.readTokensFile)
+          ++ lib.optional (cfg.writeTokensFile != null) (credential "write-tokens" cfg.writeTokensFile)
           # Every TLS file goes through LoadCredential, public CA bundle
           # included: vmauth's DynamicUser then never depends on who owns
           # the file or what its mode is.
-          ++ lib.optional (cfg.backendTls.caFile != null) "backend-tls-ca:${toString cfg.backendTls.caFile}"
-          ++ lib.optional (cfg.backendTls.certFile != null) "backend-tls-cert:${cfg.backendTls.certFile}"
-          ++ lib.optional (cfg.backendTls.keyFile != null) "backend-tls-key:${cfg.backendTls.keyFile}"
+          ++ lib.optional (cfg.backendTls.caFile != null) (credential "backend-tls-ca" cfg.backendTls.caFile)
+          ++ lib.optional (cfg.backendTls.certFile != null) (
+            credential "backend-tls-cert" cfg.backendTls.certFile
+          )
+          ++ lib.optional (cfg.backendTls.keyFile != null) (
+            credential "backend-tls-key" cfg.backendTls.keyFile
+          )
           ++ lib.optionals cfg.https.enable [
-            "https-cert:${httpsCertSource}"
-            "https-key:${httpsKeySource}"
+            (credential "https-cert" httpsCertSource)
+            (credential "https-key" httpsKeySource)
           ];
 
         Environment = [
@@ -730,7 +739,7 @@ in
         description = "Watch vmauth's ${name} file for replacement";
         wantedBy = [ "multi-user.target" ];
         pathConfig = {
-          PathChanged = path;
+          PathChanged = escapeEnvironment path;
           Unit = "vmauth-secret-restart.service";
         };
       }

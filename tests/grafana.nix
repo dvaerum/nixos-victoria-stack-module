@@ -782,6 +782,99 @@ in
           throw "grafana.readTokenFile handling broken: ${builtins.toJSON failed}"
       );
 
+  # LoadCredential= and PathChanged= expand systemd specifiers, so a `%` in the
+  # operator's path must be doubled to arrive literally; a plain path (a `:`
+  # included, only the first one splits ID:PATH) renders unchanged.
+  grafana-read-token-file-path-escapes-specifiers =
+    pkgs.runCommand "grafana-read-token-file-path-escapes-specifiers" { }
+      (
+        let
+          evalFor =
+            path:
+            (evalWith {
+              imports = [ grafanaTokenWiring ];
+              services.victoriaStack = {
+                metrics.enable = true;
+                grafana = {
+                  enable = true;
+                  readTokenFile = lib.mkForce path;
+                };
+              };
+            }).config;
+          percent = evalFor "/run/s/token %h";
+          plain = evalFor "/run/s/token:1";
+          lc = c: c.systemd.services.grafana.serviceConfig.LoadCredential;
+          watch = c: c.systemd.paths.grafana-read-token-watch.pathConfig.PathChanged;
+          checks = {
+            "LoadCredential escapes the path" = lc percent == [ "grafana-read-token:/run/s/token %%h" ];
+            "the watcher escapes the path" = watch percent == "/run/s/token %%h";
+            "a plain path renders unchanged, colon included" =
+              lc plain == [ "grafana-read-token:/run/s/token:1" ] && watch plain == "/run/s/token:1";
+          };
+          failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) checks);
+        in
+        if failed == [ ] then
+          "echo OK > $out"
+        else
+          throw "grafana.readTokenFile path escaping broken: ${builtins.toJSON failed}"
+      );
+
+  # Runtime counterpart: Grafana must start with the credential read from a path
+  # containing `%H`, and its datasource read through vmauth must work.
+  read-token-file-with-a-percent-in-the-path-loads-and-rotates = pkgs.testers.nixosTest {
+    name = "victoria-stack-grafana-percent-path";
+
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+        grafanaConsumerConfig
+      ];
+      # `%%` is tmpfiles' own escape for a literal `%`.
+      systemd.tmpfiles.rules = [
+        "d /var/lib/pct 0700 root root -"
+        "f /var/lib/pct/token%%H 0600 root root - percent-token-one"
+        "f /var/lib/pct/vmauth-read.yaml 0600 root root - tokens:\\n  - token: percent-token-one\\n"
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana = {
+          enable = true;
+          readTokenFile = "/var/lib/pct/token%H";
+        };
+        vmauth.readTokensFile = "/var/lib/pct/vmauth-read.yaml";
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      wait_active(machine, "grafana.service")
+      wait_active(machine, "vmauth.service")
+      machine.wait_for_open_port(3000)
+      machine.wait_for_unit("grafana-read-token-watch.path")
+      machine.wait_until_succeeds(
+          "systemctl show -p SubState --value grafana-read-token-watch.path | grep -qx waiting", timeout=120
+      )
+
+      admin = "-u admin:admin"  # gitleaks:allow
+      proxy = "http://127.0.0.1:3000/api/datasources/proxy/uid/victoriametrics-ds/api/v1/labels"
+      machine.wait_until_succeeds(
+          f"test \"$(curl -s -o /dev/null -w '%{{http_code}}' {admin} '{proxy}')\" = 200", timeout=180
+      )
+
+      # The watcher must see the real file: replacing it restarts Grafana.
+      was = machine.succeed("systemctl show -p InvocationID --value grafana.service").strip()
+      machine.succeed("printf %s percent-token-two > '/var/lib/pct/token%H'")
+      machine.wait_until_succeeds(
+          f"test \"$(systemctl show -p InvocationID --value grafana.service)\" != {was}", timeout=180
+      )
+      wait_active(machine, "grafana.service")
+      header = machine.succeed("cat /run/grafana/vmauth-authorization")
+      assert header == "Bearer percent-token-two", header
+    '';
+  };
+
   # Without readTokenFile (the assertion reports it) nothing token-related may
   # be rendered: interpolating the null path would be an evaluation error, and
   # a watcher on no file is meaningless. The attributes are forced on purpose.

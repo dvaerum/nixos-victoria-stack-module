@@ -2909,6 +2909,92 @@ in
     '';
   };
 
+  # Runtime counterpart of secret-file-paths-escape-specifiers: systemd must open
+  # the credential files and arm the watchers with the literal `%` in the name.
+  secret-files-with-a-percent-in-the-path-load-and-rotate = pkgs.testers.nixosTest {
+    name = "victoria-stack-vmauth-percent-path";
+
+    containers.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+      ];
+      # `%%` is tmpfiles' own escape for a literal `%`.
+      systemd.tmpfiles.rules = [
+        "d /var/lib/pct 0700 root root -"
+        "f /var/lib/pct/read%%H.yaml 0600 root root - tokens:\\n  - token: percent-token-one\\n"
+        "C /var/lib/pct/c%%H.pem 0600 root root - ${selfSignedCert}/cert.pem"
+        "C /var/lib/pct/k%%H.pem 0600 root root - ${selfSignedCert}/key.pem"
+      ];
+      services.victoriaStack = {
+        metrics.enable = true;
+        vmauth = {
+          readTokensFile = "/var/lib/pct/read%H.yaml";
+          https = {
+            enable = true;
+            certFile = "/var/lib/pct/c%H.pem";
+            keyFile = "/var/lib/pct/k%H.pem";
+          };
+        };
+      };
+    };
+
+    testScript = ''
+      ${testLib.waitActivePython}
+      start_all()
+      wait_active(machine, "vmauth.service")
+      machine.wait_for_open_port(4204)
+      machine.wait_for_open_port(8443)
+
+      def settled():
+          # The path units re-arm only once the restart helper has finished.
+          for n in ("read-tokens", "https-cert", "https-key"):
+              machine.wait_for_unit(f"vmauth-secret-watch-{n}.path")
+              machine.wait_until_succeeds(
+                  f"systemctl show -p SubState --value vmauth-secret-watch-{n}.path | grep -qx waiting", timeout=120
+              )
+          machine.wait_until_succeeds(
+              "systemctl show -p ActiveState --value vmauth-secret-restart.service | grep -qx inactive", timeout=120
+          )
+
+      def status(token):
+          return machine.succeed(
+              "curl -s -o /dev/null -w '%{http_code}' "
+              f"-H 'Authorization: Bearer {token}' "
+              "'http://127.0.0.1:4204/metrics/api/v1/query?query=up'"
+          ).strip()
+
+      def invocation():
+          return machine.succeed("systemctl show -p InvocationID --value vmauth.service").strip()
+
+      def restarts_after(replace):
+          settled()
+          was = invocation()
+          machine.succeed(replace)
+          machine.wait_until_succeeds(
+              f"test \"$(systemctl show -p InvocationID --value vmauth.service)\" != {was}", timeout=180
+          )
+          wait_active(machine, "vmauth.service")
+          machine.wait_for_open_port(4204)
+          machine.wait_for_open_port(8443)
+
+      assert status("percent-token-one") == "200"
+      assert status("wrong-token") == "401"
+      # The https door serves the certificate loaded from the %H path.
+      door = machine.succeed(
+          "curl -s -o /dev/null -w '%{http_code}' --cacert ${selfSignedCert}/cert.pem "
+          "'https://127.0.0.1:8443/opentelemetry/v1/metrics'"
+      ).strip()
+      assert door == "401", door
+
+      # The watchers must see the real files: replacing each restarts vmauth.
+      restarts_after("printf 'tokens:\\n  - token: percent-token-two\\n' > '/var/lib/pct/read%H.yaml'")
+      assert status("percent-token-two") == "200"
+      assert status("percent-token-one") == "401"
+      restarts_after("echo >> '/var/lib/pct/c%H.pem'")
+    '';
+  };
+
   write-door-http-open-on-all-interfaces = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-write-door-http-open";
 
@@ -3387,6 +3473,84 @@ in
         else
           throw "secret watchers wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
       );
+
+  # LoadCredential= and PathChanged= expand systemd specifiers, so a `%` in an
+  # operator's path must be doubled to arrive literally (a `:` is fine: only
+  # the first one splits ID:PATH). Every path-taking secret option is covered.
+  secret-file-paths-escape-specifiers =
+    let
+      cfgFor =
+        extra:
+        (evalWith {
+          services.victoriaStack = lib.recursiveUpdate { metrics.enable = true; } extra;
+        }).config;
+      eval = cfgFor {
+        vmauth = {
+          adminPasswordFile = "/run/s/admin %h";
+          readTokensFile = "/run/s/read %h";
+          writeTokensFile = "/run/s/write %h";
+          https = {
+            enable = true;
+            certFile = "/run/s/cert %h";
+            keyFile = "/run/s/key %H";
+          };
+          backendTls = {
+            caFile = "/run/s/ca %h";
+            certFile = "/run/s/bcert %h";
+            keyFile = "/run/s/bkey %H";
+          };
+        };
+      };
+      lc = c: c.systemd.services.vmauth.serviceConfig.LoadCredential;
+      watch = c: n: c.systemd.paths."vmauth-secret-watch-${n}".pathConfig.PathChanged;
+      acme = cfgFor {
+        vmauth.https = {
+          enable = true;
+          acmeCertName = "a%h";
+        };
+      };
+      plain = cfgFor {
+        vmauth = {
+          readTokensFile = "/run/s/read:1.yaml";
+          https = {
+            enable = true;
+            certFile = "/run/s/cert.pem";
+            keyFile = "/run/s/key.pem";
+          };
+        };
+      };
+    in
+    mkTableCheck "vmauth-secret-file-paths-escape-specifiers" {
+      "LoadCredential escapes every path" =
+        lc eval == [
+          "admin-password:/run/s/admin %%h"
+          "read-tokens:/run/s/read %%h"
+          "write-tokens:/run/s/write %%h"
+          "backend-tls-ca:/run/s/ca %%h"
+          "backend-tls-cert:/run/s/bcert %%h"
+          "backend-tls-key:/run/s/bkey %%H"
+          "https-cert:/run/s/cert %%h"
+          "https-key:/run/s/key %%H"
+        ];
+      "the admin watcher escapes the path" = watch eval "admin-password" == "/run/s/admin %%h";
+      "the read-tokens watcher escapes the path" = watch eval "read-tokens" == "/run/s/read %%h";
+      "the write-tokens watcher escapes the path" = watch eval "write-tokens" == "/run/s/write %%h";
+      "the https-cert watcher escapes the path" = watch eval "https-cert" == "/run/s/cert %%h";
+      "the https-key watcher escapes the path" = watch eval "https-key" == "/run/s/key %%H";
+      "the backend CA watcher escapes the path" = watch eval "backend-tls-ca" == "/run/s/ca %%h";
+      "the backend cert watcher escapes the path" = watch eval "backend-tls-cert" == "/run/s/bcert %%h";
+      "the backend key watcher escapes the path" = watch eval "backend-tls-key" == "/run/s/bkey %%H";
+      "the ACME-derived cert path is escaped" =
+        lib.elem "https-cert:/var/lib/acme/a%%h/fullchain.pem" (lc acme)
+        && lib.elem "https-key:/var/lib/acme/a%%h/key.pem" (lc acme);
+      "plain paths render unchanged, a colon included" =
+        lc plain == [
+          "read-tokens:/run/s/read:1.yaml"
+          "https-cert:/run/s/cert.pem"
+          "https-key:/run/s/key.pem"
+        ]
+        && watch plain "read-tokens" == "/run/s/read:1.yaml";
+    };
 
   # The restart-on-replacement behaviour, and its limit, must be visible on
   # each option that names a watched secret file, not only on one of them (a

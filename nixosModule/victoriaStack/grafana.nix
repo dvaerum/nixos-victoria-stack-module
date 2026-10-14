@@ -9,6 +9,11 @@ let
   topCfg = config.services.victoriaStack;
   cfg = topCfg.grafana;
   listen = import ./listen.nix { inherit lib; };
+  inherit (import ./exec-escape.nix { inherit lib; }) escapeEnvironment;
+
+  # LoadCredential= and PathChanged= expand systemd specifiers, so a `%` in the
+  # path is doubled. A `:` needs nothing: only the first one splits ID:PATH.
+  readTokenPath = escapeEnvironment cfg.readTokenFile;
 
   # Datasources talk to vmauth's read tier, never to a backend: Grafana's
   # datasource proxy forwards any method and path for any Viewer
@@ -96,7 +101,7 @@ in
     ];
 
     systemd.services.grafana.serviceConfig = lib.mkIf (cfg.readTokenFile != null) {
-      LoadCredential = [ "${tokenCredential}:${cfg.readTokenFile}" ];
+      LoadCredential = [ "${tokenCredential}:${readTokenPath}" ];
       ExecStartPre = [ (lib.getExe buildAuthHeader) ];
     };
 
@@ -115,7 +120,7 @@ in
       description = "Watch Grafana's vmauth read token file for replacement";
       wantedBy = [ "multi-user.target" ];
       pathConfig = {
-        PathChanged = cfg.readTokenFile;
+        PathChanged = readTokenPath;
         Unit = "grafana-secret-restart.service";
       };
     };
