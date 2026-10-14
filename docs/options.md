@@ -3671,6 +3671,44 @@ integer between 0 and 4294967295 (both inclusive)
 
 
 
+## services\.victoriaStack\.tenants\.\<name>\.grafanaOrgId
+
+
+
+The id of the Grafana organisation this tenant’s datasources are
+provisioned into\. Set together with ` readTokenFile ` or not at all\.
+The organisation must already exist: Grafana’s provisioning cannot
+create one, so you create it by hand (see
+docs/runbooks/grafana-tenant-org\.md)\. Must differ from the id of the
+organisation the main datasources use (1) and from every other
+tenant’s\. Needs ` grafana.enable `\.
+
+
+
+*Type:*
+null or (positive integer, meaning >0)
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+2
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
 ## services\.victoriaStack\.tenants\.\<name>\.projectId
 
 
@@ -3698,6 +3736,44 @@ integer between 0 and 4294967295 (both inclusive)
 
 ```nix
 1
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.tenants\.\<name>\.readTokenFile
+
+
+
+Path (a plain string, like ` grafana.readTokenFile `) to a file holding
+ONE bearer token, the credential this tenant’s datasources send to
+vmauth\. List the same token in ` vmauth.readTokensFile ` with
+` tenant: <name> `; this module does not add it\. Delivered with
+` LoadCredential= `, so the file need not be readable by the ` grafana `
+user; replacing it restarts Grafana\. Set together with
+` grafanaOrgId ` or not at all\. It must be an absolute path\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"/run/secrets/grafana-team-a-read-token"
 ```
 
 *Declared by:*
