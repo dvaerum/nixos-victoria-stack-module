@@ -29,16 +29,20 @@ let
   # The README's fleet snippets, evaluated the way a user pastes them: only what
   # the snippet itself imports, so a missing module import fails here (the fleet
   # example test supplies the modules itself and cannot see that).
-  readmeFenced =
-    lang:
+  fencedIn =
+    file: lang:
     let
-      pieces = lib.splitString "```${lang}\n" (builtins.readFile ../README.md);
+      pieces = lib.splitString "```${lang}\n" (builtins.readFile file);
     in
     map (piece: lib.head (lib.splitString "```" piece)) (lib.tail pieces);
+  readmeFenced = fencedIn ../README.md;
+  # The tenant Grafana runbook's snippets are checked with the README's tenant
+  # snippets: both must evaluate as written and name declared tenants.
+  runbookFenced = fencedIn ../docs/runbooks/grafana-tenant-org.md;
   readmeBlocks = readmeFenced "nix";
   fleetBlocks = lib.filter (lib.hasInfix "fleet.") readmeBlocks;
-  tenantBlocks = lib.filter (lib.hasInfix "tenant") readmeBlocks;
-  tenantYamlBlocks = lib.filter (lib.hasInfix "tenant") (readmeFenced "yaml");
+  tenantBlocks = lib.filter (lib.hasInfix "tenant") (readmeBlocks ++ runbookFenced "nix");
+  tenantYamlBlocks = lib.filter (lib.hasInfix "tenant") (readmeFenced "yaml" ++ runbookFenced "yaml");
 
   evalBlock =
     block:

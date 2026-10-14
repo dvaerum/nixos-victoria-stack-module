@@ -258,6 +258,27 @@ curl -H "Authorization: Bearer $(cat /run/secrets/ops-reader-token)" -H "Account
   https://victoria-gateway.example.internal:8443/logs/select/logsql/query
 ```
 
+To let a tenant's users see only that tenant in Grafana, give the tenant its own
+Grafana organisation (you create it by hand, Grafana OSS cannot provision one) and
+a read token; the module then provisions the tenant's datasources into it, with
+that token, through vmauth's read tier:
+
+```nix
+{
+  imports = [ victoria-stack-module.nixosModules.victoriaStack ];
+  services.victoriaStack.tenants.team-a = {
+    accountId = 7;
+    grafanaOrgId = 2;                                      # the organisation you created
+    readTokenFile = "/run/secrets/grafana-team-a-token";   # also in vmauth.readTokensFile with `tenant: team-a`
+  };
+}
+```
+
+Create the organisation before setting `grafanaOrgId` (Grafana does not start
+with a datasource for an organisation that is missing); the steps, checks and
+the reason are in the
+[runbook](./docs/runbooks/grafana-tenant-org.md).
+
 Limits: metrics have no tenants yet (planned), so a tenant token gets no metrics
 route and a tenant host does not ship metrics; tenant tokens get no `/mcp/*`
 routes; tokens without a tenant keep working and are stamped tenant 0:0 once any

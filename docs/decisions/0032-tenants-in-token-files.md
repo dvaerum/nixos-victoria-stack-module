@@ -82,3 +82,15 @@ routes are cut from the closed read allow-list of
 Update: metrics now run on the cluster version, which has native tenants
 ([0033](./0033-metrics-cluster-replaces-single-node.md)); vmauth still serves tenant
 0 only until the metrics tenant stage.
+
+Update: a tenant with `grafanaOrgId` and `readTokenFile` gets its own datasources in
+the Grafana organisation you created, sent with its own read token. The runbook is
+[grafana-tenant-org.md](../runbooks/grafana-tenant-org.md). Provisioning into an
+organisation that does not exist is fatal: Grafana exits at start with
+`[org.notFound] failed to get org by ID` and systemd restarts it in a loop, so its
+API is down and the organisation cannot be created then. Create it first. Both
+options go together, the id must differ from the main organisation (1) and from
+other tenants', and a tenant name longer than 37 characters is refused (Grafana
+caps a datasource uid at 40 characters). Tenant datasources are not removed
+when the options are, like a disabled backend's
+([0029](./0029-grafana-datasources-through-vmauth-read-tier.md)).

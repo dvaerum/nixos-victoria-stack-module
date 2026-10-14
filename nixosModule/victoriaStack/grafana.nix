@@ -27,40 +27,92 @@ let
   # rejects a "Bearer " prefix), so the unit builds the whole header value
   # into a file first. `$__file{}` is expanded by Grafana when it loads the
   # provisioning file; only the path is in the store.
-  tokenCredential = "grafana-read-token";
-  headerFile = "/run/grafana/vmauth-authorization";
+  #
+  # Each tenant that opts in with `grafanaOrgId` + `readTokenFile`
+  # (docs/decisions/0032-tenants-in-token-files.md) gets its own credential and header file the same way.
+  # Tenant names are [a-z0-9-], so they are safe in both names as they are.
+  mainToken = {
+    credential = "grafana-read-token";
+    headerFile = "/run/grafana/vmauth-authorization";
+    path = readTokenPath;
+  };
+  tenantOrgs = lib.filterAttrs (
+    _: t: t.grafanaOrgId != null && t.readTokenFile != null
+  ) topCfg.tenants;
+  tenantToken = name: {
+    credential = "grafana-tenant-${name}";
+    headerFile = "/run/grafana/vmauth-authorization-${name}";
+    path = escapeEnvironment tenantOrgs.${name}.readTokenFile;
+  };
+  tenantTokens = map tenantToken (lib.attrNames tenantOrgs);
+  allTokens = lib.optional (cfg.readTokenFile != null) mainToken ++ tenantTokens;
+
   buildAuthHeader = pkgs.writeShellApplication {
     name = "grafana-vmauth-auth-header";
     text = ''
       umask 077
-      printf 'Bearer %s' "$(<"$CREDENTIALS_DIRECTORY/${tokenCredential}")" >${headerFile}
-    '';
+    ''
+    + lib.concatMapStrings (t: ''
+      printf 'Bearer %s' "$(<"$CREDENTIALS_DIRECTORY/${t.credential}")" >${t.headerFile}
+    '') allTokens;
   };
 
-  datasourceSpecs =
+  mkDatasourceSpecs =
+    { uid, label }:
     lib.optional topCfg.metrics.enable {
-      name = "VictoriaMetrics";
+      name = label "VictoriaMetrics";
       type = "victoriametrics-metrics-datasource";
-      uid = "victoriametrics-ds";
+      uid = uid "victoriametrics-ds" "vm";
       url = "${vmauthUrl}/metrics";
       isDefault = true;
     }
     ++ lib.optional topCfg.logs.enable {
-      name = "VictoriaLogs";
+      name = label "VictoriaLogs";
       type = "victoriametrics-logs-datasource";
-      uid = "victorialogs-ds";
+      uid = uid "victorialogs-ds" "vl";
       url = "${vmauthUrl}/logs";
       isDefault = false;
     }
     ++ lib.optional topCfg.traces.enable {
-      name = "VictoriaTraces";
+      name = label "VictoriaTraces";
       type = "jaeger";
-      uid = "victoriatraces-ds";
+      uid = uid "victoriatraces-ds" "vt";
       url = "${vmauthUrl}/traces/select/jaeger";
       isDefault = false;
     };
 
-  defaultDatasources = lib.filter (d: d.isDefault or false) (
+  datasourceSpecs = mkDatasourceSpecs {
+    uid = main: _: main;
+    label = lib.id;
+  };
+
+  # Grafana caps a uid at 40 characters; assertions.nix bounds the tenant name.
+  tenantSpecs =
+    name:
+    map (spec: spec // { orgId = tenantOrgs.${name}.grafanaOrgId; }) (mkDatasourceSpecs {
+      uid = _: short: "${short}-${name}";
+      label = product: "${product} (${name})";
+    });
+
+  mkDatasource =
+    spec: headerFile:
+    {
+      inherit (spec)
+        name
+        type
+        uid
+        url
+        isDefault
+        ;
+      access = "proxy";
+      editable = false;
+      jsonData.httpHeaderName1 = "Authorization";
+      secureJsonData.httpHeaderValue1 = "$__file{${headerFile}}";
+    }
+    // lib.optionalAttrs (spec ? orgId) { inherit (spec) orgId; };
+
+  # Defaults are per org: the tenants' (orgId != 1) do not count here.
+  defaultDatasources = lib.filter (d: (d.isDefault or false) && (d.orgId or 1) == 1) (
     config.services.grafana.provision.datasources.settings.datasources or [ ]
   );
 in
@@ -100,15 +152,15 @@ in
       (lib.mkIf topCfg.logs.enable [ pkgs.grafanaPlugins.victoriametrics-logs-datasource ])
     ];
 
-    systemd.services.grafana.serviceConfig = lib.mkIf (cfg.readTokenFile != null) {
-      LoadCredential = [ "${tokenCredential}:${readTokenPath}" ];
+    systemd.services.grafana.serviceConfig = lib.mkIf (allTokens != [ ]) {
+      LoadCredential = map (t: "${t.credential}:${t.path}") allTokens;
       ExecStartPre = [ (lib.getExe buildAuthHeader) ];
     };
 
     # try-restart: a rotation while Grafana is stopped must not start it.
     # --no-block: the path unit only re-arms once this helper finishes, so waiting
     # for Grafana to come back would lose a token replaced in the meantime.
-    systemd.services.grafana-secret-restart = lib.mkIf (cfg.readTokenFile != null) {
+    systemd.services.grafana-secret-restart = lib.mkIf (allTokens != [ ]) {
       description = "Restart Grafana after its vmauth read token changed";
       serviceConfig = {
         Type = "oneshot";
@@ -121,6 +173,15 @@ in
       wantedBy = [ "multi-user.target" ];
       pathConfig = {
         PathChanged = readTokenPath;
+        Unit = "grafana-secret-restart.service";
+      };
+    };
+
+    systemd.paths.grafana-tenant-token-watch = lib.mkIf (tenantTokens != [ ]) {
+      description = "Watch the tenants' Grafana read token files for replacement";
+      wantedBy = [ "multi-user.target" ];
+      pathConfig = {
+        PathChanged = map (t: t.path) tenantTokens;
         Unit = "grafana-secret-restart.service";
       };
     };
@@ -138,19 +199,11 @@ in
       # effect once the pinned Grafana picks up the upstream fix
       # (grafana/grafana#83034).
       prune = true;
-      datasources = lib.forEach datasourceSpecs (spec: {
-        inherit (spec)
-          name
-          type
-          uid
-          url
-          isDefault
-          ;
-        access = "proxy";
-        editable = false;
-        jsonData.httpHeaderName1 = "Authorization";
-        secureJsonData.httpHeaderValue1 = "$__file{${headerFile}}";
-      });
+      datasources =
+        lib.forEach datasourceSpecs (spec: mkDatasource spec mainToken.headerFile)
+        ++ lib.concatMap (n: map (spec: mkDatasource spec (tenantToken n).headerFile) (tenantSpecs n)) (
+          lib.attrNames tenantOrgs
+        );
 
       # Grafana >=12.2 matches an existing datasource by id+uid (not just
       # name) when provisioning re-runs, and treats a mismatch as a fatal
@@ -161,10 +214,17 @@ in
       # a clean delete-then-recreate by name every provisioning run,
       # sidestepping the buggy by-uid update path -- nixpkgs' own
       # documented pattern for this exact case.
-      deleteDatasources = lib.forEach datasourceSpecs (spec: {
-        inherit (spec) name;
-        orgId = 1;
-      });
+      deleteDatasources =
+        lib.forEach datasourceSpecs (spec: {
+          inherit (spec) name;
+          orgId = 1;
+        })
+        ++ lib.concatMap (
+          n:
+          map (spec: {
+            inherit (spec) name orgId;
+          }) (tenantSpecs n)
+        ) (lib.attrNames tenantOrgs);
     };
   };
 }

@@ -53,6 +53,66 @@ let
         tenant (used by tokens without a tenant) and cannot be declared; give it another number.
       '';
     }) (lib.filter (n: cfg.tenants.${n}.accountId == 0 && cfg.tenants.${n}.projectId == 0) tenantNames);
+
+  # Grafana's default organisation: where the main datasources go.
+  mainGrafanaOrgId = 1;
+  # A Grafana datasource uid is at most 40 characters; the tenant ones are
+  # `<vm|vl|vt>-<name>`.
+  maxGrafanaTenantNameLength = 37;
+  halfGrafanaTenants = lib.filter (
+    n: (cfg.tenants.${n}.grafanaOrgId == null) != (cfg.tenants.${n}.readTokenFile == null)
+  ) tenantNames;
+  grafanaTenants = lib.filter (n: cfg.tenants.${n}.grafanaOrgId != null) tenantNames;
+  grafanaTenantsByOrg = lib.groupBy (n: toString cfg.tenants.${n}.grafanaOrgId) grafanaTenants;
+  grafanaTenantAssertions =
+    map (n: {
+      assertion = false;
+      message = ''
+        ${tenantOpt n}: grafanaOrgId and readTokenFile go together. Set both to provision
+        this tenant's datasources into its Grafana organisation, or neither
+        (docs/runbooks/grafana-tenant-org.md).
+      '';
+    }) halfGrafanaTenants
+    ++ lib.mapAttrsToList (org: names: {
+      assertion = false;
+      message = ''
+        ${lib.concatMapStringsSep " and " tenantOpt names} both use grafanaOrgId ${org}. Each
+        tenant needs its own Grafana organisation, or one tenant's datasources would
+        be visible to the other's users.
+      '';
+    }) (lib.filterAttrs (_: names: lib.length names > 1) grafanaTenantsByOrg)
+    ++ map (n: {
+      assertion = false;
+      message = ''
+        ${tenantOpt n}.grafanaOrgId is ${toString mainGrafanaOrgId}, the organisation the main
+        datasources use. Create an organisation for the tenant in Grafana and use its id.
+      '';
+    }) (lib.filter (n: cfg.tenants.${n}.grafanaOrgId == mainGrafanaOrgId) grafanaTenants)
+    ++
+      map
+        (n: {
+          assertion = false;
+          message = ''
+            ${tenantOpt n}.readTokenFile is "${cfg.tenants.${n}.readTokenFile}": it must be an
+            absolute path on a single line.
+          '';
+        })
+        (
+          lib.filter (
+            n:
+            let
+              f = cfg.tenants.${n}.readTokenFile;
+            in
+            f != null && builtins.match "/[^\n\r]*" f == null
+          ) tenantNames
+        )
+    ++ map (n: {
+      assertion = false;
+      message = ''
+        ${tenantOpt n}: the name is longer than ${toString maxGrafanaTenantNameLength} characters, too long for the Grafana
+        datasource uid (at most 40 characters, `<vm|vl|vt>-<name>`) of a tenant with grafanaOrgId.
+      '';
+    }) (lib.filter (n: lib.stringLength n > maxGrafanaTenantNameLength) grafanaTenants);
   mcp = svc: cfg.${svc}.enable && cfg.${svc}.mcp.enable;
   # Listeners are tcp unless stated: a udp and a tcp socket may share a port.
   at = name: addr: {
@@ -598,6 +658,7 @@ let
 
   moduleAssertions =
     tenantAssertions
+    ++ grafanaTenantAssertions
     ++ extraFlagsAssertions
     ++ snapshotKeyAssertions
     ++ syslogFlagAssertions
