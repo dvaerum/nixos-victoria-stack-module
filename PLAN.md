@@ -962,6 +962,7 @@ Tenants, stage 3 (metrics tenants, per-caller MCP, Grafana orgs; the plan's stag
   cluster, plus the metrics/logs/traces combined matrix), `tests/tenant-mcp.nix`,
   `tests/grafana-tenant-orgs.nix`.
 - Not automated: the Firefox walk-through of the Grafana runbook and of the Metrics
-  browser (a manual pass); the metrics datasource of a tenant org is covered by
-  eval checks, not by a boot test.
+  browser (a manual pass). The metrics datasource of a tenant org is covered by
+  the boot test `grafana-tenant-orgs-runbook-metrics` (query, label values and
+  series through the datasource proxy on the real cluster).
 - Gate: the full suite on the merged tree read `gate-rc=0`.

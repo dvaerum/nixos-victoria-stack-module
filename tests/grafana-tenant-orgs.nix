@@ -371,6 +371,176 @@ let
     };
   };
 
+  # The Grafana API helpers both boot tests share (`machine` is the VM).
+  grafanaPython = ''
+    GRAFANA = "http://127.0.0.1:3000"
+    ADMIN = "-u admin:admin"  # gitleaks:allow
+
+
+    def grafana(path, org=None, method="GET", data=None, extra=""):
+        cmd = f"curl -s -g -w '\\n%{{http_code}}' {ADMIN} -X {method} {extra} "
+        if org is not None:
+            cmd += f"-H 'X-Grafana-Org-Id: {org}' "
+        if data is not None:
+            cmd += f"-H 'Content-Type: application/json' -d {shlex.quote(data)} "
+        out = machine.succeed(cmd + shlex.quote(GRAFANA + path))
+        body, code = out.rsplit("\n", 1)
+        return code.strip(), body
+
+
+    def datasources(org):
+        code, body = grafana("/api/datasources", org)
+        assert code == "200", (org, code, body)
+        return {d["uid"]: d["name"] for d in json.loads(body)}
+
+
+    def proxy(org, uid, path, form=None):
+        extra = f"--data-urlencode {shlex.quote(form)}" if form else ""
+        return grafana(f"/api/datasources/proxy/uid/{uid}{path}", org, "POST" if form else "GET", None, extra)
+
+
+    def eventually(fn, expected, what, tries=60):
+        for _ in range(tries):
+            if fn() == expected:
+                return
+            time.sleep(1)
+        assert fn() == expected, (what, fn())
+  '';
+
+  # Metrics datasources of the tenant orgs on the real cluster: the data each
+  # tenant wrote with its own write token is visible only through that tenant's
+  # org datasource, over the same vmauth /metrics read tier as the main one.
+  metricsRunbook = pkgs.testers.nixosTest {
+    name = "victoria-stack-grafana-tenant-orgs-metrics";
+
+    nodes.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+        grafanaConsumerConfig
+      ];
+      virtualisation.memorySize = 3072;
+      services.victoriaStack = {
+        metrics.enable = true;
+        grafana = {
+          enable = true;
+          readTokenFile = "${testLib.grafanaReadTokenFile}";
+        };
+        tenants = {
+          a.accountId = 1;
+          b.accountId = 2;
+        };
+        vmauth = {
+          writeTokensFile = "${pkgs.writeText "write.yaml" ''
+            tokens:
+              - token: write-main # gitleaks:allow
+              - token: write-a # gitleaks:allow
+                tenant: a
+              - token: write-b # gitleaks:allow
+                tenant: b
+          ''}";
+          readTokensFile = "${pkgs.writeText "read.yaml" ''
+            tokens:
+              - token: ${testLib.grafanaReadToken}
+              - token: ${tokenFixtureA}
+                tenant: a
+              - token: ${tokenFixtureB}
+                tenant: b
+          ''}";
+        };
+      };
+
+      specialisation.with-orgs.configuration.services.victoriaStack.tenants = tenantsWithOrgs {
+        a = 2;
+        b = 3;
+      };
+    };
+
+    testScript = ''
+      import json
+      import shlex
+      import time
+      import urllib.parse
+      ${testLib.waitActivePython}
+
+      start_all()
+      for unit in ["vmstorage", "vminsert", "vmselect", "vmauth", "grafana"]:
+          wait_active(machine, f"{unit}.service")
+      machine.wait_for_open_port(3000)
+      machine.wait_for_open_port(4204)
+
+      ${grafanaPython}
+
+      # One series per tenant, written through that tenant's own write token
+      # (OTLP, vmauth stamps the tenant); tenant 0 through the plain one.
+      WRITERS = {"write-main": "probe_m_0", "write-a": "probe_m_a", "write-b": "probe_m_b"}
+      for token, name in WRITERS.items():
+          machine.succeed(f"${testLib.otlpMetricGenerator}/bin/gen-otlp-metric {name} 1 > /tmp/m.bin")
+          out = machine.succeed(
+              f"curl -s -o /dev/null -w '%{{http_code}}' -X POST -H 'Authorization: Bearer {token}' "
+              "-H 'Content-Type: application/x-protobuf' --data-binary @/tmp/m.bin "
+              "http://127.0.0.1:4204/opentelemetry/v1/metrics"
+          )
+          assert out == "200", (token, out)
+
+      # Runbook steps 2 and 3: the orgs and the tenants' token files, then the options.
+      for name, expected in [("team-a", 2), ("team-b", 3)]:
+          code, body = grafana("/api/orgs", None, "POST", json.dumps({"name": name}))
+          assert code == "200" and json.loads(body)["orgId"] == expected, (code, body)
+      machine.succeed(
+          "install -d -m 0700 ${secretDir}; "
+          "printf %s ${tokenFixtureA} > ${secretDir}/a; printf %s ${tokenFixtureB} > ${secretDir}/b; "
+          "chmod 0600 ${secretDir}/a ${secretDir}/b"
+      )
+      machine.succeed("/run/current-system/specialisation/with-orgs/bin/switch-to-configuration test")
+      wait_active(machine, "grafana.service")
+      machine.wait_for_open_port(3000)
+      machine.wait_until_succeeds(f"curl -sf {ADMIN} {GRAFANA}/api/health")
+
+      assert datasources(2) == {"vm-a": "VictoriaMetrics (a)"}, datasources(2)
+      assert datasources(3) == {"vm-b": "VictoriaMetrics (b)"}, datasources(3)
+      assert datasources(1) == {"victoriametrics-ds": "VictoriaMetrics"}, datasources(1)
+
+      # Runbook step 4b through the datasource proxy. An old time= and a start
+      # window keep reads clear of -search.latencyOffset (~30 s); the polling
+      # waits for the flush.
+      def q(params):
+          return urllib.parse.urlencode(params, safe="[]")
+
+      MATCH = {"match[]": '{__name__=~"probe_m_.*"}'}
+
+      def metrics(org, uid):
+          start = int(time.time()) - 3600
+          out = {}
+          for key, path, params in [
+              ("names", "/api/v1/label/__name__/values", {**MATCH, "start": start}),
+              ("series", "/api/v1/series", {**MATCH, "start": start}),
+              ("query", "/api/v1/query", {"query": '{__name__=~"probe_m_.*"}', "time": int(time.time())}),
+          ]:
+              code, body = proxy(org, uid, f"{path}?{q(params)}")
+              assert code == "200", (org, uid, path, code, body)
+              data = json.loads(body)["data"]
+              if key == "series":
+                  data = [s["__name__"] for s in data]
+              elif key == "query":
+                  data = [r["metric"]["__name__"] for r in data["result"]]
+              out[key] = sorted(data)
+          return out
+
+      def only(name):
+          return {"names": [name], "series": [name], "query": [name]}
+
+      eventually(lambda: metrics(2, "vm-a"), only("probe_m_a"), "org 2 metrics", 180)
+      eventually(lambda: metrics(3, "vm-b"), only("probe_m_b"), "org 3 metrics", 180)
+      # The main datasource sends the main token: tenant 0 only.
+      assert metrics(1, "victoriametrics-ds") == only("probe_m_0"), metrics(1, "victoriametrics-ds")
+      # A tenant's datasource does not exist in another org, for the API and the proxy.
+      for org, uid in [(2, "vm-b"), (3, "vm-a"), (1, "vm-a"), (2, "victoriametrics-ds"), (2, "vm-main")]:
+          assert grafana(f"/api/datasources/uid/{uid}", org)[0] == "404", (org, uid)
+          assert proxy(org, uid, "/api/v1/labels")[0] == "404", (org, uid)
+    '';
+  };
+
   runbook = pkgs.testers.nixosTest {
     name = "victoria-stack-grafana-tenant-orgs-runbook";
 
@@ -436,31 +606,8 @@ let
       machine.wait_for_open_port(3000)
       machine.wait_for_open_port(4204)
 
-      GRAFANA = "http://127.0.0.1:3000"
       VMAUTH = "http://127.0.0.1:4204"
-      ADMIN = "-u admin:admin"  # gitleaks:allow
-
-
-      def grafana(path, org=None, method="GET", data=None, extra=""):
-          cmd = f"curl -s -w '\\n%{{http_code}}' {ADMIN} -X {method} {extra} "
-          if org is not None:
-              cmd += f"-H 'X-Grafana-Org-Id: {org}' "
-          if data is not None:
-              cmd += f"-H 'Content-Type: application/json' -d {shlex.quote(data)} "
-          out = machine.succeed(cmd + shlex.quote(GRAFANA + path))
-          body, code = out.rsplit("\n", 1)
-          return code.strip(), body
-
-
-      def datasources(org):
-          code, body = grafana("/api/datasources", org)
-          assert code == "200", (org, code, body)
-          return {d["uid"]: d["name"] for d in json.loads(body)}
-
-
-      def proxy(org, uid, path, form=None):
-          extra = f"--data-urlencode {shlex.quote(form)}" if form else ""
-          return grafana(f"/api/datasources/proxy/uid/{uid}{path}", org, "POST" if form else "GET", None, extra)
+      ${grafanaPython}
 
 
       def vmauth(path, token, headers, data):
@@ -547,13 +694,6 @@ let
           assert code == "200", (org, uid, code, body)
           return sorted(json.loads(body)["data"])
 
-      def eventually(fn, expected, what):
-          for _ in range(60):
-              if fn() == expected:
-                  return
-              time.sleep(1)
-          assert fn() == expected, (what, fn())
-
       eventually(lambda: log_rows(2, "vl-a"), ["log-a"], "org 2 logs")
       eventually(lambda: log_rows(3, "vl-b"), ["log-b"], "org 3 logs")
       eventually(lambda: services(2, "vt-a"), ["svc-a"], "org 2 traces")
@@ -605,6 +745,7 @@ in
   escapes-the-token-path = escapesPaths;
   org-id-type-refuses-non-positive-and-non-integers = orgIdTypeRefuses;
   inherit runbook;
+  runbook-metrics = metricsRunbook;
 }
 // lib.mapAttrs' (
   n: c:
