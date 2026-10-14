@@ -326,19 +326,28 @@ in
           throw "MCP default-disabled tools wrong: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # enabledTools lifts a module default; the operator's disabledTools still adds.
-  mcp-enabled-tools-lifts-a-module-default =
-    pkgs.runCommand "mcp-enabled-tools-lifts-a-module-default" { }
+  # The read tier is the only authority on reachable paths (docs/decisions/0021,
+  # 0023), so there is no option to un-hide a tool: it would only answer with
+  # vmauth's 400. The default-disabled lists stay pinned, and disabledTools
+  # still adds.
+  mcp-has-no-enabled-tools-option-and-default-disabled-lists-are-pinned =
+    pkgs.runCommand "mcp-no-enabled-tools-option" { }
       (
         let
           evaluated = evalWith {
             services.victoriaStack = {
               metrics.enable = true;
-              metrics.mcp = {
-                enable = true;
-                enabledTools = [ "tsdb_status" ];
-                disabledTools = [ "documentation" ];
-              };
+              metrics.mcp.enable = true;
+              logs.enable = true;
+              logs.mcp.enable = true;
+              traces.enable = true;
+              traces.mcp.enable = true;
+            };
+          };
+          env = unit: evaluated.config.systemd.services.${unit}.environment;
+          hasOption = svc: evaluated.options.services.victoriaStack.${svc}.mcp ? enabledTools;
+          withEnabled = evalWith {
+            services.victoriaStack = {
               logs.enable = true;
               logs.mcp = {
                 enable = true;
@@ -346,32 +355,42 @@ in
               };
             };
           };
-          tools =
-            unit:
-            lib.splitString "," (
-              evaluated.config.systemd.services.${unit}.environment.MCP_DISABLED_TOOLS or ""
-            );
+          withDisabled = evalWith {
+            services.victoriaStack = {
+              logs.enable = true;
+              logs.mcp = {
+                enable = true;
+                disabledTools = [ "documentation" ];
+              };
+            };
+          };
           checks = {
-            "logs flags re-enabled (variable absent)" =
-              !(evaluated.config.systemd.services.mcp-victorialogs.environment ? MCP_DISABLED_TOOLS);
-            "metrics tsdb_status re-enabled" = !(lib.elem "tsdb_status" (tools "mcp-victoriametrics"));
-            "metrics other module defaults stay" =
-              lib.elem "active_queries" (tools "mcp-victoriametrics")
-              && lib.elem "top_queries" (tools "mcp-victoriametrics");
-            "metrics upstream defaults stay" = lib.elem "test_rules" (tools "mcp-victoriametrics");
-            "metrics disabledTools still added" = lib.elem "documentation" (tools "mcp-victoriametrics");
+            "metrics has no enabledTools option" = !(hasOption "metrics");
+            "logs has no enabledTools option" = !(hasOption "logs");
+            "traces has no enabledTools option" = !(hasOption "traces");
+            "setting enabledTools is refused by the module system" =
+              !(builtins.tryEval (
+                builtins.deepSeq withEnabled.config.systemd.services.mcp-victorialogs.environment true
+              )).success;
+            "metrics MCP_DISABLED_TOOLS pinned" =
+              (env "mcp-victoriametrics").MCP_DISABLED_TOOLS
+              == "export,flags,metric_relabel_debug,downsampling_filters_debug,retention_filters_debug,test_rules,active_queries,top_queries,tsdb_status";
+            "logs MCP_DISABLED_TOOLS pinned" = (env "mcp-victorialogs").MCP_DISABLED_TOOLS == "flags";
+            "traces MCP_DISABLED_TOOLS stays absent" = !((env "mcp-victoriatraces") ? MCP_DISABLED_TOOLS);
+            "disabledTools still hides one more tool" =
+              withDisabled.config.systemd.services.mcp-victorialogs.environment.MCP_DISABLED_TOOLS
+              == "flags,documentation";
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
         if failed == { } then
           "echo OK > $out"
         else
-          throw "MCP enabledTools wrong: ${builtins.toJSON (builtins.attrNames failed)}"
+          throw "MCP enabledTools removal / disabled-tools pin wrong: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
   # Real binaries over JSON-RPC through vmauth: the disabled tools are gone
-  # from tools/list and refused on tools/call, query tools still answer, and
-  # enabledTools brings a tool back.
+  # from tools/list and refused on tools/call, and query tools still answer.
   mcp-leaky-tools-refused-through-vmauth = pkgs.testers.nixosTest {
     name = "victoria-stack-mcp-leaky-tools";
 
@@ -387,21 +406,6 @@ in
         logs.mcp.enable = true;
         traces.enable = true;
         traces.mcp.enable = true;
-        vmauth.adminPasswordFile = "${pkgs.writeText "mcp-test-admin-password" "mcp-test-admin-password-value"}";
-      };
-    };
-
-    containers.reenabled = {
-      imports = [
-        module
-        testLib.testStartupTimeouts
-      ];
-      services.victoriaStack = {
-        logs.enable = true;
-        logs.mcp = {
-          enable = true;
-          enabledTools = [ "flags" ];
-        };
         vmauth.adminPasswordFile = "${pkgs.writeText "mcp-test-admin-password" "mcp-test-admin-password-value"}";
       };
     };
@@ -458,9 +462,6 @@ in
       for unit in ("mcp-victoriametrics", "mcp-victorialogs", "mcp-victoriatraces", "vmauth"):
           wait_active(machine, f"{unit}.service")
       machine.wait_for_open_port(4204)
-      wait_active(reenabled, "mcp-victorialogs.service")
-      wait_active(reenabled, "vmauth.service")
-      reenabled.wait_for_open_port(4204)
 
       sid, names = tool_names(machine, "logs")
       assert "flags" not in names, f"logs: flags must be disabled, got {sorted(names)}"
@@ -482,13 +483,6 @@ in
 
       sid, names = tool_names(machine, "traces")
       assert "services" in names and "traces" in names, f"traces: query tools missing: {sorted(names)}"
-
-      sid, names = tool_names(reenabled, "logs")
-      assert "flags" in names, f"enabledTools = [ flags ] must bring flags back, got {sorted(names)}"
-      ok = rpc(reenabled, "logs", sid, "tools/call", {"name": "flags", "arguments": {}})
-      # The tool is back, but /flags is outside vmauth's read allow-list and the
-      # MCP now calls vmauth, so enabling it only yields vmauth's refusal.
-      assert refused(ok) and "missing route" in json.dumps(ok), f"re-enabled flags must hit vmauth's 400: {ok!r}"
     '';
   };
 

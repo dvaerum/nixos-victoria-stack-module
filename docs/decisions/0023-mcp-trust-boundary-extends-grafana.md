@@ -79,9 +79,10 @@ binaries' tools over MCP JSON-RPC):
 mcp-victoriametrics' own defaults (`export`, `flags`, debug tools,
 `test_rules`) stay off as before. Left on deliberately: `alerts`/`rules`,
 `metric_statistics` and `metrics_metadata` (the first three are off the read
-allow-list and answer with vmauth's 400). An operator who wants a disabled
-tool back sets `mcp.enabledTools` (for example `[ "flags" ]` on logs); only
-these module defaults can be lifted.
+allow-list and answer with vmauth's 400). A tool outside the read tier's
+allow-list is blocked by vmauth whatever the tool list says; hidden tools stay
+hidden so clients do not see tools that always fail. There is no option to
+un-hide them (`mcp.disabledTools` only adds more).
 
 The logs and traces tools take a `tenant` argument. It selects the
 tenant (`AccountID:ProjectID`) on the same `/select/*` endpoints the read

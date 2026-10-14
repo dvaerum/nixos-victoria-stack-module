@@ -40,16 +40,13 @@ let
       # below. See the `disabledTools` option text for why.
       upstreamDefaultDisabledTools ? [ ],
       # Tools whose backend endpoint is outside vmauth's read-tier allow-list
-      # or exposes other users' query text (docs/decisions/0023). Unlike
-      # upstreamDefaultDisabledTools, the operator can lift these through
-      # `mcp.enabledTools`.
+      # or exposes other users' query text (docs/decisions/0023). Hidden so
+      # clients do not see tools that always fail; not operator-liftable.
       moduleDefaultDisabledTools ? [ ],
     }:
     let
       disabledTools = lib.unique (
-        upstreamDefaultDisabledTools
-        ++ lib.subtractLists serviceCfg.mcp.enabledTools moduleDefaultDisabledTools
-        ++ serviceCfg.mcp.disabledTools
+        upstreamDefaultDisabledTools ++ moduleDefaultDisabledTools ++ serviceCfg.mcp.disabledTools
       );
     in
     {

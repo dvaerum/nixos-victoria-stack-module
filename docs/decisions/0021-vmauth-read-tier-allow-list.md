@@ -89,5 +89,4 @@ list above bounds every tool call; a tool whose endpoint is off the list
 gets vmauth's 400. The traces MCP server still calls its backend directly
 on loopback, so its tools are not limited to the list: a tool whose
 endpoint is off the list would hand a read-token holder that endpoint, so
-those tools are disabled by default (`mcp.enabledTools` lifts them; see
-0023).
+those tools are disabled by default (see 0023).
