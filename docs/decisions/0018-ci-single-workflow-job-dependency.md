@@ -29,4 +29,8 @@ regardless of how long either job's build takes. This was chosen over
 restructuring to PR-based automation (the alternative considered): it
 keeps today's direct-push model intact while still fully eliminating the
 race, with a much smaller change to the existing workflow files.
-</content>
+
+Update: the merged file is `.github/workflows/update-dependencies.yml`. `needs:`
+alone did not make the second job see the first's push (checkout resolves to
+the SHA that triggered the run), so each job also runs `git pull --rebase`
+before its push, and a `concurrency:` group queues overlapping runs.

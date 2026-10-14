@@ -16,9 +16,7 @@ let
     runCommand
     ;
 
-  # Evaluate both option trees together -- same `nixosOptionsDoc` approach
-  # as nixos-router-module's own generate-doc.nix, extended to two
-  # separate modules/option trees in one generated doc.
+  # Both option trees go into one doc.
   eval = lib.evalModules {
     modules = [
       ./nixosModule/victoriaStack/options.nix

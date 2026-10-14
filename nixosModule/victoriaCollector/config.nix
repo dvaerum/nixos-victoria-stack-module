@@ -184,7 +184,7 @@ in
           # not allow-listed via StateDirectory=/ReadWritePaths=; the default
           # queue.directory sits inside alloy's own StateDirectory, anything
           # outside needs an explicit entry or it fails silently at Alloy's own
-          # runtime (docs/decisions/0020).
+          # runtime.
           ReadWritePaths = lib.optional queueOutsideStateDir (toString cfg.queue.directory);
         }
         (lib.mkIf (!cfg.alloy.dynamicUser) {
@@ -304,8 +304,7 @@ in
       # reset-failed` -- wrong for a host that's expected to go offline
       # and come back on its own schedule. 0 disables the ceiling
       # entirely (systemd.service(5): "If set to 0, the limiting of start
-      # rate is disabled"), confirmed a real top-level NixOS option, not
-      # hidden in unitConfig.
+      # rate is disabled").
       systemd.services.systemd-journal-upload.startLimitIntervalSec = 0;
     })
 
@@ -313,10 +312,10 @@ in
     # a file that appears late or changes has to be acted on by someone else:
     # path units, event-driven (docs/decisions/0006).
     (lib.mkIf (hasToken && tokenConsumers != [ ]) {
-      # A start whose credential is missing fails and is never retried. The helper
-      # is RemainAfterExit: while it stays active the path unit does not trigger
-      # it again, so an operator's deliberate `systemctl stop` is not undone by a
-      # later change to the file.
+      # The log uploader's start with a missing credential fails and is never
+      # retried. The helper is RemainAfterExit: while it stays active the path
+      # unit does not trigger it again, so an operator's deliberate `systemctl
+      # stop` is not undone by a later change to the file.
       systemd.services.victoria-collector-write-token-appeared = {
         description = "Start the collector units once the write-token file exists";
         # switch-to-configuration would otherwise re-run it when its unit file changes, starting consumers the operator stopped.

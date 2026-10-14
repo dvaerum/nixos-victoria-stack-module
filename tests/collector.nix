@@ -24,10 +24,6 @@ let
 
   writeTokenFixture = pkgs.writeText "collector-test-write-token" "collector-test-write-token";
 
-  # Pure eval, no container boot needed: confirms the https:// branch of
-  # journaldWriteEndpoint actually renders the client-cert-disabling + CA-bundle
-  # settings it's supposed to (the roundtrip test above only ever uses a
-  # plain http:// writeEndpoint).
   # Fixtures for the cross-container tests below (the older tests in this
   # file inline the equivalent).
   twoWriteTokensFixture = pkgs.writeText "collector-test-two-write-tokens.yaml" ''
@@ -189,9 +185,8 @@ in
 {
   # The one genuinely novel integration risk this whole project called
   # out explicitly: two separate containers, one shipping real telemetry
-  # over the network to the other's vmauth gateway, end to end. Verified
-  # for real here -- not assumed to work just because nixpkgs' own
-  # containers.nix framework self-test proves container<->container
+  # over the network to the other's vmauth gateway, end to end. Runs
+  # for real, since nixpkgs' own containers.nix framework self-test proves container<->container
   # networking in the abstract (docs/decisions/0004).
   metrics-roundtrip-across-containers = pkgs.testers.nixosTest {
     name = "victoria-collector-metrics-roundtrip-across-containers";
@@ -208,19 +203,17 @@ in
         # vmauth's listenAddress defaults to loopback-only (a deliberate
         # security default, docs/architecture.md) -- a genuinely remote
         # collector (this test's whole point: two separate containers)
-        # can never reach a loopback-bound vmauth at all, confirmed
-        # directly: without this, every export attempt timed out with
-        # "context deadline exceeded" even though ICMP/hostname
-        # resolution across the vlan worked fine (ping succeeded).
+        # can never reach a loopback-bound vmauth at all: without this, every
+        # export attempt times out with "context deadline exceeded" even though
+        # ping and name resolution work.
         vmauth.listenAddress = "0.0.0.0:4204";
       };
       # This module never opens any firewall port itself (deliberately
       # infrastructure-agnostic, same reasoning as having no ACME/TLS
       # opinion) -- a real remote-collector deployment needs the
       # operator to open this themselves, so the test needs to too.
-      # Confirmed directly: listenAddress alone wasn't enough: still
-      # "context deadline exceeded" with 0.0.0.0:4204 and the default
-      # firewall still active.
+      # listenAddress alone is not enough: with the default firewall still
+      # active the export still times out ("context deadline exceeded").
       networking.firewall.allowedTCPPorts = [ 4204 ];
     };
 
@@ -259,8 +252,7 @@ in
       # collector's own host metric to actually arrive and become
       # queryable on the stack side, rather than assuming a fixed sleep
       # is enough. Queried directly against victoriametrics' own loopback
-      # port (no credential needed there -- only vmauth gates access,
-      # confirmed already in the vmauth test group; the metric reaching
+      # port (no credential needed there -- only vmauth gates access; the metric reaching
       # the backend AT ALL through vmauth's authenticated write path is
       # the actual thing this test cares about).
       stack.wait_until_succeeds(
@@ -458,7 +450,7 @@ in
     '';
   };
 
-  # A trailing slash on writeEndpoint used to build `//opentelemetry/...`
+  # A trailing slash on writeEndpoint must not build `//opentelemetry/...`
   # export paths; telemetry must arrive regardless.
   trailing-slash-write-endpoint-roundtrip = pkgs.testers.nixosTest {
     name = "victoria-collector-trailing-slash-write-endpoint";
@@ -603,9 +595,8 @@ in
       ${testLib.waitActivePython}
       start_all()
       wait_active(collector, "systemd-journal-upload.service", max_restarts=None)
-      # Alloy itself must not even be enabled when only logs is on --
-      # confirmed via needsAlloyOtlp = metrics.enable || traces.enable in
-      # config.nix.
+      # Alloy itself must not even be enabled when only logs is on
+      # (needsAlloyOtlp = metrics.enable || traces.enable in config.nix).
       collector.fail("systemctl status alloy.service")
     '';
   };
@@ -755,8 +746,8 @@ in
       );
 
   # A scheme-less endpoint passes eval and dies in `alloy run`; a query string or
-  # fragment lands in the middle of the request path. An unset one used to be
-  # NixOS's bare "accessed but has no value defined".
+  # fragment lands in the middle of the request path. An unset one must give a
+  # specific message, not NixOS's bare "accessed but has no value defined".
   write-endpoint-is-validated = pkgs.runCommand "write-endpoint-is-validated" { } (
     let
       failing =
@@ -948,6 +939,10 @@ in
       throw "collector oneshot capabilities wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
   );
 
+  # Pure eval, no container boot needed: confirms the https:// branch of
+  # journaldWriteEndpoint actually renders the client-cert-disabling + CA-bundle
+  # settings it's supposed to (the roundtrip test above only ever uses a
+  # plain http:// writeEndpoint).
   journal-upload-https-disables-client-cert =
     pkgs.runCommand "journal-upload-https-disables-client-cert" { }
       (
@@ -1022,9 +1017,8 @@ in
         let
           hostTypeType = httpsEvaluated.options.services.victoriaCollector.hostType.type;
           # A double-quote would break out of the generated Alloy string
-          # literal (value = "${cfg.hostType}") -- confirmed as the real,
-          # reproduced injection bug in docs/decisions/0020. A plain
-          # alphanumeric-ish value must still be accepted.
+          # literal (value = "${cfg.hostType}"). A plain alphanumeric-ish
+          # value must still be accepted.
           rejectsUnsafe = !(hostTypeType.check ''rack-1"infra'');
           acceptsSafe = hostTypeType.check "server";
         in
@@ -1067,13 +1061,11 @@ in
   # hostType's own option doc is explicit that this is NOT applied to
   # logs (intentional design -- that path goes through
   # systemd-journal-upload directly, with no Alloy pipeline to attach the
-  # label in, confirmed in config.nix's renderJournalUploadTokenHeader:
-  # the only thing it ever renders is the Authorization bearer token).
-  # This was previously an undocumented-but-believed fact with no
-  # regression test; confirms it directly, both that no Alloy config is
-  # even rendered for a logs-only host (needsAlloyOtlp = metrics.enable
+  # label in; config.nix's renderJournalUploadTokenHeader only ever renders
+  # the Authorization bearer token). Checks both that no Alloy config is
+  # rendered for a logs-only host (needsAlloyOtlp = metrics.enable
   # || traces.enable, config.nix) and that hostType has no other
-  # mechanism to reach logs at all.
+  # mechanism to reach logs.
   hostType-is-genuinely-absent-for-logs-only =
     pkgs.runCommand "hostType-is-genuinely-absent-for-logs-only" { }
       (
@@ -1259,7 +1251,7 @@ in
           # writeTokensFile (tests/vmauth.nix) -- the identical
           # LoadCredential="write-token:${cfg.writeTokenFile}" interpolation
           # shape exists twice in config.nix (alloy.service and journal-upload's
-          # oneshot). See docs/decisions/0020.
+          # oneshot). See docs/decisions/0020 (path -> str interpolation).
           actualType =
             httpsEvaluated.options.services.victoriaCollector.writeTokenFile.type.nestedTypes.elemType.name;
         in
@@ -1296,8 +1288,8 @@ in
           throw ''
             systemd-journal-upload.service must `requires` its own
             token-render oneshot -- a drop-in config directory under
-            /run/systemd/<unit>.conf.d/ is optional to systemd (unlike a
-            required EnvironmentFile=), so a failed render would
+            /run/systemd/<unit>.conf.d/ is optional to systemd (it does not
+            fail the unit's start when absent), so a failed render would
             otherwise let the consuming unit start anyway, silently
             uploading unauthenticated.
           ''
@@ -1455,7 +1447,7 @@ in
       collector.wait_for_unit("fake-gateway.service")
       wait_active(collector, "alloy.service")
       collector.wait_until_succeeds("curl -sf http://127.0.0.1:12345/-/ready")
-      # The gateway still receives the credential (the fix must not drop auth).
+      # The gateway still receives the credential (auth must not be dropped).
       collector.wait_until_succeeds(
           "grep -qx 'Bearer collector-test-write-token' /tmp/auth.log", timeout=120  # gitleaks:allow
       )
@@ -1467,6 +1459,8 @@ in
       assert "collector-test-write-token" not in ui, ui  # gitleaks:allow
       for comp in [
           "otelcol.auth.bearer.write_token",
+          # Negative guard: the module no longer uses otelcol.auth.headers (plain-string
+          # value); a component by that name must not exist or leak the token.
           "otelcol.auth.headers.write_token",
           "local.file.write_token",
       ]:
@@ -1721,9 +1715,10 @@ in
     '';
   };
 
-  # The secret manager delivers the file after boot: the consumers fail their first
-  # start, and the path unit starts them once, without polling and without a restart
-  # loop. Start attempts are counted from the journal.
+  # The secret manager delivers the file after boot: Alloy's start is skipped by
+  # ConditionPathExists and the uploader's render oneshot fails once; the path unit
+  # then starts them, without polling and without a restart loop. Start attempts
+  # are counted from the journal.
   late-write-token-starts-alloy-and-the-uploader = pkgs.testers.nixosTest {
     name = "victoria-collector-late-write-token";
 
@@ -1811,12 +1806,9 @@ in
     '';
   };
 
-  # The test above only ever set both queue options together -- never
-  # confirmed either is independently inert/effective on its own (the
-  # other staying at its documented default), nor that the option
-  # actually reaches the traces exporter's own sending_queue block (a
-  # second, separate occurrence in config.alloy.nix -- the metrics
-  # exporter and traces exporter each render their own).
+  # Each queue option must work on its own, the other keeping its default, and
+  # queue.maxSizeBytes must reach the traces exporter's own sending_queue block
+  # (config.alloy.nix renders one per exporter).
   queue-max-size-bytes-alone-takes-effect = pkgs.testers.nixosTest {
     name = "victoria-collector-queue-max-size-bytes-alone";
 
@@ -1904,8 +1896,8 @@ in
   # Same-host ordering: both services that export to a
   # (possibly co-located) vmauth gateway now carry after/wants on it.
   # A plain unit name is a safe no-op on a collector-only host where
-  # vmauth.service doesn't exist at all (confirmed empirically: systemd
-  # silently ignores an After=/Wants= target with no matching unit).
+  # vmauth.service doesn't exist at all (systemd silently ignores an
+  # After=/Wants= target with no matching unit).
   journal-upload-and-alloy-order-after-vmauth =
     pkgs.runCommand "journal-upload-and-alloy-order-after-vmauth" { }
       (
@@ -1961,10 +1953,10 @@ in
   # already tracks via its own reloadTriggers (nixos/modules/services/
   # monitoring/alloy.nix, wired to ExecReload = kill -SIGHUP), shadowed
   # that lighter mechanism and forced a full stop+start on every
-  # collector config change instead -- confirmed directly via a real
+  # collector config change instead (observed with a real
   # switch-to-configuration between two generations differing only in
   # hostType: MainPID changed with restartTriggers present, stayed
-  # stable once removed. A hard restart drops the local OTLP receiver
+  # stable once removed). A hard restart drops the local OTLP receiver
   # (4317/4318) and host-metrics scraping for the duration, for a change
   # Alloy's own module is specifically designed to reload in place
   # instead. Uses nodes.machine (a real VM, not a container) --
@@ -2142,8 +2134,7 @@ in
         hostType = "server";
         queue.directory = "/run/alloy-queue-test";
         # A dynamic user cannot write outside its StateDirectory (nothing owns the
-        # directory for it); a static user plus the module's tmpfiles rule can, so
-        # no world-writable workaround is needed here any more.
+        # directory for it); a static user plus the module's tmpfiles rule can.
         alloy.dynamicUser = false;
       };
     };
@@ -2399,9 +2390,8 @@ in
           c.wait_until_succeeds("ping -c 1 stack")
 
       # The hostType label lands on VictoriaMetrics as `host_type`, the plain
-      # selector below matching what options.nix documents. (It used to
-      # arrive as `host.type`, dot included, which only a quoted selector
-      # could match.)
+      # selector below matching what options.nix documents (not `host.type`,
+      # which only a quoted selector could match).
       for host_type in ("server", "edge-device"):
           stack.wait_until_succeeds(
               "curl -sfG 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query' "
@@ -2666,7 +2656,7 @@ in
           throw "host_type label spelling broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # alloy.extraFlags had no test at all. A real boot is the check: a mistyped or
+  # A real boot is the check: a mistyped or
   # misplaced flag crashes Alloy, and the flag must appear on the running
   # process's own command line.
   alloy-extra-flags-reach-the-running-process = pkgs.testers.nixosTest {
@@ -2998,8 +2988,8 @@ in
       throw "alloy option types wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
   );
 
-  # Interpolated options used to reach the generated config unescaped: a quote in
-  # writeEndpoint or queue.directory broke the syntax. The real alloy binary is the
+  # Interpolated options must reach the generated config escaped: a quote in
+  # writeEndpoint or queue.directory must not break the syntax. The real alloy binary is the
   # judge, with a control proving the check can fail.
   hostile-config-values-render-valid-alloy =
     let
@@ -3430,8 +3420,8 @@ in
       echo OK > $out
     '';
 
-  # An empty token file would have given Alloy an empty token, and a YAML tokens
-  # file pasted by mistake `Header=Authorization: Bearer tokens:\n  - token: ...`.
+  # An empty token file must not give Alloy an empty token, and a pasted YAML tokens
+  # file must not render `Header=Authorization: Bearer tokens:\n  - token: ...`.
   # Alloy's pre-start check and the uploader's render oneshot refuse both. Runs the
   # real scripts.
   token-render-oneshots-validate-the-token-file =
@@ -3577,10 +3567,8 @@ in
     '';
   };
 
-  # services.alloy.environmentFile is single-valued, so the module setting it
-  # made an operator's own definition a "conflicting definition values" error.
-  # The module sets no EnvironmentFile at all now (the token is a credential), so an
-  # operator's own is the only one.
+  # The module sets no EnvironmentFile (the token is a credential), so an
+  # operator's own cannot conflict.
   alloy-environment-file-merges-with-the-operators =
     pkgs.runCommand "alloy-environment-file-merges-with-the-operators" { }
       (
@@ -3618,9 +3606,9 @@ in
       );
 
   # URL schemes are case-insensitive, and a trailing slash on the endpoint
-  # must not turn the uploader's URL into `//insert/journald`. Both used to
-  # slip through: `lib.hasPrefix "https"` skipped the TLS settings and the CA
-  # credential for HTTPS://, and the slash was appended to verbatim.
+  # must not turn the uploader's URL into `//insert/journald`; a case-sensitive
+  # `lib.hasPrefix "https"` would skip the TLS settings and CA credential for
+  # HTTPS://.
   journal-upload-scheme-case-and-trailing-slash =
     pkgs.runCommand "journal-upload-scheme-case-and-trailing-slash" { }
       (

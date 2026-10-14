@@ -6,7 +6,9 @@
 get their own `mkPackageOption`-style `.package` option. `vmauth.package`
 specifically defaults to `lib.mkDefault config.services.victoriaStack.metrics.package`
 rather than independently to `pkgs.victoriametrics`, while remaining fully
-overridable on its own.
+overridable on its own. When metrics is disabled (vmauth runs on logs or
+traces alone) it falls back to `pkgs.victoriametrics`, since
+`metrics.package` has no value then.
 
 ## Why
 

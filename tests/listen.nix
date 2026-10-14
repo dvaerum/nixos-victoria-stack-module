@@ -33,9 +33,6 @@ let
     builtins.fromJSON (builtins.readFile (lib.removePrefix "${prefix}=" v));
 in
 {
-  # The one helper that decides how a configured listen address is DIALLED and when
-  # two addresses cannot both be bound. It replaces three copies of the same
-  # wildcard logic.
   # -enableTCP6 comes from the one helper, for every unit with an IPv6 listen value.
   tcp6-flag-table =
     let
@@ -85,6 +82,8 @@ in
       "vmauth on IPv4 does not" = count "vmauth" { metrics.enable = true; } == 0;
     };
 
+  # The one helper that decides how a configured listen address is DIALLED and when
+  # two addresses cannot both be bound.
   helper-table = mkTableCheck "listen-helper-table" {
     "empty host is a wildcard" = listen.isWildcard ":4201";
     "0.0.0.0 is a wildcard" = listen.isWildcard "0.0.0.0:4201";
@@ -141,8 +140,9 @@ in
     "a host that merely starts with 127 is not" = !(listen.isLoopbackHost "1270.0.0.1");
   };
 
-  # A wildcard listenAddress used to be mapped to loopback only for the module's own
-  # readiness probes; every URL it BUILT kept the raw address (http://:4201/...).
+  # A wildcard listenAddress must be mapped to loopback in every URL the module
+  # builds, not just for its own readiness probes (the raw address renders
+  # http://:4201/...).
   wildcard-listen-addresses-reach-every-consumer =
     let
       eval =
@@ -203,7 +203,7 @@ in
       lib.foldl' (a: b: a // b) { } (lib.mapAttrsToList perForm forms)
     );
 
-  # Grafana's own http_addr: empty means "all interfaces" and used to render
+  # Grafana's own http_addr: empty means "all interfaces" and must not render
   # `http://:3000` (nginx: "no host in upstream").
   grafana-wildcard-http-addr-behind-nginx =
     let
@@ -453,8 +453,9 @@ in
     };
 
   # For real, with wildcard listen addresses on the database, its MCP server and
-  # vmauth: every module-built URL must dial loopback (the self-monitoring push
-  # used to be http://:4201/..., nginx's upstream http://:4204).
+  # vmauth: every module-built URL must dial loopback (a raw wildcard would
+  # render the self-monitoring push as http://:4201/... and nginx's upstream as
+  # http://:4204).
   wildcard-listen-address-works-end-to-end = pkgs.testers.nixosTest {
     name = "victoria-stack-wildcard-listen-end-to-end";
 

@@ -105,8 +105,9 @@ in
         #
         # NixOS's module system merges that operator config with
         # everything this module defines on the same attribute name --
-        # same philosophy as ADR 0010's Grafana integration ("does NOT
-        # configure services.grafana itself"). Renaming this key is a
+        # same philosophy as ADR 0010 (the consumer owns services.grafana's
+        # users and settings; this module only adds provisioning, the
+        # read-token wiring and a root_url default). Renaming this key is a
         # breaking change for any such operator config, same severity as
         # changing an option's own name.
         locations = {

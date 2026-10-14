@@ -141,19 +141,13 @@ let
   # VictoriaMetrics' real OTLP metrics endpoint (/opentelemetry/v1/metrics,
   # the one vmauth's auto-open ingest route actually proxies to) rejects
   # both the plaintext Prometheus-exposition body AND the bare
-  # "/opentelemetry" path (sans "/v1/metrics") that every test in this
-  # suite previously sent -- confirmed directly: VictoriaMetrics returns
+  # "/opentelemetry" path (sans "/v1/metrics"): VictoriaMetrics returns
   # "unsupported path requested" and, separately, "json encoding isn't
-  # supported for opentelemetry format. Use protobuf encoding". Every
-  # `machine.succeed(curl .../opentelemetry')` write-path test was
-  # therefore broken from day one, just never caught until container-boot
-  # checks could actually execute (this environment's `uid-range`
-  # limitation, resolved separately). This generates a genuinely valid,
-  # minimal OTLP ExportMetricsServiceRequest protobuf payload at test run
-  # time (the timestamp must be current when the request is actually
-  # sent, not baked in at Nix build time) using nixpkgs'
-  # python3Packages.opentelemetry-proto -- confirmed against a real
-  # VictoriaMetrics instance, including that instant queries need
+  # supported for opentelemetry format. Use protobuf encoding". This
+  # generates a valid, minimal OTLP ExportMetricsServiceRequest protobuf
+  # payload at test run time (the timestamp must be current when the
+  # request is sent, not baked in at Nix build time) using nixpkgs'
+  # python3Packages.opentelemetry-proto. Instant queries need
   # `wait_until_succeeds` to tolerate -search.latencyOffset's ~30s
   # default delay before "now"-relative queries see freshly-ingested data.
   otlpMetricGenerator =
@@ -186,9 +180,9 @@ let
         sys.stdout.buffer.write(req.SerializeToString())
       '';
 
-  # Test-script snippet for NEGATIVE write controls. The old controls POSTed a
-  # junk body to the bare path /opentelemetry, which the BACKEND rejects with a
-  # 4xx anyway, so they passed even when vmauth let the request through. This
+  # Test-script snippet for NEGATIVE write controls. A control that POSTs a
+  # junk body to the bare path /opentelemetry is rejected by the BACKEND with a
+  # 4xx anyway, so it passes even when vmauth lets the request through. This
   # posts a genuinely valid OTLP body to the real ingest path and returns
   # (http_status, body), so an assertion on vmauth's own answer (401 "missing
   # 'Authorization'", 401 "Unauthorized", 400 "missing route") proves vmauth, not
@@ -216,8 +210,7 @@ let
 
   # The systemd hardening profile the storage services, vmauth and the MCP
   # servers all carry (docs/decisions/0015), spelled out in full so a dropped or
-  # loosened key in any of them is a failure, not just the handful that used to
-  # be spot-checked.
+  # loosened key in any of them is a failure.
   hardeningProfile = {
     DeviceAllow = [ "/dev/null rw" ];
     DevicePolicy = "strict";

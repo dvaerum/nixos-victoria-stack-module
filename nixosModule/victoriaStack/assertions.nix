@@ -482,8 +482,8 @@ let
     "traces"
   ];
 
-  # The MCP servers have no authentication and call their backend directly, so
-  # a listener beyond loopback bypasses vmauth's credential tiers.
+  # The MCP servers have no authentication of their own; tool calls are gated
+  # by the forwarded token at vmauth's read tier.
   mcpWarnings = lib.concatMap (
     svc:
     let
@@ -494,10 +494,11 @@ let
       (mcp svc && sp != null && !listen.isLoopbackHost sp.host && !cfg.${svc}.mcp.suppressExposureWarning)
       ''
         ${option}.listenAddress is "${cfg.${svc}.mcp.listenAddress}", which is not
-        loopback. The MCP server has no authentication and talks to the backend
-        directly, so anyone who can reach that port bypasses vmauth's credential
-        tiers (docs/decisions/0023). Keep it on loopback and use vmauth's
-        /mcp/${svc} route, or set ${option}.suppressExposureWarning = true
+        loopback. The MCP server has no authentication of its own: anyone who
+        can reach that port can open a session and list tools, and every tool
+        call is then only as strong as the token they send, which is forwarded
+        to vmauth's read tier (docs/decisions/0023). Keep it on
+        loopback and use vmauth's /mcp/${svc} route, or set ${option}.suppressExposureWarning = true
         once the exposure is deliberate.
       ''
   ) mcpServices;
@@ -769,11 +770,9 @@ in
           metrics/logs/traces.enable = true -- nginx only ever
           reverse-proxies to vmauth, never directly to a raw backend port,
           so there is nothing for it to point at otherwise. vmauth.enable
-          alone is not sufficient: vmauth.nix's own config block only
-          activates when a backend is also enabled (see the comment above
-          on the vmauth.enable default), so `vmauth.enable = true` with
-          zero backends produces no actual vmauth service for nginx to
-          reverse-proxy to.
+          alone is not sufficient: the vmauth unit is only created when at
+          least one backend is also enabled, so `vmauth.enable = true` with
+          zero backends leaves nothing for nginx to reverse-proxy to.
         '';
       }
       {

@@ -1,7 +1,6 @@
 # How a configured listen address is DIALLED, and when two of them cannot both
 # be bound. One definition for every consumer (storage services, vmauth, MCP,
-# nginx, assertions); it replaces three copies of the same wildcard logic, only
-# one of which ever reached the URLs the module builds.
+# nginx, Grafana, assertions).
 #
 # A wildcard address (`:port`, `0.0.0.0:port`, `[::]:port`) is a legitimate
 # -httpListenAddr but not something to connect to: probing the wildcard address

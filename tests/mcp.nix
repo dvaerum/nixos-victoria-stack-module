@@ -45,15 +45,13 @@ let
         throw "${serviceName}'s serviceConfig is missing expected hardening: ${builtins.toJSON (builtins.attrNames failed)}"
     );
 
-  # Previously untested for all 3 mcp services: mcp.package override
-  # reaching ExecStart. Eval-only (checks the resolved ExecStart string)
+  # mcp.package override reaching ExecStart, for all 3 mcp services. Eval-only (checks the resolved ExecStart string)
   # rather than a nixosTest boot -- a derivation-path equality check
   # doesn't need a running system to be a genuine, non-vacuous assertion.
   #
   # Plain string equality, not lib.hasInfix: a regex needle carrying
   # store-path context (from "${overridePackage}") makes builtins.match
-  # refuse to compile ("is not allowed to refer to a store path") --
-  # confirmed by hitting this exact error.
+  # refuse to compile ("is not allowed to refer to a store path").
   mkPackageOverrideCheck =
     {
       name,
@@ -188,16 +186,12 @@ in
           throw "mcp logLevel/logFormat/disabledTools options broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # mcp-victoriametrics' own
-  # binary (unlike logs/traces) hardcodes 6 tools disabled by default
-  # when MCP_DISABLED_TOOLS is unset entirely -- confirmed directly
-  # from its source (pinned version 1.20.2), including test_rules,
-  # which WRITES synthetic series into the live instance. Before this
-  # fix, setting disabledTools = ["documentation"] (this option's own
-  # documented `example`) silently passed the user's list VERBATIM,
-  # dropping the upstream default entirely and re-enabling all 6 --
-  # confirmed live in a real container boot (tools/list genuinely
-  # listed test_rules/export/flags after setting disabledTools).
+  # mcp-victoriametrics' own binary (unlike logs/traces) hardcodes 6 tools
+  # disabled by default when MCP_DISABLED_TOOLS is unset entirely (pinned
+  # version 1.20.2), including test_rules, which WRITES synthetic series into
+  # the live instance. Passing the user's disabledTools list verbatim (e.g.
+  # the option's documented example ["documentation"]) would drop that
+  # upstream default and re-enable all 6, so the module unions the two.
   mcp-metrics-disabled-tools-preserves-upstream-defaults-even-when-set =
     pkgs.runCommand "mcp-metrics-disabled-tools-preserves-upstream-defaults" { }
       (
@@ -282,9 +276,9 @@ in
           throw "logs/traces disabledTools unexpectedly unioned with something: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # The MCP servers call their backend directly, outside vmauth's read-tier
-  # endpoint allow-list (docs/decisions/0021, 0023), so tools whose backend
-  # endpoint is not on that list are off by default.
+  # vmauth's read tier answers 400 for tools whose backend endpoint is not on
+  # its allow-list (docs/decisions/0021, 0023), so those tools are off by
+  # default.
   mcp-leaky-tools-are-disabled-by-default =
     pkgs.runCommand "mcp-leaky-tools-disabled-by-default" { }
       (
@@ -486,7 +480,7 @@ in
     '';
   };
 
-  # The metrics and logs MCP servers call vmauth's read tier with the CALLER'S
+  # The MCP servers call vmauth's read tier with the CALLER'S
   # token (docs/decisions/0023): vmauth decides who may read what, and the
   # tool arguments cannot steer a request outside its allow-list.
   mcp-uses-the-callers-token-through-vmauth =
@@ -827,13 +821,10 @@ in
       machine.wait_for_open_port(4204)
 
       # /mcp/* routes sit behind the read tier (vmauth.nix's readUrlMap),
-      # same as every other read-only route -- confirmed empirically
-      # before this fix: with no credential at all, vmauth rejects at
-      # 401 ("missing 'Authorization' request header") before ever
-      # reaching the backend, which the PREVIOUS version of this test
-      # mistook for "routing reached the backend" (it never did -- every
-      # route always got the exact same vmauth-local 401, proving
-      # nothing about the 3 individual backend connections).
+      # same as every other read-only route: with no credential at all,
+      # vmauth rejects at 401 ("missing 'Authorization' request header")
+      # before reaching the backend, so this proves nothing about the 3
+      # individual backend connections.
       no_cred_code = machine.succeed(
           "curl -s -o /dev/null -w '%{http_code}' -X POST "
           "'http://127.0.0.1:4204/mcp/metrics' -H 'Content-Type: application/json' -d '{}'"
@@ -841,9 +832,8 @@ in
       assert no_cred_code == "401", f"expected 401 with no credential, got {no_cred_code!r}"
 
       # With a real credential and a real MCP initialize handshake (not
-      # just a generic malformed body -- confirmed live that `{}` alone
-      # only ever gets a generic "Invalid session ID" 404 regardless of
-      # which backend answered, not a distinguishing response), each
+      # just a generic malformed body: `{}` alone only ever gets a generic
+      # "Invalid session ID" 404 regardless of which backend answered), each
       # service's own serverInfo.name in the response proves this
       # specific route reached this specific backend, not just "a"
       # backend.
@@ -887,9 +877,9 @@ in
     '';
   };
 
-  # The metrics and logs MCP servers reach their backend through vmauth's read
-  # tier with the caller's own Authorization header (docs/decisions/0023), so
-  # vmauth stays the one authority, for all three servers. The backend's
+  # All three MCP servers reach their backend through vmauth's read tier with
+  # the caller's own Authorization header (docs/decisions/0023), so vmauth
+  # stays the one authority. The backend's
   # effectiveUrl hop (docs/decisions/0019) is vmauth's business, not the MCP
   # unit's.
   mcp-passthrough-env-and-entrypoint =
@@ -1031,8 +1021,9 @@ in
   );
 
   # Each MCP unit starts after the backend it talks to; without it the MCP
-  # server can come up first and its readiness probe waits on a backend that
-  # has not started.
+  # server can come up first and its readiness probe waits on a service that
+  # has not started. (The vmauth ordering is checked in
+  # mcp-passthrough-env-and-entrypoint.)
   mcp-units-start-after-their-backend = pkgs.runCommand "mcp-units-start-after-their-backend" { } (
     let
       evaluated = evalWith {
@@ -1062,8 +1053,7 @@ in
   );
 
   # An MCP listenAddress beyond loopback binds there (the exposure the warning
-  # is about). Replaces the old vmauth-off variant: no MCP server runs without
-  # vmauth any more (docs/decisions/0023).
+  # is about; no MCP server runs without vmauth, docs/decisions/0023).
   mcp-binds-a-wildcard-listen-address = pkgs.testers.nixosTest {
     name = "victoria-stack-mcp-wildcard-listen-address";
 
@@ -1209,9 +1199,9 @@ in
     '';
   };
 
-  # An MCP server that dies at start must fail the start at once; its HTTP probe
-  # used to keep polling for its whole 90s. The package override is a stand-in
-  # that exits immediately.
+  # An MCP server that dies at start must fail the start at once, not after its
+  # HTTP probe's whole 90s deadline. The package override is a stand-in that
+  # exits immediately.
   broken-mcp-unit-fails-when-its-main-process-dies-not-at-the-deadline = pkgs.testers.nixosTest {
     name = "victoria-stack-broken-mcp-unit";
 
@@ -1240,8 +1230,9 @@ in
     '';
   };
 
-  # An MCP listener beyond loopback bypasses vmauth (no authentication, direct
-  # backend access): one warning per service. A port below 1024 would crash-loop
+  # A non-loopback MCP listener has no authentication of its own for the
+  # session and tool list (tool calls still need the forwarded token): one
+  # warning per service. A port below 1024 would crash-loop
   # the unit (no CAP_NET_BIND_SERVICE), so it is an assertion.
   mcp-exposure-warning-and-low-port-assertion =
     let

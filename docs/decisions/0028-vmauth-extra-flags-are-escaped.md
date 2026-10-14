@@ -22,7 +22,7 @@ one: the same option name behaved differently per service.
   (`\"` loses its backslash, `\b` becomes a backspace) and expands `%` and `$`
   inside the quotes. Every user-supplied element is therefore escaped for
   systemd first (`nixosModule/victoriaStack/exec-escape.nix`, one helper for the
-  storage services, vmauth and the syslog flags) and only then quoted; the
+  storage services, vmauth, the syslog flags and the readiness probe) and only then quoted; the
   module's own `%d` flags skip the escape. MCP's values travel in `Environment=`,
   where only `%` needs escaping; so do the syslog TLS file paths and the vmauth
   and Grafana secret file paths in `LoadCredential=` and `PathChanged=` (a `:`

@@ -3,7 +3,7 @@ storage
 
 ## Status
 
-The last paragraph before "Why" (the Alloy write-token oneshot with
+The Alloy part of the last paragraph before "Why" (the write-token oneshot with
 `EnvironmentFile=`, its `DynamicUser` and `RuntimeDirectory`) is superseded by
 [0006](./0006-alloy-write-token-via-sys-env.md): that oneshot no longer exists and
 Alloy gets the token as a systemd credential. The rest of this ADR still holds.
@@ -28,11 +28,10 @@ effectively strict even with an explicit `full`; only static-user units truly
 ran with `full`.
 
 Readiness on the storage services is an `ExecStartPost` probe that polls `wait4x http
-<url>/ping` until the `startupTimeout` deadline (5 minutes by default: the probe outlasts
-a slow open of a large data directory;
-`TimeoutStartSec` is 6 minutes so the two never expire together; both derive from
-the `startupTimeout` option, `5m` by default, with `TimeoutStartSec` always a
-minute above it) instead of a
+<url>/ping` until the `startupTimeout` deadline (the `startupTimeout` option, `5m` by
+default, so the probe outlasts a slow open of a large data directory;
+`TimeoutStartSec` is always a minute above it, so the two never expire
+together) instead of a
 hand-rolled `until curl ...; do sleep 1; done` loop. `wait4x` is already
 packaged in nixpkgs (`pkgs.wait4x`), purpose-built for exactly this
 (multi-protocol service/port/HTTP readiness polling with built-in
@@ -58,11 +57,11 @@ each with its own probe target: vmauth is checked with a TCP probe
 (`<listen address>`, 90s deadline: with `-httpInternalListenAddr`
 its `/health` is not served on the data listener, so there is no HTTP endpoint
 to poll), and each MCP server with an HTTP probe of `<url>/health/readiness`
-(90s deadline). A lighter pass (`NoNewPrivileges`, `PrivateTmp`,
-`ProtectHome`, and later an empty `CapabilityBoundingSet`) covers the two
-token oneshots. The exception is
-the journal-upload one, which keeps `CAP_CHOWN` because it must `chgrp` its
-drop-in to `systemd-journal`; an empty set made it fail in a real boot.
+(90s deadline). A lighter pass covers the collector's oneshots: the
+journal-upload token render gets `NoNewPrivileges`, `PrivateTmp` and
+`ProtectHome` and keeps `CAP_CHOWN` because it must `chgrp` its drop-in to
+`systemd-journal` (an empty set made it fail in a real boot); the two path
+helpers get only an empty `CapabilityBoundingSet`.
 
 The Alloy write-token oneshot specifically no longer runs as root. Per
 `systemd.exec(5)`: `EnvironmentFile=` is read by the service manager
@@ -86,7 +85,6 @@ by independent review. Bringing these units back up to the bar nixpkgs
 already cleared costs nothing beyond more `serviceConfig` lines; there was
 no real security trade-off to relitigate, since nixpkgs' own maintainers
 already validated this exact profile against these exact binaries.
-</content>
 
 ## Restart backoff
 

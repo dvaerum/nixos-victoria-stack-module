@@ -15,7 +15,7 @@ the existing auto-derivation logic) for write-tier bearer tokens
 unconditionally — never the user-facing `openIngestPaths` override, which
 now purely sizes the anonymous/no-credential door.
 
-A new `lib.warnIf` fires when `requireAuthForWrites = false` *and*
+A new warning fires when `requireAuthForWrites = false` *and*
 `writeTokensFile` is also set: the anonymous door being open already
 grants the same access a configured token would, making the token
 pointless in that configuration. This is a genuine two-settings-contradict
@@ -32,7 +32,6 @@ tiers. An option whose own documentation promises "disable anonymous
 writes, keep my credentialed writers working" but whose code does the
 opposite undermines that premise silently — exactly the kind of gap a
 security-focused reviewer needs to be able to trust the docs not to have.
-</content>
 
 Update: with the metrics cluster ([0033](./0033-metrics-cluster-replaces-single-node.md)) the derived metrics write route
 (`/opentelemetry.*`) goes to vminsert under `/insert/0/`, for write tokens and

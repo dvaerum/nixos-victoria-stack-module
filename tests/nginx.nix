@@ -71,16 +71,13 @@ let
   victoriaReadLocation = readLocationOf evaluated;
 in
 {
-  # A real, previously-undetected regression found while implementing
-  # the Grafana official-config rewrite: the vhost's `locations` attrset
-  # was built via plain `//` across two separately-constructed attrsets
-  # that BOTH had a top-level `locations` key -- `//` doesn't deep-merge,
-  # so whichever side came last silently clobbered the other's
-  # `locations` ENTIRELY. In practice: /victoria/ vanished from the
-  # rendered config whenever grafana.enable was also true (the exact
-  # combination examples/default.nix itself documents), undetected
-  # because the only test exercising both together is container-boot
-  # (blocked locally, docs/decisions/0011).
+  # Guards against building the vhost's `locations` attrset via plain `//`
+  # across two attrsets that BOTH have a top-level `locations` key: `//`
+  # doesn't deep-merge, so whichever side came last would silently clobber
+  # the other's `locations` ENTIRELY. In practice /victoria/ would vanish
+  # from the rendered config whenever grafana.enable was also true (the
+  # combination examples/default.nix documents); nginx-proxies-victoria-and-grafana-subpaths
+  # covers it end to end, this is the cheap structural check.
   nginx-victoria-and-grafana-locations-coexist =
     pkgs.runCommand "nginx-victoria-and-grafana-locations-coexist" { }
       (
@@ -313,9 +310,8 @@ in
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
       # grafana.service being "active" doesn't mean Grafana's own HTTP
-      # server is listening yet -- confirmed directly: without this,
-      # the /grafana/ curl below raced Grafana's startup and got a 502
-      # from nginx often enough to fail the check.
+      # server is listening yet: without this, the /grafana/ curl below
+      # races Grafana's startup and gets a 502 from nginx.
       machine.wait_for_open_port(3000)
       # Same race for vmauth's own backend -- caught by the sibling test
       # with grafana disabled (nothing else gave it enough of a head
@@ -398,9 +394,7 @@ in
       # "-T" with no "-c" silently dumps the nginx *binary's own
       # compiled-in default config* (its stock example server block,
       # server_name "localhost"), not the actual NixOS-rendered config
-      # the running service uses -- confirmed directly: without "-c",
-      # this assertion failed even though the domain genuinely was
-      # applied. NixOS's nginx module exposes the real config at
+      # the running service uses, so the domain would not show up. NixOS's nginx module exposes the real config at
       # /etc/nginx/nginx.conf (nixos/modules/services/web-servers/nginx).
       config_dump = machine.succeed("${pkgs.nginx}/bin/nginx -T -c /etc/nginx/nginx.conf 2>&1")
       assert "victoria-stack-test.example.com" in config_dump, (
@@ -409,13 +403,12 @@ in
     '';
   };
 
-  # Previously only 2 of the 4 domain x grafana.enable combinations were
-  # covered (default-domain+grafana-off implicitly via other tests, and
-  # default-domain+grafana-on via nginx-proxies-victoria-and-grafana-subpaths
-  # above). The critical `//`-clobbering bug found during the grill-me
-  # review (docs/decisions/0016) specifically manifested only when BOTH
-  # a custom option AND grafana.enable were set together -- so the
-  # remaining 2 combinations are not redundant with the ones above.
+  # Of the 4 domain x grafana.enable combinations, default-domain+grafana-off
+  # is covered implicitly by other tests and default-domain+grafana-on by
+  # nginx-proxies-victoria-and-grafana-subpaths above. The `//`-clobbering
+  # bug (see nginx-victoria-and-grafana-locations-coexist) manifests only
+  # when BOTH a custom option AND grafana.enable are set together, so the
+  # remaining 2 combinations are not redundant with those.
   nginx-custom-domain-with-grafana-enabled = pkgs.testers.nixosTest {
     name = "victoria-stack-nginx-custom-domain-with-grafana";
 
@@ -452,8 +445,8 @@ in
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
       # grafana.service being "active" doesn't mean Grafana's own HTTP
-      # server is listening yet -- see nginx-proxies-victoria-and-grafana-
-      # subpaths' own comment above (the same race, found here too).
+      # server is listening yet -- same race as in
+      # nginx-proxies-victoria-and-grafana-subpaths above.
       machine.wait_for_open_port(3000)
       wait_active(machine, "vmstorage.service")
       wait_active(machine, "vminsert.service")
@@ -470,8 +463,8 @@ in
       # grafana.enable = true). Setting `domain` makes the virtualHost
       # name-based (nginx.nix only sets serverName when cfg.domain !=
       # null) -- a request's Host header must match for nginx to route
-      # to it at all, confirmed directly: omitting -H "Host: ..." here
-      # failed with no error, just curl/grep finding nothing.
+      # to it at all: omitting -H "Host: ..." fails with no error, just
+      # curl/grep finding nothing.
       # wait_until_succeeds, not succeed: Grafana's HTTP port opens
       # before its own startup migrations finish.
       machine.wait_until_succeeds(
@@ -534,7 +527,7 @@ in
 
   # The 4th and last domain x grafana.enable combination (see the comment
   # on nginx-custom-domain-with-grafana-enabled above): a custom domain
-  # with grafana.enable left off, confirmed via a real live request (not
+  # with grafana.enable left off, checked via a real live request (not
   # just a config-dump assertion like nginx-domain-sets-server-name) --
   # setting `domain` makes the virtualHost name-based, so a request must
   # carry the matching Host header to route at all, same as the
@@ -578,9 +571,7 @@ in
       # NOT asserted: that a request with a different Host is refused. It
       # isn't -- with a single virtualHost nginx serves unmatched Hosts from
       # it as the default server, so `domain` sets server_name (checked by
-      # nginx-domain-sets-server-name) but is no access control. An earlier
-      # version of this test claimed otherwise and only passed because its
-      # probe carried no credentials and got a 401 anyway.
+      # nginx-domain-sets-server-name) but is no access control.
 
       # /grafana/ must not exist at all here either.
       status = machine.succeed(
@@ -592,7 +583,7 @@ in
     '';
   };
 
-  # docs/decisions/0022: "victoria-stack" is now a stable, documented
+  # docs/decisions/0022: "victoria-stack" is a stable, documented
   # extension point, not an incidental implementation detail -- pins the
   # literal attribute name so a future accidental rename is caught
   # immediately, the same protection every other stable-name contract in
@@ -776,10 +767,8 @@ in
         throw "wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
     );
 
-  # nginx needs systemd ordering on vmauth.service and grafana.service:
-  # `systemctl show nginx.service -p After` on a real container listed
-  # neither, and the resulting race gave "502 Bad Gateway" from
-  # nginx's proxy_pass.
+  # nginx needs systemd ordering on vmauth.service and grafana.service,
+  # or nginx can start first and answer "502 Bad Gateway" from proxy_pass.
   nginx-after-includes-vmauth-and-grafana-when-enabled =
     pkgs.runCommand "nginx-after-includes-vmauth-and-grafana" { }
       (

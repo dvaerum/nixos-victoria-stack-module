@@ -150,11 +150,9 @@ in
         metrics/logs/traces.enable = true -- nginx only ever
         reverse-proxies to vmauth, never directly to a raw backend port,
         so there is nothing for it to point at otherwise. vmauth.enable
-        alone is not sufficient: vmauth.nix's own config block only
-        activates when a backend is also enabled (see the comment above
-        on the vmauth.enable default), so `vmauth.enable = true` with
-        zero backends produces no actual vmauth service for nginx to
-        reverse-proxy to.
+        alone is not sufficient: the vmauth unit is only created when at
+        least one backend is also enabled, so `vmauth.enable = true` with
+        zero backends leaves nothing for nginx to reverse-proxy to.
       ''
     ];
     module = {
@@ -170,9 +168,9 @@ in
   };
 
   # vmauth.enable = true alone is not sufficient: vmauth.nix's own config
-  # block only activates when a backend is also enabled, so this
-  # configuration used to pass this assertion while producing no actual vmauth
-  # service for nginx to reverse-proxy to.
+  # block only activates when a backend is also enabled, so vmauth.enable with
+  # no backend produces no vmauth service for nginx to reverse-proxy to and
+  # must still fail this assertion.
   nginx-requires-vmauth-with-a-real-backend = mkAssertionMessagesAreCheck {
     name = "nginx-requires-vmauth-with-a-real-backend";
     expected = [
@@ -182,11 +180,9 @@ in
         metrics/logs/traces.enable = true -- nginx only ever
         reverse-proxies to vmauth, never directly to a raw backend port,
         so there is nothing for it to point at otherwise. vmauth.enable
-        alone is not sufficient: vmauth.nix's own config block only
-        activates when a backend is also enabled (see the comment above
-        on the vmauth.enable default), so `vmauth.enable = true` with
-        zero backends produces no actual vmauth service for nginx to
-        reverse-proxy to.
+        alone is not sufficient: the vmauth unit is only created when at
+        least one backend is also enabled, so `vmauth.enable = true` with
+        zero backends leaves nothing for nginx to reverse-proxy to.
       ''
     ];
     module = {
@@ -476,9 +472,8 @@ in
   };
 
   # Control for the three mcp-*-requires-vmauth assertions (tests/mcp.nix):
-  # every MCP server on its own backend with vmauth on trips nothing. The old
-  # "MCP without vmauth is fine" control is gone: no MCP server works without
-  # vmauth any more (docs/decisions/0023).
+  # every MCP server on its own backend with vmauth on trips nothing. No MCP server
+  # works without vmauth (docs/decisions/0023).
   mcp-with-vmauth-is-not-an-assertion-failure = mkNoAssertionsFireCheck {
     name = "mcp-with-vmauth-is-not-an-assertion-failure";
     module = {

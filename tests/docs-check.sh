@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Mechanical doc checks that kept needing an agent audit to catch: a reference to
-# an ADR that does not exist, narrative that crept back into code comments, and
-# names of things that were removed or misspelt. Usage: docs-check <repo-root>.
+# Mechanical doc checks: ADR references and relative .md links must resolve, code
+# comments and user-facing docs must carry no change narrative, and names of
+# removed or misspelt things must not appear. Usage: docs-check <repo-root>.
 set -euo pipefail
 
 root=${1:?usage: docs-check <repo-root>}

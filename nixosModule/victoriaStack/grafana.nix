@@ -17,8 +17,8 @@ let
 
   # Datasources talk to vmauth's read tier, never to a backend: Grafana's
   # datasource proxy forwards any method and path for any Viewer
-  # (docs/decisions/0029). vmauth.effectiveUrl hops (docs/decisions/0019) stay
-  # vmauth's business.
+  # (docs/decisions/0029). Which URL vmauth dials for each backend (effectiveUrl,
+  # docs/decisions/0019) stays vmauth's business.
   vmauthUrl = "http://${listen.connectAddr topCfg.vmauth.listenAddress}";
 
   # LoadCredential= makes the token readable by Grafana's own user whatever
@@ -118,17 +118,17 @@ let
 in
 {
   config = lib.mkIf cfg.enable {
-    # Datasource provisioning is all this option adds over plain
-    # services.grafana.enable, so with no backend enabled it does nothing.
+    # Provisioning is what this option adds over plain
+    # services.grafana.enable, apart from the read-token wiring below.
     # Grafana still starts fine, hence a warning, not an assertion.
     warnings =
       lib.optional (datasourceSpecs == [ ]) ''
         services.victoriaStack.grafana.enable is set, but none of
         services.victoriaStack.metrics/logs/traces.enable is, so
-        no datasource is actually provisioned into Grafana. The only
-        thing services.victoriaStack.grafana.enable does beyond plain
-        services.grafana.enable is this auto-wiring; with no backend
-        enabled there is nothing for it to wire up.
+        no datasource is actually provisioned into Grafana. Apart from
+        the read-token wiring, provisioning is all
+        services.victoriaStack.grafana.enable adds over plain
+        services.grafana.enable, so there is nothing to provision.
       ''
       # A warning, not an assertion: Grafana rejects this at provisioning on
       # the versions we know, but that is Grafana's call, not ours.

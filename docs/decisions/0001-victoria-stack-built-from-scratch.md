@@ -3,15 +3,17 @@
 ## Decision
 
 `services.victoriaStack.{metrics,logs,traces}` are independent systemd units
-built directly on `pkgs.victoriametrics`'s binaries. They do not import or
+built directly on the `victoriametrics`, `victorialogs` and `victoriatraces`
+packages' binaries (`vmauth` ships in `pkgs.victoriametrics`). They do not import or
 configure nixpkgs' own `services.victoriametrics`/`services.victorialogs`/
 `services.victoriatraces` modules at all.
 
 ## Why
 
 Both real deployments this module generalizes from independently hit the same wall and independently built the same
-workaround: nixpkgs' own modules hardcode `-storageDataPath=/var/lib/<service>`
-with no option to override it, and hardcode `DynamicUser = true`, whose
+workaround: nixpkgs' own modules hardcode `-storageDataPath=/var/lib/<stateDir>`
+(only a name under `/var/lib` is settable, never another path), and hardcode
+`DynamicUser = true`, whose
 `StateDirectory` handling tries to migrate a pre-existing `/var/lib/<name>`
 into a private DynamicUser-managed copy on every start — confirmed to fail
 outright ("Device or resource busy") once that path is an externally-managed

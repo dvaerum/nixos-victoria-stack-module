@@ -51,7 +51,7 @@ component's own choices; this page is purely the connective picture.
 │  own config, not this module)  │ (nixpkgs default)    │ default)               │
 │ services.victoriaCollector      │                     │                        │
 │   alloy's local OTLP receiver   │ 127.0.0.1:4317/4318  │ No -- local-apps-only │
-│                                │                     │ by design, see         │
+│   (traces.enable only)         │                     │ by design, see         │
 │                                │                     │ config.alloy.nix        │
 └────────────────────────────┴───────────────────┴──────────────────────┘
 ```
@@ -102,8 +102,8 @@ happen automatically.
 │   └──────────┘          │      │      │      │      │      │  │       │
 │                          ▼      ▼      ▼      ▼      ▼      ▼  │       │
 │                       metrics logs  traces mcp-×3 (each       │       │
-│                       :4201  :4202  :4203  proxies to its own  │       │
-│                                            co-located backend) │       │
+│                       :4201  :4202  :4203  calls vmauth's      │       │
+│                                            read tier)          │       │
 │                                                                 ▼       │
 │                                                             Grafana     │
 │                                                          (:3000, own    │
@@ -114,8 +114,8 @@ happen automatically.
 │                                                           ADR 0029)     │
 │                                                                      │
 │   ┌──────────────────────────────────────────────────────┐          │
-│   │ victoriaCollector (can be this SAME host, self-         │          │
-│   │ monitoring -- or any other host on the fleet)           │          │
+│   │ victoriaCollector (can be this SAME host -- or any      │          │
+│   │ other host on the fleet)                                │          │
 │   │                                                          │          │
 │   │  systemd-journal-upload ───────────────────────────────┼──▶ vmauth's open/write-tier
 │   │  (logs, bypasses Alloy entirely -- ADR 0005)            │          │   ingest routes, via
@@ -123,7 +123,8 @@ happen automatically.
 │   │  Alloy (metrics + traces, OTLP) ────────────────────────┼──▶ (same path)
 │   │   └─ local OTLP receiver :4317/4318, loopback-only,     │          │
 │   │      for apps ALREADY on this host that speak OTLP      │          │
-│   │      themselves (no network exposure, by design)        │          │
+│   │      themselves (only with traces.enable; no network    │          │
+│   │      exposure, by design)                               │          │
 │   └──────────────────────────────────────────────────────┘          │
 └───────────────────────────────────────────────────────────────────┘
 ```
@@ -163,9 +164,14 @@ What you still have behind a proxy:
   the client cannot pick another; the admin tier is not stamped. The syslog slots
   bypass vmauth and carry their own `tenant`. Metrics have no tenants yet.
 - **The collector's local OTLP receiver has no relationship to vmauth at
-  all** — it's a separate, loopback-only endpoint for host-local
-  OTLP-speaking applications, unrelated to the fleet-shipping path the
-  same Alloy instance also runs.
+  all** — it exists only with `traces.enable` (ports
+  `traces.receiver.grpcPort`/`httpPort`), a separate, loopback-only endpoint
+  for host-local OTLP-speaking applications, unrelated to the fleet-shipping
+  path the same Alloy instance also runs.
+- **The stack's own services push their metrics straight to the local
+  metrics instance's `listenAddress` (loopback by default), bypassing
+  vmauth** (`selfMonitoring`, on by default with `metrics.enable`;
+  ADR 0026).
 - **Nothing in this topology is reachable from another host until you
   explicitly widen a `listenAddress`** (mcp's or a storage service's
   directly) — the documented exceptions are nginx, whose entire purpose is

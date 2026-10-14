@@ -48,7 +48,10 @@ dedicated ADR.
   list items, which don't merge per-entry — a consumer wanting to tweak
   one of *this module's own* three entries specifically needs to
   `lib.mkForce` the whole list and reconstruct it, rather than patching
-  one field.
+  one field. Update: only the enabled backends' datasources are provisioned,
+  and since [0029](./0029-grafana-datasources-through-vmauth-read-tier.md)
+  each carries vmauth's read-tier URL and token header, which a replacement
+  list must copy.
 - **`traces.retentionPeriod` documentation**: fixed to state the real
   upstream default (7 days) instead of the previously-published, factually
   wrong "effectively unbounded" (the correct fact was already known,
@@ -71,6 +74,10 @@ flag unset entirely when not configured, so behavior matches whatever
 vmauth/Alloy/the MCP binaries already default to — consistent with ADR
 0002's "opt-in everything" philosophy.
 
+Update: the exception is `disabledTools`: since
+[0023](./0023-mcp-trust-boundary-extends-grafana.md) the module disables a few
+tools by default.
+
 IP allow/deny lists and load-balancing/failover backend lists for
 vmauth were considered during this same review and explicitly NOT
 added — see ADR 0019's addendum for why (IP filters are an
@@ -78,4 +85,3 @@ Enterprise-only vmauth feature that would silently no-op on the OSS
 package; load-balancing needs more than one backend instance per
 signal, the same "more than one backend" shape already deferred under
 clustering).
-</content>

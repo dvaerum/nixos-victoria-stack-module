@@ -67,7 +67,7 @@ let
   # Every listener in positional order: the -tls/-tlsCertFile/-tlsKeyFile
   # array flags apply to -httpListenAddr by INDEX (confirmed in vmauth's
   # source), so all four flag lists are generated from this one list with
-  # identical length. With both doors off this is just the internal listener
+  # identical length. With both doors off this is just the data listener
   # and no -tls flags are emitted.
   listeners = [
     {
@@ -131,9 +131,8 @@ let
   withForwardedAuthorization = withHeaders false;
 
   # Each enabled backend's own native read API, reached via vmauth as
-  # /metrics/*, /logs/*, /traces/* -- src_paths are POST-STRIP (vmauth
-  # itself strips nothing; whatever fronts vmauth, e.g. nginx, is
-  # responsible for any further prefix stripping of its own).
+  # /metrics/*, /logs/*, /traces/* -- src_paths are matched after nginx has
+  # stripped `/victoria`; vmauth has no subpath awareness of its own.
   #
   # Read via each backend's own effectiveUrl (docs/decisions/0019), not
   # listenAddress directly -- MCP's own listenAddress stays a direct
@@ -341,8 +340,7 @@ let
       # malformed YAML in a safe way, but jq's native failure on either
       # shape downstream ("Cannot iterate over null (null)" / "...over
       # string (...)") names neither the offending file nor what shape was
-      # expected. Confirmed live against both cases before writing this
-      # guard. Fail closed either way (the crash-loop is correct -- an
+      # expected. Fail closed either way (the crash-loop is correct -- an
       # operator typo must not silently serve zero tokens), just with a
       # message that says which option and why.
       #

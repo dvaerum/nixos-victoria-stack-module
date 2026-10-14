@@ -50,9 +50,8 @@ but are not independently verified as passing until either:
   `update-dependencies.yml` via `cachix/install-nix-action@v27`'s
   `extra_nix_config`) runs them after a push.
 
-Push access is itself separately blocked as of this writing (see git log --
-`gh auth login` / SSH key registration pending). Both are tracked as open
-items for the human operator, not guessed past.
+Push access was also blocked when this was written (`gh auth login` / SSH key
+registration pending).
 
 ## Resolution (Phase 34)
 

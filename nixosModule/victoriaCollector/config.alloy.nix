@@ -9,8 +9,7 @@ let
 
   # Every interpolated string literal goes through JSON encoding: it escapes
   # quotes, backslashes and control characters, and Alloy accepts the result as a
-  # string literal (a quote in writeEndpoint or queue.directory used to break the
-  # syntax).
+  # string literal.
   str = builtins.toJSON;
 
   # Shared bearer-token auth handler for whichever OTLP exporters are
@@ -200,8 +199,7 @@ let
       }
     }
 
-    // Same host_type label as on metrics, so it covers both signal types
-    // (docs/decisions/0020).
+    // Same host_type label as on metrics, so it covers both signal types.
     otelcol.processor.attributes "add_host_type_traces" {
       action {
         key    = "host_type"

@@ -49,4 +49,8 @@ settings for the services it fronts were chosen independently of those
 services' own tuning or documented requirements, rather than derived from
 them. The house rule exists so this class of drift can't recur silently
 the next time either vmauth or Grafana's own configuration changes.
-</content>
+
+Update: since [0025](./0025-vmauth-public-write-doors.md) `/victoria/` carries
+reads only; ingest no longer goes through `/victoria/`, so the large-ingest-batch
+motivation for the body-size knob no longer applies. The knob stays as the
+ceiling on anonymous request bodies.

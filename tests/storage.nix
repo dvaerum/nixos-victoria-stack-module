@@ -12,8 +12,8 @@ let
   clusterPackage = pkgs.callPackage ../packages/victoriametrics-cluster/package.nix { };
 
   # Option types vs the real binaries' grammars. retentionPeriod and
-  # retentionMaxDiskSpaceUsageBytes were plain strings, so "30days" evaluated
-  # cleanly and the binary died at start (`cannot parse duration "ays"`). The
+  # retentionMaxDiskSpaceUsageBytes must not be plain strings: "30days" would
+  # evaluate cleanly and the binary die at start (`cannot parse duration "ays"`). The
   # lists below feed BOTH the type check and the real-binary check, so the two
   # cannot drift apart. The types are deliberately narrower than the binaries
   # (which also take 30D, 1e2, +1, .5, 5., lower-case sizes): only the
@@ -159,10 +159,8 @@ let
         throw "${serviceName}'s wildcard-listenAddress readiness substitution broken: ${builtins.toJSON (builtins.attrNames failed)}"
     );
 
-  # Previously untested for all 3 storage services: retentionPeriod,
-  # extraFlags, and a listenAddress override all reaching ExecStart /
-  # effectiveUrl correctly. One shared check applied per service rather
-  # than 3x near-identical hand-written tests.
+  # Shared check for all 3 storage services: retentionPeriod, extraFlags, and a
+  # listenAddress override all reaching ExecStart / effectiveUrl correctly.
   mkExecStartOptionsCheck =
     {
       name,
@@ -196,9 +194,8 @@ let
         throw "${serviceName}'s ExecStart is missing: ${builtins.toJSON (builtins.attrNames failed)}\n${execStart}"
     );
 
-  # Shared across all 3 storage services -- previously only metrics had
-  # this coverage, even though manageTmpfiles/the tmpfiles-rule code path
-  # is identical (copy-pasted) across metrics.nix/logs.nix/traces.nix.
+  # Shared across all 3 storage services: the manageTmpfiles/tmpfiles-rule
+  # code path is identical (copy-pasted) across metrics.nix/logs.nix/traces.nix.
   mkManageTmpfilesCheck =
     {
       name,
@@ -461,8 +458,8 @@ in
 
   # Permanent regression guard for docs/decisions/0017's sequential
   # renumbering -- catches an accidental revert/drift back to any
-  # individual binary's own upstream default, or vmauth/mcp's old
-  # project-chosen numbers.
+  # individual binary's own upstream default, or vmauth/mcp's
+  # pre-0017 numbers.
   port-defaults-match-the-sequential-scheme =
     pkgs.runCommand "port-defaults-match-sequential-scheme" { }
       (
@@ -486,8 +483,8 @@ in
           throw "port defaults drifted from docs/decisions/0017's sequential scheme: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # docs/decisions/0019's structural seam: consumers (vmauth, Grafana)
-  # must read effectiveUrl, never listenAddress directly -- this is the
+  # docs/decisions/0019's structural seam: consumers (vmauth's routes and the
+  # self-monitoring push) must read effectiveUrl, never listenAddress directly -- this is the
   # one place a future remoteUrl feature would need to override.
   effective-url-is-internal-and-derived-from-listen-address =
     pkgs.runCommand "effective-url-is-internal-and-derived" { }
@@ -1010,8 +1007,7 @@ in
     expectLimitNOFILE = true; # same as nixpkgs' own victoriatraces module
   };
 
-  # The option description states the binary's real default retention (the
-  # claim "effectively unbounded" was once wrong for all three). The claim is
+  # The option description states the binary's real default retention. The claim is
   # checked against the binary itself: its own -help must name the same default,
   # so a package bump that changes it fails here instead of leaving the
   # description quietly stale.
@@ -1320,7 +1316,7 @@ in
 
   # --- snapshots (periodic creation + binary-native pruning) ---
   #
-  # The snapshot API genuinely differs per binary (confirmed by probing
+  # The snapshot API genuinely differs per binary (probed on
   # each one): VictoriaMetrics serves /snapshot/{create,list};
   # VictoriaLogs and VictoriaTraces reject those and serve
   # /internal/partition/snapshot/{create,list} instead. -snapshotsMaxAge
@@ -1892,9 +1888,9 @@ in
         throw "retention percent bounds wrong for: ${builtins.toJSON (builtins.attrNames failed)}"
     );
 
-  # A slow open of a large data directory must not be killed: the readiness probe
-  # used to wait exactly as long as systemd's default start timeout (90s), so the
-  # two expired together and Restart=on-failure looped.
+  # A slow open of a large data directory must not be killed: a readiness probe
+  # waiting exactly as long as systemd's default start timeout (90s) would expire
+  # together with it and Restart=on-failure would loop.
   storage-start-timeouts-leave-room-for-a-slow-open = pkgs.runCommand "storage-start-timeouts" { } (
     let
       perUnit =
@@ -2134,7 +2130,7 @@ in
     '';
   };
 
-  # The default is the previous hard-coded behaviour, rendered identically.
+  # The default startupTimeout is 5m, which is the probe's 300s deadline.
   storage-startup-timeout-default-is-5m = pkgs.runCommand "storage-startup-timeout-default" { } (
     let
       checks =
@@ -2266,8 +2262,8 @@ in
     if problems == [ ] then "echo OK > $out" else throw (lib.concatStringsSep "\n" problems)
   );
 
-  # A broken unit used to take the whole probe (5 minutes by default) to be
-  # declared failed: the probe kept polling a port nobody listens on. The flag is
+  # A broken unit must not take the whole probe (5 minutes by default) to be
+  # declared failed by polling a port nobody listens on. The flag is
   # harmless but unknown to the binary, so it exits at once; the probe must end
   # with the main process, whatever startupTimeout is. Dynamic and static user
   # both, since the probe checks the main process from inside each sandbox.
@@ -2354,8 +2350,8 @@ in
     };
 
   # Effective ProtectSystem and capabilities (CapBnd, from the kernel) are read
-  # from the running unit, not the rendered text: measured, DynamicUser units were strict even with an explicit "full";
-  # only static users ran with "full".
+  # from the running unit, not the rendered text: measured, DynamicUser units
+  # were strict even with an explicit "full"; only static users ran with "full".
   hardening-is-effective-on-running-units = pkgs.testers.nixosTest {
     name = "victoria-stack-hardening-effective";
 
@@ -2822,7 +2818,7 @@ in
   logs-long-retention-warns = mkLongRetentionWarningCheck "logs";
   traces-long-retention-warns = mkLongRetentionWarningCheck "traces";
 
-  # A number too long to convert used to abort the whole evaluation from
+  # A number too long to convert would abort the whole evaluation from
   # lib.toIntBase10 inside the module (no option name, nothing else evaluates);
   # the types must refuse it themselves, so the failure names the option.
   # tryEval distinguishes "refused" (value = false) from "aborted" (success = false).

@@ -18,9 +18,8 @@ let
   # datasource provisioning on top of whatever Grafana config already
   # exists. This stands in for "the consumer's own config": nixpkgs'
   # grafana module now requires a real secret_key file-provider (no
-  # silent default -- confirmed via a real assertion hit while writing
-  # this test, not assumed), so a throwaway one is provided here, same as
-  # any real deployment would via its own secrets mechanism.
+  # silent default), so a throwaway one is provided here, same as any
+  # real deployment would via its own secrets mechanism.
   secretKeyFixture = pkgs.writeText "grafana-secret-key" "test-fixture-secret-key-not-real";
 
   grafanaConsumerConfig = {
@@ -64,7 +63,7 @@ let
   # cover 3) -- each is a genuinely different datasourceSpecs permutation
   # that could independently hit the same class of bug the isDefault
   # auto-promotion check below was written for (a real Grafana >=12.2
-  # provisioning crash-loop, confirmed live, is also combination-specific
+  # provisioning crash-loop is also combination-specific
   # by nature: deleteDatasources/declarativePlugins both build their
   # contents from the exact same enabled-backend set).
   mkDatasourceComboTest =
@@ -452,8 +451,8 @@ in
   # Reverse of the above: metrics disabled, logs+traces enabled. isDefault
   # is hardcoded true only on the metrics datasource spec
   # (nixosModule/victoriaStack/grafana.nix) -- when metrics is absent, no
-  # datasource is marked default at all. Previously untested whether that
-  # combination still provisions correctly (declarativePlugins only pulls
+  # datasource is marked default at all. This checks that combination still
+  # provisions correctly (declarativePlugins only pulls
   # in the metrics/logs plugins conditionally; this confirms Grafana
   # starts cleanly and both remaining datasources are present without the
   # metrics plugin/datasource in the mix).
@@ -488,7 +487,6 @@ in
       assert "victoriametrics-logs-datasource" in datasources
       assert "jaeger" in datasources
 
-      # Confirmed directly (this assertion was wrong until corrected):
       # Grafana's own provisioning auto-promotes the first-listed
       # datasource to isDefault=true when none of the provisioned entries
       # claims it -- isDefault being hardcoded false on both the logs and
@@ -627,18 +625,12 @@ in
   # datasourceSpecs as `datasources`) is also missing that entry on the
   # next run, so nothing ever revisits it. This only tests the Nix-level
   # setting itself (deterministic, under this module's own control) --
-  # NOT the live Grafana behavior it's supposed to trigger. Confirmed
-  # live, repeatedly, via a real switch-to-configuration test: on the
-  # currently pinned Grafana version (13.1.6), `prune: true` does NOT
-  # actually prune anything -- a real, previously filed upstream bug
-  # (github.com/grafana/grafana/issues/94645), only very recently fixed
-  # upstream (grafana/grafana#83034), likely not yet in this pin. See
-  # grafana.nix's own comment. Asserting the live behavior here would
-  # mean asserting something currently, verifiably false upstream --
-  # the correct scope for THIS project's test suite is "did we configure
-  # the documented, correct setting", not "does Grafana's own
-  # third-party bug happen to be fixed in whatever version nixpkgs
-  # currently pins".
+  # NOT the live Grafana behavior it's supposed to trigger: on the pinned
+  # Grafana version (13.1.6), `prune: true` does NOT actually prune anything
+  # (upstream bug github.com/grafana/grafana/issues/94645, fix in
+  # grafana/grafana#83034, likely not yet in this pin; see grafana.nix's own
+  # comment). This test's scope is "did we configure the documented setting",
+  # not "does upstream's bug happen to be fixed".
   prune-is-configured-for-datasource-provisioning =
     pkgs.runCommand "grafana-prune-is-configured" { }
       (

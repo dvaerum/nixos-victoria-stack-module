@@ -34,13 +34,14 @@ let
       backendUnit, # "vmselect.service" | "victorialogs.service" | "victoriatraces.service"
       vmauthPrefix, # read-tier path prefix: "metrics" | "logs" | "traces"
       # mcp-victoriametrics hardcodes these as its fallback when
-      # MCP_DISABLED_TOOLS is unset (pinned version 1.20.2); logs/traces have
-      # no such default. Passing any value replaces it, so it is unioned in
+      # MCP_DISABLED_TOOLS is unset (the version pinned in
+      # packages/mcp-victoriametrics/package.nix); logs/traces have no such
+      # default. Passing any value replaces it, so it is unioned in
       # below. See the `disabledTools` option text for why.
       upstreamDefaultDisabledTools ? [ ],
-      # Tools whose backend endpoint is outside vmauth's read-tier allow-list
-      # or exposes other users' query text (docs/decisions/0023). Hidden so
-      # clients do not see tools that always fail; not operator-liftable.
+      # Tools that read /flags or /api/v1/status/tsdb or show other users'
+      # query text (docs/decisions/0023). Other tools off the allow-list stay
+      # listed and fail with vmauth's 400. Not operator-liftable.
       moduleDefaultDisabledTools ? [ ],
     }:
     let
@@ -74,9 +75,8 @@ let
 
               "${envPrefix}_INSTANCE_TYPE" = instanceType;
             }
-            # MCP_LOG_LEVEL/MCP_LOG_FORMAT/MCP_DISABLED_TOOLS -- confirmed
-            # identical across all three mcp-victoria* binaries' own
-            # READMEs. All inert unless configured.
+            # MCP_LOG_LEVEL/MCP_LOG_FORMAT/MCP_DISABLED_TOOLS are identical
+            # across all three mcp-victoria* binaries. Inert unless configured.
             // lib.optionalAttrs (serviceCfg.mcp.logLevel != null) {
               MCP_LOG_LEVEL = serviceCfg.mcp.logLevel;
             }
@@ -90,8 +90,8 @@ let
           );
 
           # HTTP probe, like the storage services': all 3 mcp-victoria* binaries
-          # serve /health/readiness. Without it vmauth's `after` on this unit
-          # (vmauth.nix) would only mean "started", not "answering".
+          # serve /health/readiness, so the unit counts as started only once the
+          # server answers. (vmauth lists no MCP unit: ordering cycle, vmauth.nix.)
           serviceConfig = {
             ExecStart = "${serviceCfg.mcp.package}/bin/${binaryName}";
             ExecStartPost = readiness.command {
@@ -167,8 +167,7 @@ in
       binaryName = "mcp-victoriametrics";
       backendUnit = "vmselect.service";
       vmauthPrefix = "metrics";
-      # mcp-victoriametrics' own config.go, pinned version 1.20.2 --
-      # confirmed directly from source, not assumed.
+      # mcp-victoriametrics' own config.go (see the pinned version above).
       upstreamDefaultDisabledTools = [
         "export"
         "flags"

@@ -5,6 +5,10 @@ session, grounded only in PLAN.md/ADRs/the repo) each found real,
 confirmed bugs. Both are fixed here; captured as one ADR since they're
 one review round's outcome, not separate design decisions.
 
+Status: the Alloy `EnvironmentFile=` render oneshot of the first section no
+longer exists; Alloy reads the token as a systemd credential
+([0006](./0006-alloy-write-token-via-sys-env.md)).
+
 ## Alloy write-token `EnvironmentFile=` raced its own `preStart`
 
 `alloy.service`'s `preStart` wrote `/run/alloy/write-token.env`, which
@@ -41,10 +45,8 @@ systemd itself (not the target unit's process) is what reads an
 `EnvironmentFile=`/drop-in via root privilege -- no ownership
 constraint there.
 
-Since changed: the journal-upload oneshot still runs as root but now does
-`chgrp systemd-journal` + `chmod 640`, writing under `umask 027`; the Alloy
-oneshot moved to its own `DynamicUser` (ADR 0015). The Alloy oneshot is gone
-altogether: see [0006](./0006-alloy-write-token-via-sys-env.md).
+Since changed: the journal-upload oneshot still runs as root but writes under
+`umask 027`, then does `chgrp systemd-journal` and `chmod 640`.
 
 ## Other findings fixed in the same pass
 

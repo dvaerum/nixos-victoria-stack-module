@@ -9,7 +9,10 @@ the section "MCP servers call vmauth's read tier" below.
 
 The three MCP servers (`mcp-victoriametrics`, `mcp-victorialogs`,
 `mcp-victoriatraces`) carry no credential of their own and hold no secret.
-Any authentication happens in vmauth's `/mcp/*` routing in front of them.
+Authentication happens in vmauth, twice: at the `/mcp/*` route in front of
+them, and again on every tool call, because the caller's token is forwarded to
+vmauth's read tier (next section). A request sent straight to the MCP listener
+gets the handshake and tool listing without a token; a tool call needs one.
 
 A non-loopback `mcp.listenAddress` bypasses that routing, so it warns at
 evaluation (`mcp.suppressExposureWarning` silences it, as for the syslog
@@ -48,23 +51,29 @@ Consequences:
   not list the MCP units in its own `after` (that would be an ordering
   cycle). The MCP binaries do not contact the backend at start.
 - Tools whose endpoint is off the read allow-list (`alerts`, `rules`,
-  `prettify_query`, `metric_statistics`, a lifted `flags`, ...) fail with
-  vmauth's `400 missing route`. Accepted: the read tier is the boundary.
+  `prettify_query`, `metric_statistics`, ...) fail with vmauth's
+  `400 missing route`, whether or not they are listed. Accepted: the read tier
+  is the boundary.
 - A request sent straight to the MCP listener without a valid token reaches
   vmauth with no usable credential and fails with its 401 on the tool call.
 
-## Why (the original reasoning for the loopback trust boundary)
+## Why the MCP servers hold no credential
 
-Same reasoning as [0010](./0010-grafana-direct-loopback-own-auth.md): a
+The original reasoning, still standing for the credential question. Same reasoning as [0010](./0010-grafana-direct-loopback-own-auth.md): a
 credential whose only job is letting a process on the same host reach a
 backend on the same host stops nobody -- anyone with same-host code
 execution could read the credential file directly. The MCP servers are
 tightly coupled to one co-located backend by construction (the
 `mcp.enable -> <service>.enable` assertion, [0002](./0002-opt-in-everything.md)),
-so they sit inside the backend's own trust boundary. Anything crossing
-the host boundary (an AI client, a remote caller) is gated by vmauth's
-credential tiers ([0003](./0003-vmauth-two-credential-tiers.md)), exactly
-as for the raw read API.
+so they held no credential of their own. Anything crossing the host
+boundary (an AI client, a remote caller) is gated by vmauth's credential
+tiers ([0003](./0003-vmauth-two-credential-tiers.md)), exactly as for the
+raw read API.
+
+Superseded: the further step that the servers "sit inside the backend's own
+trust boundary" (they called the backend directly, so their tools were not
+limited to the read allow-list) no longer holds, since they now call vmauth's
+read tier with the caller's token.
 
 ## Tools disabled by default
 
@@ -81,12 +90,10 @@ binaries' tools over MCP JSON-RPC):
 | traces | none | every tool calls `/select/*` |
 
 mcp-victoriametrics' own defaults (`export`, `flags`, debug tools,
-`test_rules`) stay off as before. Left on deliberately: `alerts`/`rules`,
-`metric_statistics` and `metrics_metadata` (the first three are off the read
-allow-list and answer with vmauth's 400). A tool outside the read tier's
-allow-list is blocked by vmauth whatever the tool list says; hidden tools stay
-hidden so clients do not see tools that always fail. There is no option to
-un-hide them (`mcp.disabledTools` only adds more).
+`test_rules`) stay off as before. Everything else stays listed, including `alerts`/`rules`
+and `metric_statistics`, although these are off the read allow-list and answer
+with vmauth's 400. There is no option to un-hide the tools in the table
+(`mcp.disabledTools` only adds more).
 
 The logs and traces tools take a `tenant` argument. It selects the
 tenant (`AccountID:ProjectID`) on the same `/select/*` endpoints the read

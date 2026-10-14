@@ -1,5 +1,4 @@
-# Small definitions shared by the collector's option, config and assertion files
-# (each used to compute its own copy).
+# Small definitions shared by the collector's option, config and assertion files.
 { lib }:
 rec {
   needsAlloyOtlp = cfg: cfg.metrics.enable || cfg.traces.enable;

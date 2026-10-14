@@ -32,8 +32,8 @@ let
   };
 in
 # Flatten { groupName = { checkName = drv; ... }; ... } into the flat
-# attrset `checks.<system>` needs, prefixed so e.g. assertions.nginx-x and
-# storage.nginx-x (if that ever collided) can't clash.
+# attrset `checks.<system>` needs, prefixed so e.g. assertions-nginx-x and
+# storage-nginx-x (if that ever collided) can't clash.
 lib.foldl' lib.mergeAttrs { } (
   lib.mapAttrsToList (
     groupName: checksInGroup:

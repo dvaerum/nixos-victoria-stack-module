@@ -632,8 +632,8 @@ in
 
   # --- assertions, collisions, extraFlags ownership, exposure warning ---
 
-  # One row per slot: the tls slot once escaped the guard because it is
-  # listed separately from the plain ones.
+  # One row per slot: the tls slot must not escape the guard just because it
+  # is listed separately from the plain ones.
   slot-requires-logs-enable-fires =
     let
       failedFor =

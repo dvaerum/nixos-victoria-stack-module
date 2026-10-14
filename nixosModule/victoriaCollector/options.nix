@@ -14,7 +14,7 @@ in
 
     # Collector names and the interval are interpolated unescaped into the
     # generated Alloy config (config.alloy.nix), so they are restricted to
-    # a safe charset, same reasoning as hostType (docs/decisions/0020).
+    # a safe charset, same reasoning as hostType.
     metrics.extraCollectors = mkOption {
       type = types.listOf (types.strMatching "[a-z0-9_]+");
       default = [ ];
@@ -139,8 +139,9 @@ in
         Must be an absolute path with no whitespace, `%` or `:`; the build
         fails otherwise.
 
-        The file may appear after boot: Alloy and the log uploader fail their
-        first start without it, and a path unit starts them once it exists.
+        The file may appear after boot: until it exists Alloy's start is skipped
+        and the log uploader's token render fails, and a path unit then starts
+        them.
         Replacing the file restarts them the same way (a unit stopped on purpose
         stays stopped), because each reads a copy taken at its start. Unsent data
         waits in the disk queue meanwhile. No `restartUnits` entry is needed.
@@ -157,7 +158,7 @@ in
       # literal syntax at generation time. A value containing a `"` would
       # otherwise break the generated syntax in a way Nix eval never
       # catches (opaque string), only Alloy's own runtime parse would --
-      # a real, reproduced injection-style bug (docs/decisions/0020).
+      # a real, reproduced injection-style bug.
       #
       # nullOr so a logs-only host can omit it; assertions.nix requires it
       # whenever metrics or traces is enabled.

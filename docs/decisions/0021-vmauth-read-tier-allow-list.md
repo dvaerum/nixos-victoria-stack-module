@@ -7,7 +7,8 @@ tokens and `adminPasswordFile`'s Basic Auth user — docs/decisions/0003
 confirms both are meant to carry identical, read-only access) now enumerates
 a curated allow-list of each backend's real, documented read-only HTTP
 endpoints, instead of a blanket `src_paths = ["/metrics/.*"]`-style
-passthrough to the backend's entire native API.
+passthrough to the backend's entire native API. (The same map also carries
+the `/mcp/*` routes, [0023](./0023-mcp-trust-boundary-extends-grafana.md).)
 
 Per backend:
 

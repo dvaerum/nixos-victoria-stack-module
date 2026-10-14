@@ -15,20 +15,16 @@ buildGoModule (finalAttrs: {
     hash = "sha256-7kN7qwsvTL0scfBxMO/nrvikiysUxPY8nSFkhJsgGDM=";
   };
 
-  # vendor/ is committed in the upstream repo -- confirmed empirically:
-  # buildGoModule's own buildPhase refuses to proceed with a non-null
-  # vendorHash when a vendor/ directory already exists ("vendor folder
-  # exists, please set 'vendorHash = null;'"), so the modules are taken
-  # from the committed vendor tree directly rather than fetched/verified
-  # against go.sum.
+  # vendor/ is committed upstream, and buildGoModule refuses a non-null
+  # vendorHash when a vendor/ directory exists ("vendor folder exists, please
+  # set 'vendorHash = null;'"), so the modules are taken from the committed
+  # vendor tree rather than fetched/verified against go.sum.
   vendorHash = null;
 
   subPackages = [ "cmd/mcp-victoriametrics" ];
 
-  # Go 1.26+ required upstream (confirmed via the project's own README);
-  # pkgs.go already satisfies this on nixpkgs-unstable (confirmed:
-  # pkgs.go.version == "1.26.8" at build time) -- no toolchain override
-  # needed.
+  # Upstream requires Go 1.26+; keep the nixpkgs Go at or above that (no
+  # toolchain override).
 
   meta = {
     description = "Model Context Protocol (MCP) server for VictoriaMetrics";

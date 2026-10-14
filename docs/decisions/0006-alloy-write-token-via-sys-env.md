@@ -32,8 +32,9 @@ which failed alloy's start job as "dependency failed", and nothing retried it.
 
 ## Late and changed files
 
-A credential is a copy taken when the unit starts, so a missing file fails the
-start and a replaced file is not seen by a running unit. Two path units handle
+A credential is a copy taken when the unit starts, so with a missing file
+Alloy's start is skipped (`ConditionPathExists=`) and the uploader's render
+oneshot fails, and a replaced file is not seen by a running unit. Two path units handle
 both without polling (details in the unit definitions):
 
 - `PathExists=` starts the consumers once, through a `RemainAfterExit` helper so

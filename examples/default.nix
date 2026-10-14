@@ -2,9 +2,8 @@
 
 # A complete, realistic single-host configuration -- metrics + logs +
 # traces + vmauth (both credential tiers) + Grafana + nginx + MCP, plus
-# the host collecting its own data (self-monitoring: a single host that runs
-# the stack also runs victoriaCollector against its own vmauth gateway over
-# loopback).
+# the host collecting its own data (a single host that runs the stack also
+# runs victoriaCollector against its own vmauth gateway over loopback).
 #
 # Secret file paths below are placeholders -- replace with wherever your
 # own secrets mechanism (sops-nix, agenix, a manually-placed file, this
@@ -68,9 +67,9 @@
     settings.security.admin_password = "$__file{/run/secrets/victoria/grafana-admin-password}";
   };
 
-  # Self-monitoring: this host collects its own metrics/logs/traces the
-  # same way every other fleet host would, just over loopback to its own
-  # vmauth instead of a remote one.
+  # This host collects its own metrics/logs/traces the same way every other
+  # fleet host would, just over loopback to its own vmauth instead of a remote
+  # one.
   services.victoriaCollector = {
     metrics.enable = true;
     logs.enable = true;

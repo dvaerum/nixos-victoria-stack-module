@@ -4,7 +4,10 @@ Status: the direct-to-backend datasources are superseded by
 [0029](./0029-grafana-datasources-through-vmauth-read-tier.md), which routes
 them through vmauth's read tier (a Grafana Viewer could write and delete through
 the datasource proxy). Grafana's own users, roles and the `root_url` default
-stand.
+stand. 0029 also supersedes `## Why`'s same-host argument and `## Consequence`:
+Grafana's datasources now carry `grafana.readTokenFile` and read through
+vmauth's read tier, so that token's `backends` scoping (ADR 0003) bounds what a
+Grafana login can read.
 
 ## Decision
 
@@ -32,6 +35,6 @@ call (direct loopback, no vmauth hop for Grafana's datasources).
 ## Consequence
 
 Grafana's datasources carry no credential, so anyone who can log in to Grafana
-reads every enabled backend regardless of any vmauth token scoping (ADR 0021).
+reads every enabled backend regardless of any vmauth token scoping (ADR 0003).
 Grafana's own users and roles are the only gate; treat a Grafana login as full
 read access to metrics, logs and traces.

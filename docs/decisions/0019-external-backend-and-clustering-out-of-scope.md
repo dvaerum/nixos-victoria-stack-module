@@ -29,6 +29,12 @@ future `remoteUrl`-style option to a single definition per service,
 rather than requiring changes at three or more call sites across the
 module tree.
 
+Update: only `vmauth.nix` and `storage-common.nix` (which hands it to
+self-monitoring) still read `effectiveUrl`; `grafana.nix` and `mcp.nix` dial
+`vmauth.listenAddress` instead ([0029](./0029-grafana-datasources-through-vmauth-read-tier.md),
+[0023](./0023-mcp-trust-boundary-extends-grafana.md)). The conclusion stands:
+there is still no external-backend support.
+
 ## Why
 
 Neither gap was ever discussed or decided against during this project's
@@ -63,7 +69,6 @@ Found while implementing Phase 26's vmauth option additions
   multi-backend support, which this ADR already puts out of scope. Not
   implemented for the same reason multi-instance clustering isn't.
 
-</content>
 
 ## Update: the metrics database is a cluster
 

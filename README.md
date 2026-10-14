@@ -15,10 +15,10 @@ default network topology (what's reachable from where, out of the box).
 ## Why this exists
 
 nixpkgs' own `services.victoriametrics`/`victorialogs`/`victoriatraces`
-modules hardcode their storage path and `DynamicUser`, which conflicts with a
-pre-mounted dataset (e.g. ZFS) and has no first-class `retentionPeriod` on
-`victorialogs` at all. This module builds each service from scratch instead,
-with `dataDir` and `dynamicUser` as real, independent options — see
+modules always run under `DynamicUser` with storage under `/var/lib/<stateDir>`,
+which conflicts with a pre-mounted dataset (e.g. ZFS), and `victorialogs` has no
+first-class `retentionPeriod` at all. This module builds each service from
+scratch instead, with `dataDir` and `dynamicUser` as real, independent options — see
 `docs/decisions/0001-victoria-stack-built-from-scratch.md`. Switching an
 existing host's `dynamicUser` needs a manual data move:
 [runbook](./docs/runbooks/dynamicuser-migration.md).
@@ -78,8 +78,7 @@ code in the module itself):
 
 `services.victoriaCollector` is the agent side -- it runs on every host that
 ships telemetry to a `victoriaStack` gateway (including, via loopback, the
-gateway host itself -- see `examples/default.nix`'s own self-monitoring
-section):
+gateway host itself -- see the collector section of `examples/default.nix`):
 
 ```nix
 {
@@ -364,7 +363,10 @@ The collector takes over a few things; everything else on those services stays y
 - **systemd-journal-upload** (when `logs` is enabled): sets
   `services.journald.upload.enable` and `settings.Upload.URL` (plus the three TLS keys
   for an `https://` endpoint), so your own `Upload.URL` conflicts with it. The write token reaches the uploader through the drop-in
-  `/run/systemd/journal-upload.conf.d/50-write-token.conf`, rendered at boot.
+  `/run/systemd/journal-upload.conf.d/50-write-token.conf`, which
+  `victoria-collector-journal-upload-token.service` renders before the uploader
+  first starts; a changed token file re-renders it and restarts the uploader
+  ([0006](./docs/decisions/0006-alloy-write-token-via-sys-env.md)).
 
 ## Upgrading / breaking changes
 
@@ -379,7 +381,8 @@ What changed incompatibly, and what to do:
   `extraReadUrlMap` or `openIngestPaths` must point at those paths, and
   `extraFlags` is per process (`insert.extraFlags`, `storage.extraFlags`).
 - **Ports renumbered** ([0017](./docs/decisions/0017-port-renumbering.md)):
-  services now default to `:4201`-`:4207`. Check firewalls and anything that dialled
+  services now default to `:4201`-`:4208` (`:4208` is vmauth's internal
+  listener). Check firewalls and anything that dialled
   `:8428`/`:9428`/`:10428`/`:8880`, or pin the old ports through each `listenAddress`.
 - **Writes no longer go through nginx**
   ([0025](./docs/decisions/0025-vmauth-public-write-doors.md)): point collectors'
@@ -420,12 +423,14 @@ mechanism here would just be a worse version of something you already have:
   `services.grafana.provision.datasources.settings` is a fully generic,
   already-existing NixOS option tree this module's own datasource wiring
   is a plain (non-`mkForce`) definition against. Adding a *new* datasource
-  this way merges cleanly; tweaking one of the *three auto-provisioned*
+  this way merges cleanly; tweaking one of the *auto-provisioned*
   entries (VictoriaMetrics/VictoriaLogs/VictoriaTraces) needs
   `lib.mkForce` on the whole `datasources` list, since list-typed options
-  don't merge per-entry -- reconstruct all three yourself if you go this
-  route. A new datasource must not set `isDefault = true` while the module's
-  VictoriaMetrics one is also default: Grafana refuses two defaults, and
+  don't merge per-entry -- re-declare every enabled backend's entry, and copy
+  the auto entries' vmauth read-tier URL and read-token header
+  ([0029](./docs/decisions/0029-grafana-datasources-through-vmauth-read-tier.md)),
+  or Grafana gets 401. A new datasource must not set `isDefault = true` while
+  the module's VictoriaMetrics one is also default: Grafana refuses two defaults, and
   evaluation warns naming both.
 
 - **nginx TLS/HTTPS** (`services.victoriaStack.nginx.enable = true`):

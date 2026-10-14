@@ -105,8 +105,9 @@ let
     default: the module opens nothing unless asked. The door serves every
     client holding a valid token, so open it only where that is intended, or
     restrict it with your own firewall rules instead. It does not change the
-    address the ${kind} listener binds; the internal listener
-    (`internalListenAddress`) is never opened.
+    address the ${kind} listener binds; the data listener
+    (`listenAddress`) and the pages listener (`internalListenAddress`) are
+    never opened.
   '';
 
   # One syslog listener (docs/decisions/0031). The slots differ only in
@@ -235,7 +236,7 @@ let
       # (confirmed via each binary's own `-help`); an option for a flag
       # the binary rejects would render a crash-looping unit, so it is
       # not declared on metrics.
-      supportsDiskRetention ? false, # victoria-logs / victoria-traces only
+      supportsDiskRetention ? false,
       # -syslog.* exists on victoria-logs only.
       supportsSyslog ? false,
       # Text appended to the descriptions that read differently for the metrics
@@ -341,8 +342,9 @@ let
         type = types.str;
         internal = true;
         description = ''
-          Internal: the base URL consumers (vmauth, Grafana, the MCP servers,
-          the self-monitoring push) actually connect to for this backend.
+          Internal: the base URL consumers (vmauth's routes and the
+          self-monitoring push) actually connect to for this backend; Grafana,
+          the MCP servers and nginx dial `vmauth.listenAddress` instead.
           `http://` plus `listenAddress` today, with a wildcard address
           (`:port`, `0.0.0.0:port`, `[::]:port`) mapped to loopback because it
           is not something to connect to (set via mkDefault in
@@ -408,8 +410,8 @@ let
           for anything not worth promoting to its own typed option.
 
           Flags that change addressing or auth (`-http.pathPrefix*`, `-tls*`,
-          `-httpAuth.*`) are rejected at build time: the module's readiness
-          check and self-push use plain http on the known address and path.
+          `-httpAuth.*`, `-httpListenAddr.*`) are rejected at build time: the module's
+          readiness check and self-push use plain http on the known address and path.
           Put nginx in front of the service instead.
 
           While `snapshots.enable` is true, the flag that makes the snapshot
@@ -613,10 +615,11 @@ let
             requires `vmauth.enable = true`: it reaches its backend only
             through vmauth.
 
-            The MCP server has no authentication of its own, so an address
-            beyond loopback bypasses vmauth's `/mcp/*` token check and warns
-            (silence it with `suppressExposureWarning`). The port must be 1024
-            or above: the unit has no capability to bind a privileged port.
+            The MCP server has no authentication of its own (a session and the
+            tool list are open to anyone who can reach the port; every tool
+            call needs a valid token, see below), so an address beyond
+            loopback warns (silence it with
+            `suppressExposureWarning`). The port must be 1024 or above: the unit has no capability to bind a privileged port.
 
             The MCP servers forward the caller's own
             `Authorization` header to vmauth's read tier, so the caller's
@@ -648,8 +651,8 @@ let
           );
           default = null;
           description = ''
-            `MCP_LOG_LEVEL` -- confirmed identical across all three
-            mcp-victoria* binaries' own READMEs. `null` (the default)
+            `MCP_LOG_LEVEL` -- identical across all three
+            mcp-victoria* binaries. `null` (the default)
             omits the env var entirely, matching each binary's own
             upstream default (`info`).
           '';
@@ -664,8 +667,8 @@ let
           );
           default = null;
           description = ''
-            `MCP_LOG_FORMAT` -- confirmed identical across all three
-            mcp-victoria* binaries' own READMEs. `null` (the default)
+            `MCP_LOG_FORMAT` -- identical across all three
+            mcp-victoria* binaries. `null` (the default)
             omits the env var entirely, matching each binary's own
             upstream default (`text`).
           '';
@@ -676,17 +679,17 @@ let
           default = [ ];
           example = [ "documentation" ];
           description = ''
-            `MCP_DISABLED_TOOLS` -- confirmed identical across all three
-            mcp-victoria* binaries' own READMEs (a comma-separated list
+            `MCP_DISABLED_TOOLS` -- identical across all three
+            mcp-victoria* binaries (a comma-separated list
             on the wire; this option takes a real Nix list and joins it).
             `[ ]` (the default) adds nothing beyond what the binary
             disables on its own and what this module disables by default:
-            tools whose endpoint is off vmauth's read-tier allow-list or
-            that show other users' query text (`flags` for logs;
-            `active_queries`, `top_queries` and `tsdb_status` for metrics;
-            none for traces). Those stay hidden because vmauth would
-            refuse them anyway (docs/decisions/0023); there is no option
-            to un-hide them. Each binary's
+            tools that read `/flags` or `/api/v1/status/tsdb` or show other
+            users' query text (`flags` for logs; `active_queries`,
+            `top_queries` and `tsdb_status` for metrics; none for traces).
+            Other tools outside vmauth's allow-list stay visible and fail
+            with `400 missing route` (docs/decisions/0023); there is no
+            option to un-hide the default set. Each binary's
             own README documents its available tool names -- e.g.
             `documentation` disables an embedded vector-database tool
             that's otherwise the dominant source of that MCP server's
@@ -695,7 +698,7 @@ let
             metrics' own binary (unlike logs/traces) hardcodes 6 tools
             disabled by default when this is left entirely unset --
             including `test_rules`, which WRITES synthetic series into
-            the live instance -- confirmed directly from its source.
+            the live instance.
             Setting this option for metrics is always additive on top
             of that upstream default set (mcp.nix unions the two), never
             a replacement for it -- so the `example` above genuinely
@@ -1439,7 +1442,9 @@ in
         is enabled. Configures services.grafana only for the datasources (and
         the `declarativePlugins` the metrics and logs datasources need) and,
         when `nginx.enable` is on, a default `root_url` for the `/grafana/`
-        sub-path; users and passwords are left to the consumer. The
+        sub-path; users and passwords are left to the consumer. It also gives
+        the grafana unit the read token (`LoadCredential`, `ExecStartPre`) and
+        adds a unit that restarts Grafana when the token file changes. The
         datasources go through vmauth's read tier, never straight to a
         backend, so a Grafana Viewer can read but not write or delete. Needs
         `vmauth.enable` and `readTokenFile` -- see

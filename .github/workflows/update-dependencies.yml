@@ -2,21 +2,16 @@ name: Update dependencies
 
 # Both jobs share one schedule but run strictly in sequence via `needs:`
 # -- a structural guarantee from GitHub Actions itself, not a timing
-# assumption. Previously two separate workflows an hour apart, each
-# pushing directly to master with no rebase: a long `nix flake check -L`
-# run on one could let the other's push land on a stale ref.
-# docs/decisions/0018.
+# assumption: a long `nix flake check -L` in one job can't let another's push
+# land on a stale ref. docs/decisions/0018.
 #
-# `needs:` alone does NOT make update-mcp-packages see update-flake's
-# own push, though -- found by a fresh-agent review, confirmed against
-# actions/checkout's own documented default: with no `ref:` override,
-# checkout resolves to the SHA that triggered the whole workflow run
-# (fixed once, identical across every job in the run), not whatever the
-# branch currently points to. Both jobs' own `git pull --rebase` right
-# before their push (added below) is the actual fix -- robust against
-# ANY other concurrent writer too (this workflow racing itself via
-# workflow_dispatch, update-docs.yml's own auto-commits, a human push),
-# not just the specific update-flake-then-update-mcp-packages ordering.
+# `needs:` alone does NOT make update-mcp-packages see update-flake's own
+# push: with no `ref:` override, actions/checkout resolves to the SHA that
+# triggered the run (identical in every job), not the branch tip.
+# update-mcp-packages therefore sets `ref: ${{ github.ref }}`, and both jobs
+# `git pull --rebase` right before pushing, which also covers any other
+# concurrent writer (this workflow racing itself via workflow_dispatch,
+# update-docs.yml's auto-commits, a human push).
 #
 # `concurrency:` below guards the OTHER overlap this same race shape
 # allows: workflow_dispatch firing while last week's scheduled run (or a

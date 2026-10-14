@@ -10,6 +10,15 @@ a backend is on), so the original form let nginx point at nothing. The
 bullet below keeps its original wording as the record of the first
 version.
 
+Update: `mcp.enable` without `vmauth.enable`, which the Decision calls a
+non-assertion, is an assertion now, and `grafana.enable` joined it.
+`<service>.mcp.enable` and `grafana.enable` (with a backend on)
+require `vmauth.enable`, and `grafana.enable` also requires
+`grafana.readTokenFile` and `vmauth.readTokensFile`: both read through vmauth's
+read tier ([0023](./0023-mcp-trust-boundary-extends-grafana.md),
+[0029](./0029-grafana-datasources-through-vmauth-read-tier.md)). Only
+`vmauth.enable = false` with a backend on stays a legitimate choice.
+
 ## Decision
 
 Every feature layer (`vmauth`, `grafana`, `nginx`, each service's `mcp`) is

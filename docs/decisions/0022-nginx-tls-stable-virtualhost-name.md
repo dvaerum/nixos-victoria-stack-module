@@ -60,7 +60,7 @@ wrappers.
 
 `tests/nginx.nix`'s `virtual-host-name-is-the-stable-victoria-stack-key`
 pins the literal attribute name via eval, so a future accidental rename
-is caught immediately. `nginx-http-and-https-coexist-on-the-stable-name`
+is caught immediately. `http-and-https-coexist-on-the-stable-name`
 is a real container-boot test: a throwaway self-signed certificate
 (`selfSignedCert` in `tests/nginx.nix`) layered onto `virtualHosts."victoria-stack"` via `addSSL`,
 operator-style, exactly as the snippet above shows -- both

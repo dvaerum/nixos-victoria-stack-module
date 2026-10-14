@@ -196,9 +196,9 @@ in
           throw "vmauth wildcard readiness substitution broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # The readiness probe (90s deadline) used to wait exactly as long as systemd's
-  # default start timeout, so the two expired together; TimeoutStartSec sits a
-  # minute above it, as for the storage services.
+  # The readiness probe (90s deadline) must not expire together with systemd's
+  # default start timeout; TimeoutStartSec sits a minute above it, as for the
+  # storage services.
   vmauth-start-timeout-leaves-a-minute-above-the-readiness-probe =
     pkgs.runCommand "vmauth-start-timeout-margin" { }
       (
@@ -226,10 +226,9 @@ in
           evaluated = evalWith {
             services.victoriaStack = {
               metrics.enable = true;
-              # The one guard with no prior test coverage (docs/decisions/0013
-              # review, finding #4): overriding this to [] must NOT also starve
-              # authenticated write-tier tokens -- it only ever sizes the
-              # unauthenticated/open door. See docs/decisions/0014.
+              # Overriding this to [] must NOT also starve authenticated
+              # write-tier tokens -- it only ever sizes the unauthenticated/open
+              # door. See docs/decisions/0014.
               vmauth.openIngestPaths = [ ];
               vmauth.writeTokensFile = "${writeTokensFixture}";
             };
@@ -288,9 +287,9 @@ in
       );
 
   # idleConnTimeout always renders (it has a non-null default, unlike the
-  # inert-unless-configured options above) -- the gap was never testing
-  # that an override actually reaches ExecStart, only that the default
-  # propagates to nginx (tests/nginx.nix).
+  # inert-unless-configured options above) -- an override
+  # must reach ExecStart; the default's propagation to nginx is tested in
+  # tests/nginx.nix.
   idle-conn-timeout-override-reaches-execstart =
     pkgs.runCommand "vmauth-idle-conn-timeout-override-reaches-execstart" { }
       (
@@ -323,8 +322,8 @@ in
                 # absolute path outside it (e.g. the real
                 # /etc/ssl/certs/ca-certificates.crt) hits flakes' own
                 # pure-eval "path outside the flake" restriction when
-                # assigned to a types.path option (confirmed directly, same
-                # class of restriction as the secret-type tests above).
+                # assigned to a types.path option (same class of
+                # restriction as the secret-type tests above).
                 # Content is irrelevant here, only that it's a real,
                 # evaluable path.
                 caFile = ./lib.nix;
@@ -382,8 +381,8 @@ in
           unsetMap = envVar unset;
           setMap = envVar set;
           # Every url_map file the module builds must carry the headers --
-          # including a user-overridden openIngestPaths, which used to
-          # bypass withExtraHeaders (it was only applied to the default).
+          # including a user-overridden openIngestPaths, which must
+          # not bypass withExtraHeaders (it is not applied only to the default).
           fileVar =
             prefix: evaluated:
             let
@@ -446,13 +445,10 @@ in
           throw "extraRequestHeaders/extraResponseHeaders broken: ${builtins.toJSON (builtins.attrNames failed)}"
       );
 
-  # extraReadUrlMap (the escape hatch for arbitrary extra read routes)
-  # had zero test coverage at all -- confirmed via grep before writing
-  # this. Covers both: the route itself reaches READ_URL_MAP_FILE, and
-  # (the actual regression this fixes) a route-specific `headers` entry
-  # survives combination with a module-wide extraRequestHeaders default
-  # instead of being silently overwritten by `//` (an earlier version of
-  # withExtraHeaders did exactly that).
+  # extraReadUrlMap (the escape hatch for arbitrary extra read routes).
+  # Covers both: the route itself reaches READ_URL_MAP_FILE, and
+  # a route-specific `headers` entry survives combination with a module-wide
+  # extraRequestHeaders default instead of being silently overwritten by `//`.
   extra-read-url-map-entry-headers-combine-with-module-default =
     pkgs.runCommand "vmauth-extra-read-url-map-headers-combine" { }
       (
@@ -515,8 +511,8 @@ in
         let
           evaluated = evalWith { };
           # types.path's own check/merge functions coerce via toString at
-          # option-definition time (not lazily deferred to actual use) --
-          # confirmed directly: builtins.tryEval cannot catch the crash this
+          # option-definition time (not lazily deferred to actual use), so
+          # builtins.tryEval cannot catch the crash this
           # produces for a nonexistent path, because interpolating a real
           # Nix `path` value through a flake's filtered source tree is a
           # restricted-eval abort, not an ordinary catchable exception.
@@ -552,10 +548,10 @@ in
     module = {
       services.victoriaStack.metrics.enable = true;
       # vmauth.enable deliberately left unset -- must auto-default to true
-      # via mkDefault (docs/decisions/0002), confirmed by combining this
-      # with nginx (which asserts vmauth.enable) in valid-configuration-no-assertions
-      # already (tests/assertions.nix), so this check instead confirms the
-      # auto-enabled value directly.
+      # via mkDefault (docs/decisions/0002); the
+      # combination with nginx (which asserts vmauth.enable) is covered by
+      # valid-configuration-no-assertions (tests/assertions.nix), so this check
+      # confirms the auto-enabled value directly.
     };
   };
 
@@ -664,9 +660,8 @@ in
       # requireAuthForWrites = false genuinely leaves it unauthenticated.
       # Real OTLP protobuf, not plaintext: VictoriaMetrics' actual
       # /opentelemetry/v1/metrics handler rejects both a bare
-      # "/opentelemetry" path and non-protobuf bodies (confirmed directly
-      # against a real instance -- see otlpMetricGenerator's own comment
-      # in tests/lib.nix). wait_until_succeeds, not succeed: VictoriaMetrics'
+      # "/opentelemetry" path and non-protobuf bodies (see
+      # otlpMetricGenerator's own comment in tests/lib.nix). wait_until_succeeds, not succeed: VictoriaMetrics'
       # own -search.latencyOffset keeps freshly-ingested data invisible to
       # "now"-relative instant queries for ~30s by default.
       machine.succeed(
@@ -704,7 +699,7 @@ in
         # Overriding the auto-derived default to [] must close every
         # write path entirely, even with requireAuthForWrites = false --
         # this is the one guard (vmauth.nix's "($openmap[0] | length) > 0"
-        # check) with no prior test coverage.
+        # check).
         vmauth.openIngestPaths = [ ];
       };
     };
@@ -851,11 +846,6 @@ in
     '';
   };
 
-  # Credentials are staged copies and config.json is rendered once at start, so
-  # without help a replaced token file changes nothing until vmauth restarts
-  # (verified: old token kept working after an in-place write and after a rename).
-  # The module therefore watches each secret file and restarts vmauth. Covers an
-  # in-place write and the write-new-then-rename that sops-nix does.
   # A secret replaced while the restart helper is still running must not be
   # lost: the path unit only re-arms once the helper it triggered has finished, so
   # a helper that waits for vmauth to come back leaves a window in which a second
@@ -917,6 +907,11 @@ in
     '';
   };
 
+  # Credentials are staged copies and config.json is rendered once at start, so
+  # without help a replaced token file changes nothing until vmauth restarts
+  # (verified: old token kept working after an in-place write and after a rename).
+  # The module therefore watches each secret file and restarts vmauth. Covers an
+  # in-place write and the write-new-then-rename that sops-nix does.
   token-file-replacement-restarts-vmauth = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-token-rotation-restarts";
 
@@ -1129,8 +1124,7 @@ in
   # equivalent of both -- renderConfig only ever gives the admin user
   # READ_URL_MAP_FILE (nixosModule/victoriaStack/vmauth.nix), so neither
   # a read-tier token nor the admin Basic Auth credential should be able
-  # to reach a write path. Previously only the write->read direction was
-  # tested, not read->write or admin->write.
+  # to reach a write path.
   read-token-and-admin-password-cannot-write = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-read-and-admin-cannot-write";
 
@@ -1182,7 +1176,7 @@ in
   # All 3 credential tiers configured simultaneously -- each individual
   # tier is tested in isolation elsewhere, but never together in one
   # config, which is the realistic production shape (docs/decisions/0003
-  # describes exactly this 3-tier setup).
+  # covers the write/read split; the admin password is the third tier).
   all-three-credential-tiers-coexist = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-all-three-tiers-coexist";
 
@@ -1363,11 +1357,11 @@ in
       # extraRequestHeaders reaching the real outbound backend request
       # (not just the generated config) isn't independently observable
       # here -- VictoriaMetrics' own log doesn't surface custom request
-      # headers (confirmed empirically, not assumed). That it genuinely
+      # headers. That it genuinely
       # merges into the config is already covered by this file's
       # extra-headers-are-inert-unless-configured eval-only check; this
       # test's job is confirming the setting doesn't break anything when
-      # combined with everything else above, which it hasn't.
+      # combined with everything else above.
     '';
   };
 
@@ -1379,9 +1373,10 @@ in
   # state (never silently falls back to open) -- the counterpart to
   # write-paths-require-write-token-by-default above, which always
   # configured a writeTokensFile; this is the "never configured one"
-  # case, deliberately left unwarned (docs/decisions/0020 -- too many
+  # case, deliberately left unwarned (too many
   # legitimate setups write directly to the backend, bypassing vmauth
-  # entirely, for this to be a safe-to-assume mistake).
+  # entirely, for this to be a safe-to-assume mistake; see the `warnings`
+  # comment in nixosModule/victoriaStack/vmauth.nix).
   write-paths-reject-everything-when-no-write-tokens-file-configured = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-no-write-tokens-file-rejects-all-writes";
 
@@ -1422,10 +1417,8 @@ in
   # test in this file -- and the only real HTTP assertions in
   # tests/full.nix -- exclusively exercise the metrics route. A regex
   # typo or wrong drop_src_path_prefix_parts specific to logs or traces
-  # routing would pass every existing test while being completely broken
-  # for 2 of the 3 signal types in production. This test genuinely
-  # exercises all 3 through vmauth's actual routing+auth, not just
-  # metrics.
+  # would pass every other test. This test exercises all 3 through
+  # vmauth's actual routing+auth.
   all-three-signal-types-reachable-end-to-end-through-vmauth = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-all-signal-types-end-to-end";
 
@@ -1478,8 +1471,8 @@ in
       # the dedicated collector cross-container tests elsewhere); the
       # read tier's own url_map is a closed allow-list under /select/*
       # only (docs/decisions/0021) and genuinely cannot reach
-      # /insert/jsonline -- confirmed by
-      # read-tier-is-genuinely-read-only above. This test's own goal is
+      # /insert/jsonline -- see
+      # read-tier-is-genuinely-read-only below. This test's own goal is
       # proving vmauth's READ routing works for all 3 signals, not
       # re-proving every possible write path.
       machine.succeed(
@@ -1540,16 +1533,14 @@ in
     '';
   };
 
-  # vmauth.package is the only one of the 4 independent .package options
-  # (metrics/logs/traces/vmauth, ADR 0007) that had never been confirmed
-  # to actually reach ExecStart, nor had its nontrivial conditional
-  # default (mkDefault, tracking metrics' own package when metrics is
-  # enabled, falling back to pkgs.victoriametrics otherwise) been tested
-  # in either branch.
+  # vmauth.package (ADR 0007) has a nontrivial conditional default (mkDefault,
+  # tracking metrics' own package when metrics is enabled, falling back to
+  # pkgs.victoriametrics otherwise); this checks that it reaches ExecStart
+  # and that both branches resolve.
   #
   # lib.hasPrefix, not lib.hasInfix: a regex needle carrying store-path
   # context makes builtins.match refuse to compile ("is not allowed to
-  # refer to a store path") -- confirmed by hitting it directly. ExecStart
+  # refer to a store path"). ExecStart
   # always starts with "${package}/bin/vmauth ...", so a prefix check
   # (plain string-length comparison, no regex) is both sufficient and safe.
   package-override-takes-effect = pkgs.runCommand "vmauth-package-override-takes-effect" { } (
@@ -1575,8 +1566,7 @@ in
         let
           # metrics disabled, logs enabled instead -- exercises the
           # "else pkgs.victoriametrics" branch of vmauth's own package
-          # default, never exercised by any other test (every other test
-          # enables metrics, which always takes the "if" branch).
+          # default.
           evaluated = evalWith { services.victoriaStack.logs.enable = true; };
           execStart = evaluated.config.systemd.services.vmauth.serviceConfig.ExecStart;
         in
@@ -1587,11 +1577,10 @@ in
       );
 
   # docs/decisions/0021 -- the read tier (readTokensFile/adminPasswordFile)
-  # was a blanket passthrough to each backend's ENTIRE native HTTP API, not
-  # a read-only route set. Verified live before this fix: a read-token
-  # could POST to /api/v1/import (write arbitrary data) and
-  # /api/v1/admin/tsdb/delete_series (permanently delete data) through
-  # vmauth's own "read" credential. This is the regression guard: confirms
+  # must not be a blanket passthrough to each backend's ENTIRE native HTTP API:
+  # a read-token must not be able to POST to /api/v1/import (write arbitrary
+  # data) or /api/v1/admin/tsdb/delete_series (permanently delete data).
+  # This is the regression guard: confirms
   # the read tier can reach real read endpoints but NOT real write/
   # destructive ones, for all 3 backends, with both credential types
   # (admin password and read token) that share the exact same url_map.
@@ -1610,7 +1599,7 @@ in
         vmauth = {
           adminPasswordFile = "${adminPasswordFixture}";
           readTokensFile = "${readTokensFixture}";
-          requireAuthForWrites = false; # only to seed real data directly against each backend below, not exercised through the read tier itself
+          requireAuthForWrites = false;
         };
       };
     };
@@ -1797,9 +1786,8 @@ in
   # yq parses a `tokens:` key that's absent or not a list without ever
   # failing (exit 0, JSON `null` or a bare string) -- jq's own downstream
   # failure on that shape ("Cannot iterate over null (null)") names
-  # neither the file nor the expected shape. Confirmed this crashes
-  # illegibly before vmauth-render-config's validate_tokens_shape guard
-  # was added; this test pins the NEW, legible failure mode.
+  # neither the file nor the expected shape. This test pins the legible
+  # failure mode of vmauth-render-config's validate_tokens_shape guard.
   malformed-read-tokens-file-fails-with-a-legible-error = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-malformed-read-tokens-legible-error";
 
@@ -2023,11 +2011,8 @@ in
           throw "vmauth.extraFlags broken: ${builtins.toJSON (builtins.attrNames failed)}\n${set}"
       );
 
-  # extraFlags used for something real: the running vmauth accepts the flag
-  # and reports it on its own /flags page. (TLS, listeners and auth flags are
-  # rejected at build time instead: the https door is the supported route.)
   # A vmauth that dies at start (here: a flag it does not know) must fail the
-  # start at once. Its TCP probe used to keep dialling a port nobody listens on
+  # start at once, not leave the TCP probe dialling a port nobody listens on
   # for its whole 90s.
   broken-vmauth-fails-when-its-main-process-dies-not-at-the-deadline = pkgs.testers.nixosTest {
     name = "victoria-stack-broken-vmauth";
@@ -2054,6 +2039,9 @@ in
     '';
   };
 
+  # extraFlags used for something real: the running vmauth accepts the flag
+  # and reports it on its own /flags page. (TLS, listeners and auth flags are
+  # rejected at build time instead: the https door is the supported route.)
   vmauth-extra-flag-reaches-the-running-process = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-extra-flag-live";
 
@@ -2189,7 +2177,7 @@ in
 
   # A real InfluxDB-line-protocol write through the escape hatch lands, and
   # the read tier cannot reach the same path (the property ADR 0021 exists
-  # to guarantee, re-confirmed for the new escape hatch).
+  # to guarantee).
   extra-write-url-map-lands-data-and-stays-closed-to-the-read-tier = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-extra-write-url-map";
 
@@ -3368,7 +3356,7 @@ in
   # The anonymous write door must stay closed whenever requireAuthForWrites is
   # true (the default), on the internal listener AND the public http door. A
   # mutation that always rendered the unauthenticated user survived every other
-  # test, because the old controls posted junk the backend rejected anyway.
+  # test, because a junk body is rejected by the backend anyway.
   anonymous-write-door-stays-closed-when-auth-is-required = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-anonymous-write-door-closed";
 
@@ -3668,7 +3656,7 @@ in
       throw "acmeCertName wiring broken: ${builtins.toJSON (builtins.attrNames failed)}"
   );
 
-  # http.port customisation and its collision with the internal listener.
+  # http.port customisation.
   http-door-port-customisation-reaches-the-unit = pkgs.runCommand "vmauth-http-door-port" { } (
     let
       e = evalWith {
@@ -3799,9 +3787,9 @@ in
     };
 
   # vmauth's own diagnostic pages (/health, /metrics, /flags, /debug/pprof,
-  # /-/reload) used to be served on every listener, so the public write doors
-  # exposed them to anyone. They now live on one loopback-only internal
-  # listener (-httpInternalListenAddr) and no data listener serves them.
+  # /-/reload) must not be served on the public write doors, which would
+  # expose them to anyone. They live on one loopback-only internal listener
+  # (-httpInternalListenAddr) and no data listener serves them.
   builtin-pages-live-only-on-the-internal-listener = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-builtin-pages-internal-only";
 
@@ -3966,7 +3954,7 @@ in
   unknown-key-in-a-token-entry-is-a-legible-error = mkBadTokensFileTest {
     name = "unknown-token-key";
     tier = "read";
-    # `backend` (singular) used to render as a fully UNSCOPED token.
+    # `backend` (singular) must be rejected, not rendered as a fully UNSCOPED token.
     yaml = ''
       tokens:
         - token: some-token-value
@@ -3987,9 +3975,9 @@ in
       ];
       services.victoriaStack = {
         metrics.enable = true;
-        # An empty file used to render an admin user with an EMPTY password
-        # (`curl -u admin:` was accepted). It now warns and renders no admin;
-        # the token still works, so vmauth demonstrably kept running.
+        # An empty file must not render an admin user with an EMPTY password
+        # (`curl -u admin:` must be refused): it warns and renders no admin;
+        # the token still works, so vmauth demonstrably keeps running.
         vmauth = {
           adminPasswordFile = "${pkgs.writeText "empty-admin-password" ""}";
           readTokensFile = "${readTokensFixture}";
@@ -4033,10 +4021,11 @@ in
       echo OK > $out
     '';
 
-  # Scoping used to keep a WHOLE extra url_map entry if ANY of its paths matched
-  # the token's prefix (so a metrics-scoped token got the logs and traces paths
-  # of a multi-path entry), matched with a plain startswith (so /metricsX looked
-  # like /metrics), and aborted the render on an entry with no src_paths.
+  # Scoping must not keep a WHOLE extra url_map entry because ANY of its paths
+  # matched the token's prefix (a metrics-scoped token would get the logs and
+  # traces paths of a multi-path entry), must not use a plain startswith (so
+  # /metricsX is not /metrics), and must not abort the render on an entry with
+  # no src_paths.
   scoped-token-filters-extra-url-map-paths-individually = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-scoped-extra-url-map";
 
@@ -4154,7 +4143,7 @@ in
 
   # An extra entry with no src_paths is rejected by vmauth itself for any user
   # that receives it, but a scoped token has nothing to match it against and
-  # must simply not get it (it used to abort the whole render with a jq error).
+  # must simply not get it.
   scoped-token-ignores-extra-entries-without-src-paths = pkgs.testers.nixosTest {
     name = "victoria-stack-vmauth-scoped-no-src-paths";
 
@@ -4194,6 +4183,8 @@ in
   # sit on loopback and ignore it, but an extra route to another host would receive
   # every token and admin password that passes through it.
 
+  # Stripped on every module-built route except the three /mcp/* routes, which
+  # deliberately keep the Authorization header (see forwardsToken below).
   authorization-is-stripped-on-every-module-built-route =
     pkgs.runCommand "vmauth-authorization-stripped" { }
       (
@@ -4390,8 +4381,8 @@ in
       );
 
   # vmauth.extraFlags is escaped like the storage services' extraFlags: one list
-  # element is exactly one argument (it used to be a plain space-join, so
-  # "-x=a b" became two arguments).
+  # element is exactly one argument (a plain space-join would turn "-x=a b"
+  # into two arguments).
   vmauth-extra-flags-stay-one-argument-each = pkgs.runCommand "vmauth-extra-flags-escaping" { } (
     let
       execStart =
@@ -4449,7 +4440,7 @@ in
   # systemd expands specifiers and ${VAR} even inside quotes: user-supplied
   # text must reach ExecStart escaped, while the module's own %d
   # credential-directory flags must stay raw (escaping them would break
-  # every TLS credential). Boot proof: storage.execstart-specifiers-reach-process-literally.
+  # every TLS credential). Boot proof: storage-execstart-specifiers-reach-process-literally.
   vmauth-execstart-escapes-user-text-but-not-own-specifiers =
     pkgs.runCommand "vmauth-execstart-escapes-user-text" { }
       (
@@ -4478,7 +4469,7 @@ in
           throw "vmauth ExecStart escaping wrong: ${builtins.toJSON (builtins.attrNames failed)}\n${execStart}"
       );
 
-  # `types.int` let a negative limit through (-maxConcurrentRequests=-5), and
+  # A plain `types.int` would let a negative limit through (-maxConcurrentRequests=-5), and
   # `types.port` accepts 0 (the kernel picks a random port, which no client
   # can be told about).
   vmauth-limit-and-port-option-types =

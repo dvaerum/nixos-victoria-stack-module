@@ -21,8 +21,9 @@ Enabling any of them requires `metrics.enable` (an assertion says so).
   not, and a flag a binary rejects would crash-loop the unit. All four share
   the `-pushmetrics.*` family, so one option works the same everywhere.
 - It is the binaries' own mechanism: no extra unit, timer or collector is
-  involved, and it needs no credential (loopback to the metrics instance,
-  the same trust boundary as the other internal calls, ADR 0010).
+  involved, and it needs no credential (the push goes to the local metrics
+  instance's `listenAddress`, loopback by default, not through vmauth: the same
+  trust boundary as the other internal calls, ADR 0010).
 - The `job` label keeps the four services apart; their Go-runtime series
   would otherwise collide.
 

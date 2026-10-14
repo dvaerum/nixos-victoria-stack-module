@@ -2,16 +2,16 @@
 
 ## Decision
 
-`services.victoriaStack.vmauth.writeTokensFile` (ingest-only, consumed by
-every `victoriaCollector` host across a fleet) and `.readTokensFile`
+`services.victoriaStack.vmauth.writeTokensFile` (the gateway's list of the
+ingest-only tokens handed to `victoriaCollector` hosts) and `.readTokensFile`
 (read + MCP, consumed by humans/AI callers) are two independent sops-nix
 secrets, even though they could technically share one file.
 
 ## Why
 
-The two lists have different blast radii. `writeTokensFile` lives on every
-fleet host (the much bigger attack surface); `readTokensFile` lives nowhere
-except the one gateway host. A leaked collector config handing over
+The two lists have different blast radii. A fleet host holds
+only its own write token (`victoriaCollector.writeTokenFile`; the much bigger
+attack surface); `readTokensFile` lives nowhere except the one gateway host. A leaked collector config handing over
 write-only access is a bounded problem ("it can write bogus data"); the same
 leak handing over read access to the entire observability stack is not.
 Keeping them as two files means a future change to who/what can read the
@@ -29,7 +29,7 @@ backends' routes (Phase 52; an entry without it is unscoped, the full
 tier; `backends: []` grants no access -- entries that grant no access warn and are
 left out, see [0030](0030-vmauth-token-entries-warn-dont-break.md)). Originally each entry was a bare string -- that format is rejected
 with a migration message, not auto-migrated (Nix can't rewrite a
-runtime-supplied file). Parsed with `yq-go` (comments stripped natively by any real YAML
-parser) rather than `jq -R -s -c 'split("\n")...'` (the earlier mechanism, since replaced by `yq -o=json '.tokens'`; it
-treats the file as raw lines and has no comment concept at all). Self
+runtime-supplied file). Parsed with `yq-go` (`yq -o=json '.tokens'`), which strips comments natively,
+instead of the earlier `jq -R -s -c 'split("\n")...'`, which treated the file
+as raw lines with no comment concept. Self
 documenting without needing a side channel to remember which token is whose.

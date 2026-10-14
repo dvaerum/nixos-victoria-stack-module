@@ -94,9 +94,7 @@ let
   inherit (import ./exec-escape.nix { inherit lib; }) escape escapeEnvironment;
 in
 {
-  # Renamed from extraOptions to match vmauth.extraFlags and the
-  # collector's alloy.extraFlags (docs/decisions/0024) -- the first
-  # real use of lib.mkRenamedOptionModule in this project.
+  # Renamed from extraOptions (docs/decisions/0024).
   imports = [
     (lib.mkRenamedOptionModule
       [ "services" "victoriaStack" name "extraOptions" ]
@@ -200,7 +198,6 @@ in
                     inherit (cfg) extraFlags;
                   }
                   ++ lib.optionals (cfg.retentionPeriod != null) [ "-retentionPeriod=${cfg.retentionPeriod}" ]
-                  # Exist only on logs/traces (options.nix), hence `or null`.
                   ++ selfMonitoring.mkFlags {
                     selfMonitoring = cfg.selfMonitoring;
                     metricsEnabled = topCfg.metrics.enable;

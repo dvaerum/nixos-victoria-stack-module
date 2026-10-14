@@ -89,9 +89,8 @@ in
       # query back through vmauth with the read-tier token. Real OTLP
       # protobuf, not plaintext -- VictoriaMetrics' actual
       # /opentelemetry/v1/metrics handler rejects both a bare
-      # "/opentelemetry" path and non-protobuf bodies (confirmed
-      # directly against a real instance -- see otlpMetricGenerator's
-      # own comment in tests/lib.nix).
+      # "/opentelemetry" path and non-protobuf bodies (see
+      # otlpMetricGenerator's comment in tests/lib.nix).
       machine.succeed(
           "${otlpMetric} victoria_stack_full_test_metric 1 > /tmp/otlp.bin"
       )
@@ -153,7 +152,7 @@ in
       )
 
       # At least one real MCP tool call, not just the initialize
-      # handshake -- confirmed live (mcp-victoriametrics is a stateful,
+      # handshake (mcp-victoriametrics is a stateful,
       # session-based MCP server): initialize first to obtain a session
       # ID, then tools/call against the real "query" tool, retrieving
       # the exact metric this test itself wrote above through the
@@ -229,8 +228,7 @@ in
 
       # Grafana reachable through nginx, datasources provisioned.
       # wait_until_succeeds, not succeed: Grafana's HTTP port opens
-      # before its own startup migrations finish (confirmed directly --
-      # this raced and failed with a one-shot curl).  # gitleaks:allow
+      # before its own startup migrations finish (a one-shot curl races).  # gitleaks:allow
       machine.wait_until_succeeds("curl -sf 'http://127.0.0.1:80/grafana/login' | grep -qi grafana")
       datasources = machine.succeed(
           "curl -sf -u admin:full-test-grafana-admin-password 'http://127.0.0.1:3000/api/datasources'"

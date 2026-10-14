@@ -19,6 +19,9 @@ ports this project invented ad hoc:
 All seven remain fully overridable via their existing `listenAddress`
 options — only the shipped defaults changed.
 
+Update: `4208` was later taken for vmauth's internal listener
+([0027](./0027-vmauth-builtin-pages-internal-listener.md)).
+
 `nginx` is explicitly **excluded** from this renumbering (kept at its own
 existing default) — an operator decision based on prior experience of
 collisions with other services when nginx was moved off its standard
@@ -52,4 +55,3 @@ API stays `metrics.listenAddress` (`:4201`, vmselect). The two internal ports
 between the processes, `127.0.0.1:4211` (vminsert to vmstorage) and
 `127.0.0.1:4212` (vmselect to vmstorage), are fixed, not options. All five are
 checked against every other listener at build time.
-</content>
