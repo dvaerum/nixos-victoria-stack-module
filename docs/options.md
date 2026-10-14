@@ -1194,51 +1194,6 @@ true
 
 
 
-## services\.victoriaStack\.logs\.mcp\.enabledTools
-
-
-
-Tools to switch back on that this module disables by default\.
-The metrics and logs MCP servers go through vmauth’s read tier,
-so a lifted tool whose endpoint is off its allow-list
-(docs/decisions/0021) only answers with vmauth’s 400\. The
-traces server calls its backend directly\. The module
-disables the tools whose
-endpoint is off that list or that show other users’ query
-text: ` flags ` for logs; ` active_queries `, ` top_queries ` and
-` tsdb_status ` for metrics; none for traces\. Naming one here
-re-enables it, e\.g\. ` [ "flags" ] ` for logs\. Only these
-module defaults can be lifted; the binary’s own defaults
-(see ` disabledTools `) stay off\.
-
-
-
-*Type:*
-list of string
-
-
-
-*Default:*
-
-```nix
-[ ]
-```
-
-
-
-*Example:*
-
-```nix
-[
-  "tsdb_status"
-]
-```
-
-*Declared by:*
- - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
-
-
-
 ## services\.victoriaStack\.logs\.mcp\.package
 
 
@@ -1263,8 +1218,13 @@ package
 mcp-victoria\* binaries’ own READMEs (a comma-separated list
 on the wire; this option takes a real Nix list and joins it)\.
 ` [ ] ` (the default) adds nothing beyond what the binary
-disables on its own and what this module disables by default
-(see ` enabledTools `)\. Each binary’s
+disables on its own and what this module disables by default:
+tools whose endpoint is off vmauth’s read-tier allow-list or
+that show other users’ query text (` flags ` for logs;
+` active_queries `, ` top_queries ` and ` tsdb_status ` for metrics;
+none for traces)\. Those stay hidden because vmauth would
+refuse them anyway (docs/decisions/0023); there is no option
+to un-hide them\. Each binary’s
 own README documents its available tool names – e\.g\.
 ` documentation ` disables an embedded vector-database tool
 that’s otherwise the dominant source of that MCP server’s
@@ -1336,8 +1296,8 @@ backend endpoint is outside that list (` alerts `, ` rules `,
 example one sent straight to this listener) is answered with
 vmauth’s 401 by the tool call\. The traces MCP server still
 calls its backend directly on loopback, outside the allow-list;
-tools that would reach beyond it are off by default (see
-` enabledTools `)\.
+tools that would reach beyond it are disabled by default (see
+` disabledTools `)\.
 
 When reached through vmauth (e\.g\. ` /mcp/metrics `,
 ` /mcp/logs `, ` /mcp/traces `): request it with NO trailing
@@ -2722,51 +2682,6 @@ true
 
 
 
-## services\.victoriaStack\.metrics\.mcp\.enabledTools
-
-
-
-Tools to switch back on that this module disables by default\.
-The metrics and logs MCP servers go through vmauth’s read tier,
-so a lifted tool whose endpoint is off its allow-list
-(docs/decisions/0021) only answers with vmauth’s 400\. The
-traces server calls its backend directly\. The module
-disables the tools whose
-endpoint is off that list or that show other users’ query
-text: ` flags ` for logs; ` active_queries `, ` top_queries ` and
-` tsdb_status ` for metrics; none for traces\. Naming one here
-re-enables it, e\.g\. ` [ "flags" ] ` for logs\. Only these
-module defaults can be lifted; the binary’s own defaults
-(see ` disabledTools `) stay off\.
-
-
-
-*Type:*
-list of string
-
-
-
-*Default:*
-
-```nix
-[ ]
-```
-
-
-
-*Example:*
-
-```nix
-[
-  "tsdb_status"
-]
-```
-
-*Declared by:*
- - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
-
-
-
 ## services\.victoriaStack\.metrics\.mcp\.package
 
 
@@ -2791,8 +2706,13 @@ package
 mcp-victoria\* binaries’ own READMEs (a comma-separated list
 on the wire; this option takes a real Nix list and joins it)\.
 ` [ ] ` (the default) adds nothing beyond what the binary
-disables on its own and what this module disables by default
-(see ` enabledTools `)\. Each binary’s
+disables on its own and what this module disables by default:
+tools whose endpoint is off vmauth’s read-tier allow-list or
+that show other users’ query text (` flags ` for logs;
+` active_queries `, ` top_queries ` and ` tsdb_status ` for metrics;
+none for traces)\. Those stay hidden because vmauth would
+refuse them anyway (docs/decisions/0023); there is no option
+to un-hide them\. Each binary’s
 own README documents its available tool names – e\.g\.
 ` documentation ` disables an embedded vector-database tool
 that’s otherwise the dominant source of that MCP server’s
@@ -2864,8 +2784,8 @@ backend endpoint is outside that list (` alerts `, ` rules `,
 example one sent straight to this listener) is answered with
 vmauth’s 401 by the tool call\. The traces MCP server still
 calls its backend directly on loopback, outside the allow-list;
-tools that would reach beyond it are off by default (see
-` enabledTools `)\.
+tools that would reach beyond it are disabled by default (see
+` disabledTools `)\.
 
 When reached through vmauth (e\.g\. ` /mcp/metrics `,
 ` /mcp/logs `, ` /mcp/traces `): request it with NO trailing
@@ -3487,6 +3407,8 @@ absolute path
 
 ## services\.victoriaStack\.traces\.dynamicUser
 
+
+
 Whether to run victoria-traces under a systemd ` DynamicUser `
 (nixpkgs’ own default behavior for these binaries) or a static,
 stable system user\. ` DynamicUser `’s ` StateDirectory ` handling
@@ -3523,8 +3445,6 @@ true
 
 
 ## services\.victoriaStack\.traces\.extraFlags
-
-
 
 Extra command-line flags passed straight through to victoria-traces,
 for anything not worth promoting to its own typed option\.
@@ -3664,51 +3584,6 @@ true
 
 
 
-## services\.victoriaStack\.traces\.mcp\.enabledTools
-
-
-
-Tools to switch back on that this module disables by default\.
-The metrics and logs MCP servers go through vmauth’s read tier,
-so a lifted tool whose endpoint is off its allow-list
-(docs/decisions/0021) only answers with vmauth’s 400\. The
-traces server calls its backend directly\. The module
-disables the tools whose
-endpoint is off that list or that show other users’ query
-text: ` flags ` for logs; ` active_queries `, ` top_queries ` and
-` tsdb_status ` for metrics; none for traces\. Naming one here
-re-enables it, e\.g\. ` [ "flags" ] ` for logs\. Only these
-module defaults can be lifted; the binary’s own defaults
-(see ` disabledTools `) stay off\.
-
-
-
-*Type:*
-list of string
-
-
-
-*Default:*
-
-```nix
-[ ]
-```
-
-
-
-*Example:*
-
-```nix
-[
-  "tsdb_status"
-]
-```
-
-*Declared by:*
- - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
-
-
-
 ## services\.victoriaStack\.traces\.mcp\.package
 
 
@@ -3733,8 +3608,13 @@ package
 mcp-victoria\* binaries’ own READMEs (a comma-separated list
 on the wire; this option takes a real Nix list and joins it)\.
 ` [ ] ` (the default) adds nothing beyond what the binary
-disables on its own and what this module disables by default
-(see ` enabledTools `)\. Each binary’s
+disables on its own and what this module disables by default:
+tools whose endpoint is off vmauth’s read-tier allow-list or
+that show other users’ query text (` flags ` for logs;
+` active_queries `, ` top_queries ` and ` tsdb_status ` for metrics;
+none for traces)\. Those stay hidden because vmauth would
+refuse them anyway (docs/decisions/0023); there is no option
+to un-hide them\. Each binary’s
 own README documents its available tool names – e\.g\.
 ` documentation ` disables an embedded vector-database tool
 that’s otherwise the dominant source of that MCP server’s
@@ -3806,8 +3686,8 @@ backend endpoint is outside that list (` alerts `, ` rules `,
 example one sent straight to this listener) is answered with
 vmauth’s 401 by the tool call\. The traces MCP server still
 calls its backend directly on loopback, outside the allow-list;
-tools that would reach beyond it are off by default (see
-` enabledTools `)\.
+tools that would reach beyond it are disabled by default (see
+` disabledTools `)\.
 
 When reached through vmauth (e\.g\. ` /mcp/metrics `,
 ` /mcp/logs `, ` /mcp/traces `): request it with NO trailing
