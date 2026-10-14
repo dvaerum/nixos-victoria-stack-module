@@ -1523,9 +1523,8 @@ null
 
 
 Whether victoria-logs pushes its own ` /metrics ` page into the local
-VictoriaMetrics instance\. With ` metrics.mode = "cluster" ` the push goes
-straight to vminsert’s address (` metrics.insert.listenAddress `, tenant 0),
-not through vmauth\.
+VictoriaMetrics instance\. The push goes straight to vminsert’s address
+(` metrics.insert.listenAddress `, tenant 0), not through vmauth\.
 
  - On by default whenever ` services.victoriaStack.metrics.enable ` is
    true (there is then a database to push into)\.
@@ -2574,7 +2573,12 @@ true
 
 
 
-The victoria-metrics package to use\. Defaults to pkgs\.victoriametrics\.
+The package with the cluster binaries (` vminsert `, ` vmselect `,
+` vmstorage `)\. Defaults to this flake’s own
+` packages/victoriametrics-cluster `, built from upstream’s
+` v<version>-cluster ` tag at the version of ` pkgs.victoriametrics `
+(nixpkgs has no cluster package; docs/decisions/0033)\. A replacement
+must be version-matched to vmauth’s package\.
 
 
 
@@ -2602,7 +2606,7 @@ Only letters, digits and ` . _ / - ` are allowed (an absolute path
 with no space, ` % ` or quote); anything else fails the build for
 an enabled service, since the path is written into unit files\.
 
-With ` mode = "cluster" ` the data lives in vmstorage, which reads this\.
+The data lives in vmstorage, which reads this\.
 
 
 
@@ -2680,9 +2684,9 @@ rejected at build time too: the snapshot timer sends no key, so it
 would fail every run\. Drop the flag, or disable ` snapshots.enable ` and
 take snapshots yourself\.
 
-With ` mode = "cluster" ` these go to vmselect, the process behind
-` listenAddress `; ` insert.extraFlags ` and ` storage.extraFlags ` take
-the flags of the other two processes\.
+These go to vmselect, the process behind ` listenAddress `;
+` insert.extraFlags ` and ` storage.extraFlags ` take the flags of the
+other two processes\.
 
 
 
@@ -2720,8 +2724,6 @@ Extra command-line flags passed straight through to vminsert\. The
 flags the module renders itself are rejected at build time:
 ` -httpListenAddr* `, ` -storageNode `, ` -tls* `, ` -http.pathPrefix* ` and
 ` -httpAuth.* `\.
-
-Only used while ` mode = "cluster" `\.
 
 
 
@@ -2762,8 +2764,6 @@ between the processes are fixed on loopback (127\.0\.0\.1:4211 for
 vminsert’s store, 127\.0\.0\.1:4212 for vmselect’s) and checked against
 every other listener\.
 
-Only used while ` mode = "cluster" `\.
-
 
 
 *Type:*
@@ -2795,8 +2795,8 @@ then started with ` -enableTCP6 `, which the binary needs to bind
 IPv6 at all (an operator-supplied ` -enableTCP6 ` in ` extraFlags ` is
 not repeated)\. ` :port ` binds IPv4 only without that flag\.
 
-With ` mode = "cluster" ` this is the READ API (vmselect)\. The write API
-is ` insert.listenAddress `; vmstorage’s own HTTP address is
+This is the READ API (vmselect)\. The write API is
+` insert.listenAddress `; vmstorage’s own HTTP address is
 ` storage.listenAddress `\.
 
 
@@ -3108,7 +3108,7 @@ value (` 1201 `, ` 37231d `) makes victoria-metrics refuse to start, and
 evaluation warns about it\. At most 10 digits before and 9 after the
 decimal point are accepted\.
 
-With ` mode = "cluster" ` this is vmstorage’s ` -retentionPeriod `\.
+This is vmstorage’s ` -retentionPeriod `\.
 
 
 
@@ -3141,9 +3141,8 @@ null
 
 
 Whether victoria-metrics pushes its own ` /metrics ` page into the local
-VictoriaMetrics instance\. With ` metrics.mode = "cluster" ` the push goes
-straight to vminsert’s address (` metrics.insert.listenAddress `, tenant 0),
-not through vmauth\.
+VictoriaMetrics instance\. The push goes straight to vminsert’s address
+(` metrics.insert.listenAddress `, tenant 0), not through vmauth\.
 
  - On by default whenever ` services.victoriaStack.metrics.enable ` is
    true (there is then a database to push into)\.
@@ -3319,8 +3318,8 @@ Format: one or more whole numbers with a unit of ` s `, ` m ` or ` h `
 (` 90s `, ` 5m `, ` 1h30m `) of at most 6 digits each; zero is not
 allowed\.
 
-With ` mode = "cluster" ` this bounds the wait for vmstorage, and the
-snapshot options (` snapshots.* `) apply to vmstorage as well\.
+This bounds the wait for vmstorage, and the snapshot options
+(` snapshots.* `) apply to vmstorage as well\.
 
 
 
@@ -3362,8 +3361,6 @@ While ` snapshots.enable ` is true, ` -snapshotAuthKey ` is rejected
 here too: vmstorage serves the snapshot endpoint, and the snapshot
 timer sends no key\.
 
-Only used while ` mode = "cluster" `\.
-
 
 
 *Type:*
@@ -3399,8 +3396,6 @@ list of string
 Address vmstorage’s own HTTP server listens on (health, snapshots),
 not the data path between the processes\. Same rules as
 ` listenAddress `\.
-
-Only used while ` mode = "cluster" `\.
 
 
 
@@ -4302,9 +4297,8 @@ null
 
 
 Whether victoria-traces pushes its own ` /metrics ` page into the local
-VictoriaMetrics instance\. With ` metrics.mode = "cluster" ` the push goes
-straight to vminsert’s address (` metrics.insert.listenAddress `, tenant 0),
-not through vmauth\.
+VictoriaMetrics instance\. The push goes straight to vminsert’s address
+(` metrics.insert.listenAddress `, tenant 0), not through vmauth\.
 
  - On by default whenever ` services.victoriaStack.metrics.enable ` is
    true (there is then a database to push into)\.
@@ -4568,7 +4562,7 @@ false
 
 
 
-The victoriametrics package vmauth’s binary is bundled in\. Defaults (via mkDefault) to config\.services\.victoriaStack\.metrics\.package – see docs/decisions/0007-package-override-options\.md\.
+The victoriametrics package vmauth’s binary is bundled in\. Defaults (via mkDefault) to pkgs\.victoriametrics: vmauth is not part of the cluster tag that ` metrics.package ` is built from – see docs/decisions/0007-package-override-options\.md and 0033\.
 
 
 
@@ -5617,9 +5611,8 @@ true
 
 
 Whether vmauth pushes its own ` /metrics ` page into the local
-VictoriaMetrics instance\. With ` metrics.mode = "cluster" ` the push goes
-straight to vminsert’s address (` metrics.insert.listenAddress `, tenant 0),
-not through vmauth\.
+VictoriaMetrics instance\. The push goes straight to vminsert’s address
+(` metrics.insert.listenAddress `, tenant 0), not through vmauth\.
 
  - On by default whenever ` services.victoriaStack.metrics.enable ` is
    true (there is then a database to push into)\.
