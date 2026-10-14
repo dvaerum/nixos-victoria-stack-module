@@ -3449,8 +3449,9 @@ token)\.
 The default tenant 0:0, where tokens without a tenant keep working as before,
 is implicit and cannot be declared here\.
 
-Nothing uses this table yet: it takes effect only once token files reference
-a tenant by name\. Tenants for metrics are not supported yet (planned)\.
+The table takes effect once token files reference a tenant by name
+(` tenant `/` tenants `, see ` vmauth.readTokensFile `)\. Tenants for metrics are
+not supported yet (planned)\.
 
 
 
@@ -5361,6 +5362,36 @@ signal’s MCP route, e\.g\. ` backends: ["traces"] ` reaches
 from ` writeTokensFile ` – see
 docs/decisions/0003-vmauth-two-credential-tiers\.md for why\.
 
+Tenants (logs and traces; see ` tenants `): ` tenant: <name> ` fixes
+the tenant, so the token reads only that tenant’s data and a
+client-sent ` AccountID `/` ProjectID ` header is replaced\.
+` tenants: [<name>, ...] ` lets the client choose among the listed
+tenants with an ` AccountID ` header; a missing header or an account
+outside the list is vmauth’s 400 ` missing route `, never a default\.
+` tenants: all ` is the same over every declared tenant\. Two listed
+tenants with the same ` accountId ` are ambiguous: a warning names
+both and the first stays\. An entry may not carry both ` tenant ` and
+` tenants ` (vmauth does not start)\. A tenant entry gets no metrics
+route (metrics have no tenants yet) and no ` /mcp/* ` route; a
+warning says so for metrics\. A tenant name that is not declared
+gets a warning and no access; ` tenants: all ` with no tenant
+declared too\. Without a tenant key, a token reads the default
+tenant (0:0) once at least one tenant is declared, whatever header
+the client sends\. The admin password is not bound to a tenant: it
+picks any with the headers\. Routes added through
+` extraReadUrlMap `/` extraWriteUrlMap ` are not tenant-bound: tenant
+tokens do not get them\.
+
+```yaml
+tokens:
+  - token: "team-a-reader-secret"
+    tenant: team-a
+  - token: "ops-reader-secret"
+    tenants: [team-a, team-b]
+  - token: "audit-reader-secret"
+    tenants: all
+```
+
 Writing this file, or renaming a new file over it, restarts vmauth automatically,
 since vmauth reads its secret files only at start; the same holds for
 ` writeTokensFile `, ` readTokensFile `, ` adminPasswordFile `, ` https.certFile `, ` https.keyFile `, ` backendTls.certFile `,
@@ -5503,11 +5534,22 @@ name next to valid ones is ignored\. An entry with an empty ` token `
 is skipped with a warning too\. See
 docs/decisions/0030-vmauth-token-entries-warn-dont-break\.md\.
 
+An entry may also carry ` tenant: <name> `, the name of one tenant
+declared in ` tenants `: whatever the client sends, its logs and
+traces data goes to that tenant\. A write entry cannot carry
+` tenants ` (that is the reader’s choice): a warning names the entry
+number and the entry gets no access\. An unknown tenant name gets
+the same warning and no access\. Without a tenant key the entry
+writes to the default tenant (0:0)\. Metrics have no tenants yet:
+a tenant entry gets no metrics route (a warning says so)\.
+
 ```yaml
 tokens:
   - token: "collector-host-a-secret"   # unscoped
   - token: "tracing-only-host-secret"
     backends: ["traces"]               # scoped
+  - token: "team-a-host-secret"
+    tenant: team-a                     # logs and traces of tenant team-a
 ```
 
 **Breaking change:** entries used to be bare strings
