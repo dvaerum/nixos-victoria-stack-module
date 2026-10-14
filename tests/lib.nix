@@ -352,31 +352,33 @@ let
             time.sleep(1)
   '';
 
-  # Test-script snippet: start a unit whose main process dies at once and return
-  # the seconds from systemd's "Starting" line to its first "Failed with result"
-  # line (RestartSec=5 spaces the later cycles), both stamps from the guest's
-  # monotonic journal so a loaded host cannot skew them. It also requires the
-  # probe's own "main process exited" message within `bound`: without the probe's
-  # main-process check neither line comes before its whole deadline, so `bound`
-  # (well under any default deadline) turns that into a quick failure. The unit
-  # must not be wantedBy anything: a unit failing in a loop keeps the container's
-  # boot job pending.
+  # Test-script snippet: start a unit whose main process dies at once and
+  # assert that the probe ended the start with its own "main process exited"
+  # message and not with its deadline message ("not ready after Ns"). Returns
+  # the seconds from systemd's "Starting" line to its first "Failed with
+  # result" line (RestartSec=5 spaces the later cycles), both stamps from the
+  # guest's monotonic journal, for the caller to print. Which message ends the
+  # start is the load-independent signal: a wall-clock bound failed on a loaded
+  # build server (the unit's start itself took 11s before its main process ran).
+  # Without the probe's main-process check only the deadline message ever
+  # appears, so the wait ends at the unit's deadline and the assertion fails.
+  # The unit must not be wantedBy anything: a unit failing in a loop keeps the
+  # container's boot job pending.
   brokenUnitFailureSeconds = ''
-    def broken_unit_failure_seconds(machine, unit, bound=30):
+    def broken_unit_failure_seconds(machine, unit):
         import re
         machine.succeed(f"systemctl start --no-block {unit}")
         verdict = f"{unit}: main process exited before becoming ready"
-        try:
-            machine.wait_until_succeeds(
-                f"journalctl -u {unit} --no-pager | grep -q '{verdict}'", timeout=bound
-            )
-        except Exception:
-            _, journal = machine.execute(f"journalctl -u {unit} -n 30 --no-pager")
-            state = machine.succeed(f"systemctl show -p ActiveState,SubState,MainPID {unit}")
-            raise AssertionError(
-                f"no '{verdict}' within {bound}s of its start ({state.split()}); journal:\n{journal}"
-            )
+        late = f"{unit}: not ready after"
+        # Longer than any default deadline (300s): the wait ends on whichever
+        # message the probe logs first, so it is event-driven, not a time bound.
+        machine.wait_until_succeeds(
+            f"journalctl -u {unit} --no-pager | grep -qE '{verdict}|{late}'", timeout=400
+        )
         journal = machine.succeed(f"journalctl -u {unit} -o short-monotonic --no-pager")
+        assert verdict in journal and late not in journal, (
+            f"{unit}: the start ended at the probe's deadline, not at the main process exiting; journal:\n{journal[-3000:]}"
+        )
 
         def stamp(marker):
             line = next(l for l in journal.splitlines() if marker in l)
@@ -388,7 +390,7 @@ let
         # leaves `activating` (Restart=on-failure then cycles it).
         machine.wait_until_succeeds(
             f"systemctl show -p NRestarts,ActiveState {unit} | grep -qE 'NRestarts=[1-9]|ActiveState=failed'",
-            timeout=bound,
+            timeout=60,
         )
         return stamp("Failed with result") - stamp("Starting ")
   '';
