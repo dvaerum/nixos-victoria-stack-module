@@ -641,7 +641,7 @@ in
 
         # Seed real data in the real backends (raw ports: the write door is not
         # under test here).
-        machine.succeed("curl -sf -X POST 'http://127.0.0.1:4201/api/v1/import/prometheus' "
+        machine.succeed("curl -sf -X POST 'http://127.0.0.1:4209/insert/0/prometheus/api/v1/import/prometheus' "
                         "-d 'mcp_caller_token_test_metric 1'")
         machine.succeed(
             "echo '{\"log\":{\"message\":\"mcp_caller_token_test_log\"},\"date\":\"0\",\"stream\":\"mcp-test\"}' | "
@@ -722,7 +722,7 @@ in
         assert status == 200
         _, r = call(recorder, "metrics", ADMIN, sid, "labels", {})
         assert not is_error(r), f"control call must reach the recording backend: {r!r}"
-        assert [l.split(" | ")[0] for l in recorded()] == ["GET /api/v1/labels HTTP/1.1"], \
+        assert [l.split(" | ")[0] for l in recorded()] == ["GET /select/0/prometheus/api/v1/labels HTTP/1.1"], \
             f"the recording backend must see the control call: {recorded()!r}"
 
 
@@ -753,7 +753,7 @@ in
         _, _, sid = open_session(recorder, "metrics", ADMIN)
         call(recorder, "metrics", ADMIN, sid, "label_values", {"label_name": "http://evil.example.invalid/x"})
         new = recorded()[len(before):]
-        assert [l.split(" | ")[0] for l in new] == ["GET /api/v1/label/http:/evil.example.invalid/x/values HTTP/1.1"], \
+        assert [l.split(" | ")[0] for l in new] == ["GET /select/0/prometheus/api/v1/label/http:/evil.example.invalid/x/values HTTP/1.1"], \
             f"an absolute-URL label name must be a plain label read, got {new!r}"
 
         # Traces: the Jaeger paths. A `..` run deep enough to leave /select/ is
@@ -1047,7 +1047,7 @@ in
       };
       after = unit: evaluated.config.systemd.services.${unit}.after;
       expected = {
-        mcp-victoriametrics = "victoriametrics.service";
+        mcp-victoriametrics = "vmselect.service";
         mcp-victorialogs = "victorialogs.service";
         mcp-victoriatraces = "victoriatraces.service";
       };

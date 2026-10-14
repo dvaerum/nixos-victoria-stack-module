@@ -1,10 +1,9 @@
 { pkgs, nixosModule }:
 
-# Grafana, the metrics MCP server and nginx in front of the metrics cluster
-# (`metrics.mode = "cluster"`). Both frontends keep speaking the single-node
-# paths to vmauth's `/metrics` read tier; vmauth rewrites them onto vmselect's
+# Grafana, the metrics MCP server and nginx in front of the metrics cluster. Both
+# frontends keep speaking the plain Prometheus client paths to vmauth's `/metrics`
+# read tier; vmauth rewrites them onto vmselect's
 # `/select/0/prometheus/...` (tests/vmauth-cluster.nix), so nothing in the
-# frontends knows the cluster exists apart from systemd ordering.
 let
   inherit (pkgs) lib;
   module = nixosModule.nixosModules.victoriaStack;
@@ -55,34 +54,35 @@ let
   adminPassword = pkgs.writeText "frontends-admin-password" "frontends-admin-password-value";
 
   # ---- L1 ----
-  allFrontends =
-    mode:
-    evalWith {
-      services.victoriaStack = {
-        metrics = {
-          enable = true;
-          inherit mode;
-          mcp.enable = true;
-        };
-        grafana = {
-          enable = true;
-          readTokenFile = "${grafanaReadTokenFile}";
-        };
-        vmauth.readTokensFile = "${vmauthReadTokensWithGrafana}";
-        nginx = {
-          enable = true;
-          domain = "victoria-stack-test.example.com";
-        };
+  cluster = evalWith {
+    services.victoriaStack = {
+      metrics = {
+        enable = true;
+        mcp.enable = true;
       };
-      services.grafana.enable = true;
+      grafana = {
+        enable = true;
+        readTokenFile = "${grafanaReadTokenFile}";
+      };
+      vmauth.readTokensFile = "${vmauthReadTokensWithGrafana}";
+      nginx = {
+        enable = true;
+        domain = "victoria-stack-test.example.com";
+      };
     };
-  cluster = allFrontends "cluster";
-  single = allFrontends "single";
+    services.grafana.enable = true;
+  };
 
   svc = e: unit: e.config.systemd.services.${unit};
   after = e: unit: (svc e unit).after;
   env = e: unit: (svc e unit).environment;
-  singleNodeUnit = "victoriametrics.service";
+  # The single-node unit is gone: no frontend may name it either.
+  dataUnits = [
+    "victoriametrics.service"
+    "vmselect.service"
+    "vminsert.service"
+    "vmstorage.service"
+  ];
   datasourceUrls =
     e:
     lib.listToAttrs (
@@ -168,15 +168,16 @@ in
   # --- L1 ---
 
   cluster-frontends-ordering-lists = table "cluster-frontends-ordering" {
-    "the metrics MCP waits for vmselect, vmauth and not the single-node unit" =
-      lib.elem "vmselect.service" (after cluster "mcp-victoriametrics")
-      && lib.elem "vmauth.service" (after cluster "mcp-victoriametrics")
-      && !(lib.elem singleNodeUnit (after cluster "mcp-victoriametrics"));
-    "grafana and nginx name no single-node unit" =
+    "the metrics MCP waits for vmselect and vmauth, exactly" =
+      after cluster "mcp-victoriametrics" == [
+        "network.target"
+        "vmselect.service"
+        "vmauth.service"
+      ];
+    "grafana and nginx are ordered after no data unit" =
       !(lib.any
         (
-          u:
-          lib.elem singleNodeUnit (after cluster u) || lib.elem singleNodeUnit ((svc cluster u).wants or [ ])
+          u: lib.any (d: lib.elem d (after cluster u) || lib.elem d ((svc cluster u).wants or [ ])) dataUnits
         )
         [
           "grafana"
@@ -195,48 +196,13 @@ in
           "vmselect.service"
           "vminsert.service"
         ];
-    "the MCP entrypoint is vmauth's /metrics prefix, type single, in both modes" =
-      lib.all
-        (
-          e:
-          (env e "mcp-victoriametrics").VM_INSTANCE_ENTRYPOINT == "http://127.0.0.1:4204/metrics"
-          && (env e "mcp-victoriametrics").VM_INSTANCE_TYPE == "single"
-          && (env e "mcp-victoriametrics").MCP_PASSTHROUGH_HEADERS == "Authorization"
-          && !(env e "mcp-victoriametrics" ? VM_DEFAULT_TENANT_ID)
-        )
-        [
-          cluster
-          single
-        ];
+    "the MCP entrypoint is vmauth's /metrics prefix, type single" =
+      (env cluster "mcp-victoriametrics").VM_INSTANCE_ENTRYPOINT == "http://127.0.0.1:4204/metrics"
+      && (env cluster "mcp-victoriametrics").VM_INSTANCE_TYPE == "single"
+      && (env cluster "mcp-victoriametrics").MCP_PASSTHROUGH_HEADERS == "Authorization"
+      && !(env cluster "mcp-victoriametrics" ? VM_DEFAULT_TENANT_ID);
     "the Grafana metrics datasource is vmauth's /metrics read tier, never vmselect" =
-      (datasourceUrls cluster).victoriametrics-ds == "http://127.0.0.1:4204/metrics"
-      && datasourceUrls cluster == datasourceUrls single;
-  };
-
-  single-mode-frontends-ordering-is-unchanged = table "single-frontends-ordering" {
-    "the metrics MCP waits for the single-node unit, not the cluster" =
-      lib.elem singleNodeUnit (after single "mcp-victoriametrics")
-      && !(lib.any (u: lib.elem u (after single "mcp-victoriametrics")) [
-        "vmselect.service"
-        "vminsert.service"
-        "vmstorage.service"
-      ]);
-    "the MCP after list is exactly as before" =
-      after single "mcp-victoriametrics" == [
-        "network.target"
-        singleNodeUnit
-        "vmauth.service"
-      ];
-    "nginx waits for vmauth and grafana, as before" =
-      lib.all (u: lib.elem u (after single "nginx")) [
-        "vmauth.service"
-        "grafana.service"
-      ]
-      && !(lib.any (u: lib.elem u (after single "nginx")) [
-        "vmselect.service"
-        "vminsert.service"
-        "vmstorage.service"
-      ]);
+      (datasourceUrls cluster).victoriametrics-ds == "http://127.0.0.1:4204/metrics";
   };
 
   # --- L4 ---
@@ -253,7 +219,6 @@ in
       services.victoriaStack = {
         metrics = {
           enable = true;
-          mode = "cluster";
         };
         grafana = {
           enable = true;
@@ -355,7 +320,6 @@ in
       services.victoriaStack = {
         metrics = {
           enable = true;
-          mode = "cluster";
           mcp.enable = true;
         };
         logs.enable = true;
@@ -378,7 +342,6 @@ in
       services.victoriaStack = {
         metrics = {
           enable = true;
-          mode = "cluster";
           mcp.enable = true;
           effectiveSelectUrl = lib.mkForce "http://127.0.0.1:9101";
         };

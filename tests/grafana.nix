@@ -254,10 +254,11 @@ in
       machine.succeed(
           curl_with_body(
               "grafana_probe_metric 42",
-              "-sf -X POST http://127.0.0.1:4201/api/v1/import/prometheus",
+              "-sf -X POST http://127.0.0.1:4209/insert/0/prometheus/api/v1/import/prometheus",
           )
       )
-      machine.succeed("curl -sf http://127.0.0.1:4201/internal/force_flush")
+      # vmstorage's flush: the samples are readable at once, not after its periodic one.
+      machine.succeed("curl -sf http://127.0.0.1:4210/internal/force_flush")
       machine.succeed(
           curl_with_body(
               '{"_msg":"operator-line","date":"0"}',
@@ -274,7 +275,7 @@ in
           assert code == 200 and needle in text, (ds, path, code, text[:300])
 
       machine.wait_until_succeeds(
-          "out=$(curl -sf http://127.0.0.1:4201/api/v1/series -d 'match[]=grafana_probe_metric') "
+          "out=$(curl -sf http://127.0.0.1:4201/select/0/prometheus/api/v1/series -d 'match[]=grafana_probe_metric') "
           "&& [[ $out == *grafana_probe_metric* ]]"
       )
       read_ok("victoriametrics-ds", "/api/v1/series?match[]=grafana_probe_metric", "grafana_probe_metric")
@@ -304,9 +305,10 @@ in
       refused("victorialogs-ds", "GET", "/flags")
 
       # ...and nothing happened in the backends.
-      machine.succeed("curl -sf http://127.0.0.1:4201/internal/force_flush")
+      # vmstorage's flush: the samples are readable at once, not after its periodic one.
+      machine.succeed("curl -sf http://127.0.0.1:4210/internal/force_flush")
       series = machine.succeed(
-          "curl -sf http://127.0.0.1:4201/api/v1/series --data-urlencode 'match[]={__name__=~\".+\"}'"
+          "curl -sf http://127.0.0.1:4201/select/0/prometheus/api/v1/series --data-urlencode 'match[]={__name__=~\".+\"}'"
       )
       assert "grafana_probe_metric" in series, f"delete_series must not have run: {series!r}"
       assert "viewer_written_metric" not in series, f"import must not have run: {series!r}"

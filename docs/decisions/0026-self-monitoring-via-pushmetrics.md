@@ -34,7 +34,7 @@ Enabling any of them requires `metrics.enable` (an assertion says so).
 
 ## Update: metrics cluster
 
-With `metrics.mode = "cluster"` the push target is vminsert's tenant-0 import
+With the metrics cluster ([0033](./0033-metrics-cluster-replaces-single-node.md)) the push target is vminsert's tenant-0 import
 endpoint on its own address (`http://<insert.listenAddress>/insert/0/prometheus/api/v1/import/prometheus`),
 straight to it and not through vmauth. vmstorage, vminsert and vmselect each push
 their own metrics with `job="vmstorage"`, `"vminsert"` and `"vmselect"`, like the

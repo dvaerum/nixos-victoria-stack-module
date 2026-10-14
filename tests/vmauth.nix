@@ -623,11 +623,13 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       start_all()
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       wait_active(machine, "vmauth.service")
       wait_active(machine, "mcp-victoriametrics.service")
 
-      machine.succeed("curl -sf 'http://[::1]:4201/ping'")
+      machine.succeed("curl -sf 'http://[::1]:4201/health'")
       machine.succeed("curl -sf 'http://[::1]:4208/health'")
       machine.succeed("curl -sf 'http://[::1]:4205/health/readiness'")
       # No credential: vmauth answers 401 itself, which is all that is asserted here.
@@ -676,7 +678,7 @@ in
           "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_vmauth_test_metric' "
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=victoria_stack_vmauth_test_metric' "
           "| grep -q victoria_stack_vmauth_test_metric"
       )
 
@@ -762,7 +764,7 @@ in
           "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_vmauth_write_token_metric' "
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=victoria_stack_vmauth_write_token_metric' "
           "| grep -q victoria_stack_vmauth_write_token_metric"
       )
     '';
@@ -1226,7 +1228,7 @@ in
           "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_vmauth_all_tiers_test_metric' "
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=victoria_stack_vmauth_all_tiers_test_metric' "
           "| grep -q victoria_stack_vmauth_all_tiers_test_metric"
       )
 
@@ -1286,7 +1288,7 @@ in
             {
               src_paths = [ "/custom-escape-hatch" ];
               drop_src_path_prefix_parts = 1;
-              url_prefix = [ "http://127.0.0.1:4201/api/v1/query" ];
+              url_prefix = [ "http://127.0.0.1:4201/select/0/prometheus/api/v1/query" ];
             }
           ];
         };
@@ -1320,7 +1322,7 @@ in
           "'http://127.0.0.1:4204/opentelemetry/v1/metrics'"
       )
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_vmauth_full_combo_test_metric' "
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=victoria_stack_vmauth_full_combo_test_metric' "
           "| grep -q victoria_stack_vmauth_full_combo_test_metric"
       )
 
@@ -1447,7 +1449,9 @@ in
       ${testLib.waitActivePython}
       start_all()
       wait_active(machine, "vmauth.service")
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       wait_active(machine, "victorialogs.service")
       wait_active(machine, "victoriatraces.service")
       machine.wait_for_open_port(4204)
@@ -1616,7 +1620,9 @@ in
       ${httpTestPython}
       start_all()
       wait_active(machine, "vmauth.service")
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       wait_active(machine, "victorialogs.service")
       wait_active(machine, "victoriatraces.service")
       machine.wait_for_open_port(4204)
@@ -1630,7 +1636,7 @@ in
       machine.succeed(
           "curl -sf -X POST --data-binary "
           "'victoria_stack_readonly_probe_metric 1' "
-          "'http://127.0.0.1:4201/api/v1/import/prometheus'"
+          "'http://127.0.0.1:4209/insert/0/prometheus/api/v1/import/prometheus'"
       )
       machine.succeed(
           "echo '{\"log\":{\"level\":\"info\",\"message\":\"victoria_stack_readonly_probe_log\"}"
@@ -1874,7 +1880,8 @@ in
       );
 
   # The vmauth side of the effectiveUrl seam (docs/decisions/0019): every
-  # url_prefix this module builds for a backend derives from effectiveUrl.
+  # url_prefix this module builds for a backend derives from effectiveUrl;
+  # metrics writes derive from effectiveInsertUrl (vminsert is its own process).
   vmauth-url-prefixes-use-effective-url =
     pkgs.runCommand "vmauth-url-prefixes-use-effective-url" { }
       (
@@ -1885,6 +1892,7 @@ in
               metrics = {
                 enable = true;
                 effectiveUrl = lib.mkForce (fake "m");
+                effectiveInsertUrl = lib.mkForce (fake "i");
               };
               logs = {
                 enable = true;
@@ -1897,15 +1905,20 @@ in
             };
           };
           prefixes = file: map (e: e.url_prefix) (urlMapFile file evaluated);
-          expected = [
-            "${fake "m"}/"
+          expectedRead = [
+            "${fake "m"}/select/0/prometheus/"
+            "${fake "l"}/"
+            "${fake "t"}/"
+          ];
+          expectedWrite = [
+            "${fake "i"}/insert/0/"
             "${fake "l"}/"
             "${fake "t"}/"
           ];
           checks = {
-            "read url_map" = prefixes "READ_URL_MAP_FILE" == expected;
-            "write url_map" = prefixes "WRITE_URL_MAP_FILE" == expected;
-            "open ingest paths" = prefixes "OPEN_INGEST_PATHS_FILE" == expected;
+            "read url_map" = prefixes "READ_URL_MAP_FILE" == expectedRead;
+            "write url_map" = prefixes "WRITE_URL_MAP_FILE" == expectedWrite;
+            "open ingest paths" = prefixes "OPEN_INGEST_PATHS_FILE" == expectedWrite;
           };
           failed = lib.filterAttrs (_: ok: !ok) checks;
         in
@@ -1938,7 +1951,8 @@ in
           openIngestPaths = [
             {
               src_paths = [ "/opentelemetry.*" ];
-              url_prefix = "http://127.0.0.1:4201/";
+              # vminsert's tenant-0 OTLP path, as the module derives it.
+              url_prefix = "http://127.0.0.1:4209/insert/0/";
             }
           ];
         };
@@ -2193,7 +2207,8 @@ in
           extraWriteUrlMap = [
             {
               src_paths = [ "/write" ];
-              url_prefix = "http://127.0.0.1:4201/";
+              # vminsert's InfluxDB endpoint for tenant 0.
+              url_prefix = "http://127.0.0.1:4209/insert/0/influx/";
             }
           ];
         };
@@ -2213,7 +2228,7 @@ in
           f"-X POST --data-binary '{line}' 'http://127.0.0.1:4204/write'"
       )
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=influx_extra_write_test_value' "
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=influx_extra_write_test_value' "
           "| grep -q '\"value\"'"
       )
 
@@ -2904,7 +2919,7 @@ in
       assert "0.0.0.0:8080" not in listeners and "*:8080" not in listeners, listeners
 
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_write_doors_metric' | grep -q '\"value\"'"
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=victoria_stack_write_doors_metric' | grep -q '\"value\"'"
       )
     '';
   };

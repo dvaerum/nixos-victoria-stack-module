@@ -1,6 +1,6 @@
 { pkgs, nixosModule }:
 
-# The three systemd units of the metrics cluster (metrics.mode = "cluster"):
+# The three systemd units of the metrics cluster:
 # what is rendered (L1 tables) and how they behave booted (L3).
 let
   inherit (pkgs) lib;
@@ -22,7 +22,6 @@ let
     extra:
     evalMetrics (
       {
-        mode = "cluster";
         selfMonitoring.enable = false;
       }
       // extra
@@ -39,7 +38,7 @@ let
         "vmstorage"
       ]
     ) (lib.attrNames c.systemd.services);
-  clusterPkg = c: c.services.victoriaStack.metrics.clusterPackage;
+  clusterPkg = c: c.services.victoriaStack.metrics.package;
 
   table =
     name: checks:
@@ -79,7 +78,6 @@ let
     };
   };
   onlyInsertV6 = clusterEval { insert.listenAddress = "[::1]:4209"; };
-  singleMode = evalMetrics { snapshots.enable = true; };
   clusterSnapshots = clusterEval { snapshots.enable = true; };
   timeouts = clusterEval { startupTimeout = "90s"; };
   withNeighbours =
@@ -87,7 +85,6 @@ let
       services.victoriaStack = {
         metrics = {
           enable = true;
-          mode = "cluster";
           mcp.enable = true;
         };
         logs.enable = true;
@@ -102,7 +99,7 @@ let
   hardened = c: unit: testLib.hardeningDiff (sc c unit) == [ ];
 
   # The broken-unit and boot tests below: all three binaries are replaced by one
-  # that exits at once (a clusterPackage override).
+  # that exits at once (a package override).
   brokenCluster = pkgs.symlinkJoin {
     name = "broken-victoriametrics-cluster";
     paths = map (b: pkgs.writeShellScriptBin b "exit 3") [
@@ -138,20 +135,18 @@ in
 {
   # --- L1 ---
 
-  units-exist-in-cluster-mode-and-the-single-node-unit-does-not = table "cluster-units-set" {
-    "cluster: exactly the three" =
+  units-exist-and-the-single-node-unit-does-not = table "cluster-units-set" {
+    "exactly the three, no single-node unit" =
       unitsOf defaults == [
         "vminsert"
         "vmselect"
         "vmstorage"
       ];
-    "single: only the single-node unit" = unitsOf (evalMetrics { }) == [ "victoriametrics" ];
-    "metrics disabled: none" =
-      unitsOf (evalWith { services.victoriaStack.metrics.mode = "cluster"; }).config == [ ];
-    "single keeps its snapshot unit" = singleMode.systemd.services ? "victoriametrics-snapshot";
-    "cluster renders no snapshot unit (task 2.5)" =
-      !(clusterSnapshots.systemd.services ? "victoriametrics-snapshot");
-    "cluster: the neighbours still evaluate" =
+    "metrics disabled: none" = unitsOf (evalWith { }).config == [ ];
+    "snapshots render no single-node snapshot unit" =
+      !(clusterSnapshots.systemd.services ? "victoriametrics-snapshot")
+      && !(clusterSnapshots.systemd.timers ? "victoriametrics-snapshot");
+    "the neighbours still evaluate" =
       lib.all (u: withNeighbours.systemd.services ? ${u}) [
         "vmauth"
         "mcp-victoriametrics"
@@ -368,7 +363,6 @@ in
       ];
       services.victoriaStack.metrics = {
         enable = true;
-        mode = "cluster";
       };
     };
 
@@ -425,7 +419,6 @@ in
       ];
       services.victoriaStack.metrics = {
         enable = true;
-        mode = "cluster";
         listenAddress = "[::1]:4201";
         insert.listenAddress = "[::1]:4209";
         storage.listenAddress = "[::1]:4210";
@@ -451,8 +444,7 @@ in
       imports = [ module ];
       services.victoriaStack.metrics = {
         enable = true;
-        mode = "cluster";
-        clusterPackage = brokenCluster;
+        package = brokenCluster;
       };
       # A unit failing in a loop keeps the container's boot job pending.
       systemd.services = lib.genAttrs [ "vmstorage" "vminsert" "vmselect" ] (_: {

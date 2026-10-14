@@ -64,3 +64,12 @@ Found while implementing Phase 26's vmauth option additions
   implemented for the same reason multi-instance clustering isn't.
 
 </content>
+
+## Update: the metrics database is a cluster
+
+Multi-instance clustering is no longer wholly out of scope: the metrics database
+runs as vminsert, vmselect and vmstorage on the one host
+([0033](./0033-metrics-cluster-replaces-single-node.md)). Multi-host clustering,
+external backends and load-balancing across instances stay out of scope. The seam
+is wider for metrics only: `effectiveUrl` is the read base (vmselect) and
+`effectiveInsertUrl` the write base (vminsert).

@@ -55,13 +55,13 @@ in
       "bracketed wildcard is IPv6" = listen.isIpv6Addr "[::]:4201";
       "bare :: is IPv6" = listen.isIpv6Addr "::";
       "storage on IPv6 gets it once" =
-        count "victoriametrics" {
+        count "vmselect" {
           metrics.enable = true;
           metrics.listenAddress = "[::1]:4201";
         } == 1;
-      "storage on IPv4 does not" = count "victoriametrics" { metrics.enable = true; } == 0;
+      "storage on IPv4 does not" = count "vmselect" { metrics.enable = true; } == 0;
       "operator -enableTCP6 in extraFlags is not duplicated" =
-        count "victoriametrics" {
+        count "vmselect" {
           metrics.enable = true;
           metrics.listenAddress = "[::1]:4201";
           metrics.extraFlags = [ "-enableTCP6" ];
@@ -169,6 +169,7 @@ in
             metrics = {
               enable = true;
               listenAddress = addr;
+              insert.listenAddress = lib.replaceStrings [ "4301" ] [ "4309" ] addr;
               mcp = {
                 enable = true;
                 listenAddress = lib.replaceStrings [ "4301" ] [ "4302" ] addr;
@@ -195,7 +196,7 @@ in
             e.config.systemd.services.mcp-victoriametrics.environment.VM_INSTANCE_ENTRYPOINT
             == "http://127.0.0.1:4303/metrics";
           "${name}: self-monitoring pushes to loopback" =
-            lib.hasInfix "-pushmetrics.url=http://127.0.0.1:4301/api/v1/import/prometheus" e.config.systemd.services.victorialogs.serviceConfig.ExecStart;
+            lib.hasInfix "-pushmetrics.url=http://127.0.0.1:4309/insert/0/prometheus/api/v1/import/prometheus" e.config.systemd.services.victorialogs.serviceConfig.ExecStart;
         };
     in
     mkTableCheck "wildcard-listen-addresses-reach-every-consumer" (
@@ -466,9 +467,10 @@ in
         metrics = {
           enable = true;
           listenAddress = ":4201";
+          insert.listenAddress = ":4209";
           mcp = {
             enable = true;
-            listenAddress = ":4210";
+            listenAddress = ":4215";
           };
           selfMonitoring.interval = "5s";
         };
@@ -483,7 +485,7 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       start_all()
-      for unit in ["victoriametrics", "mcp-victoriametrics", "vmauth", "nginx"]:
+      for unit in ["vmstorage", "vminsert", "vmselect", "mcp-victoriametrics", "vmauth", "nginx"]:
           wait_active(machine, f"{unit}.service")
       machine.wait_for_open_port(4201)
       machine.wait_for_open_port(4204)
@@ -503,8 +505,8 @@ in
       assert code == "200", code
       # Self-monitoring reaches the database through the wildcard-derived URL.
       machine.wait_until_succeeds(
-          "curl -sfG 'http://127.0.0.1:4201/api/v1/query' "
-          "--data-urlencode 'query=vm_app_version{job=\"victoriametrics\"}' | grep -q '\"value\"'",
+          "curl -sfG 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query' "
+          "--data-urlencode 'query=vm_app_version{job=\"vmselect\"}' | grep -q '\"value\"'",
           timeout=120,
       )
     '';

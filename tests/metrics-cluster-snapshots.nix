@@ -1,6 +1,6 @@
 { pkgs, nixosModule }:
 
-# Snapshots and self-monitoring of the metrics cluster (metrics.mode = "cluster"):
+# Snapshots and self-monitoring of the metrics cluster:
 # the snapshot oneshot + timer belong to vmstorage, and every process of the
 # stack pushes its own metrics to vminsert's tenant-0 import endpoint.
 let
@@ -17,7 +17,6 @@ let
       {
         metrics = {
           enable = true;
-          mode = "cluster";
         }
         // metrics;
       }
@@ -61,12 +60,6 @@ let
     storage.listenAddress = ":4210";
   } { };
   snapshotsOff = clusterStack { } { };
-  singleOn = stack {
-    metrics = {
-      enable = true;
-      snapshots.enable = true;
-    };
-  };
 
   curlLine =
     url:
@@ -109,11 +102,6 @@ let
       selfMonitoring.enable = false;
     };
   };
-  singleFull = stack {
-    metrics.enable = true;
-    logs.enable = true;
-    traces.enable = true;
-  };
 
   push = job: url: [
     "-pushmetrics.url=${url}"
@@ -121,7 +109,6 @@ let
     "-pushmetrics.extraLabel=job=\"${job}\""
   ];
   insertPush = "http://127.0.0.1:4209/insert/0/prometheus/api/v1/import/prometheus";
-  singlePush = "http://127.0.0.1:4201/api/v1/import/prometheus";
   hasPush =
     c: unit: job: url:
     lib.hasInfix (lib.escapeShellArgs (push job url)) (exec c unit);
@@ -195,17 +182,6 @@ in
       && !(snapshotsOff.systemd.services ? "victoriametrics-snapshot");
   };
 
-  single-mode-snapshot-unit-is-unchanged = table "single-snapshots-unchanged" {
-    "unit, timer and URL" =
-      singleOn.systemd.services ? "victoriametrics-snapshot"
-      && singleOn.systemd.timers ? "victoriametrics-snapshot"
-      && !(singleOn.systemd.services ? "vmstorage-snapshot")
-      && exec singleOn "victoriametrics-snapshot" == curlLine "http://127.0.0.1:4201/snapshot/create";
-    "description" =
-      (svc singleOn "victoriametrics-snapshot").description == "Create a metrics snapshot";
-    "maxAge flag" = lib.hasInfix "-snapshotsMaxAge=30d" (exec singleOn "victoriametrics");
-  };
-
   # --- L1: the snapshot-key assertion follows the process that serves /snapshot ---
 
   cluster-snapshots-key-flag-assertion-hangs-off-storage = table "cluster-snapshots-key-assertion" {
@@ -237,20 +213,6 @@ in
       snapshotFailures (withKeyOn {
         storage.extraFlags = [ "-snapshotAuthKeyX=k" ];
       }) == [ ];
-    "single mode: still metrics.extraFlags" =
-      let
-        f = snapshotFailures (stack {
-          metrics = {
-            enable = true;
-            snapshots.enable = true;
-            extraFlags = [ keyFlag ];
-          };
-        });
-      in
-      lib.length f == 1
-      && lib.hasInfix "services.victoriaStack.metrics.snapshots.enable is true but extraFlags contains `${keyFlag}`" (
-        lib.head f
-      );
   };
 
   # --- L1: self-monitoring ---
@@ -307,13 +269,6 @@ in
       lib.length (lib.unique jobs) == lib.length jobs;
   };
 
-  single-mode-self-monitoring-is-unchanged = table "single-self-monitoring" {
-    "metrics" = hasPush singleFull "victoriametrics" "victoriametrics" singlePush;
-    "logs" = hasPush singleFull "victorialogs" "victorialogs" singlePush;
-    "traces" = hasPush singleFull "victoriatraces" "victoriatraces" singlePush;
-    "vmauth" = hasPush singleFull "vmauth" "vmauth" singlePush;
-  };
-
   # --- L3 ---
 
   cluster-snapshot-creates-and-skips-when-stopped = pkgs.testers.nixosTest {
@@ -326,7 +281,6 @@ in
       ];
       services.victoriaStack.metrics = {
         enable = true;
-        mode = "cluster";
         snapshots.enable = true;
       };
     };
@@ -389,7 +343,6 @@ in
       services.victoriaStack = {
         metrics = {
           enable = true;
-          mode = "cluster";
           selfMonitoring.interval = "2s";
         };
         logs = {

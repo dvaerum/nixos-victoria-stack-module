@@ -320,7 +320,9 @@ in
       # Same race for vmauth's own backend -- caught by the sibling test
       # with grafana disabled (nothing else gave it enough of a head
       # start), but latent here too without this.
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
       # /grafana/ reaches Grafana through nginx. wait_until_succeeds, not
@@ -453,7 +455,9 @@ in
       # server is listening yet -- see nginx-proxies-victoria-and-grafana-
       # subpaths' own comment above (the same race, found here too).
       machine.wait_for_open_port(3000)
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
       config_dump = machine.succeed("${pkgs.nginx}/bin/nginx -T -c /etc/nginx/nginx.conf 2>&1")
@@ -507,7 +511,9 @@ in
       # Before nginx was ordered after vmauth (whose postStart now waits for
       # its port), proxy_pass raced it and got "502 Bad Gateway" often enough
       # to fail this check; the explicit port waits are kept as a guard.
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
       # /victoria/ must still work on its own (no grafana.nix location
@@ -559,7 +565,9 @@ in
       wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
       machine.succeed(
@@ -647,7 +655,9 @@ in
       machine.wait_for_open_port(4204)
       machine.wait_for_open_port(80)
       machine.wait_for_open_port(443)
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
 
@@ -831,7 +841,9 @@ in
       wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(19999)
       machine.wait_for_open_port(80)
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
       rc, _ = machine.execute("curl -s --max-time 3 'http://127.0.0.1:4204/'")
@@ -869,7 +881,9 @@ in
       wait_active(machine, "nginx.service")
       wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(80)
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
       url = "http://127.0.0.1:80/victoria/metrics/api/v1/labels"
@@ -958,7 +972,9 @@ in
       wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(80)
       machine.wait_for_open_port(4204)
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
       machine.succeed(
@@ -1020,7 +1036,7 @@ in
             {
               src_paths = [ "/custom\\.route/api/v1/labels" ];
               drop_src_path_prefix_parts = 1;
-              url_prefix = "http://127.0.0.1:4201/";
+              url_prefix = "http://127.0.0.1:4201/select/0/prometheus/";
             }
           ];
         };
@@ -1033,7 +1049,9 @@ in
       wait_active(machine, "nginx.service")
       wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(80)
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
       auth = "-u admin:nginx-admin-password"  # gitleaks:allow
@@ -1197,7 +1215,9 @@ in
       wait_active(machine, "nginx.service")
       wait_active(machine, "vmauth.service")
       machine.wait_for_open_port(80)
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
       machine.succeed("head -c 3000000 /dev/zero > /tmp/big.bin")

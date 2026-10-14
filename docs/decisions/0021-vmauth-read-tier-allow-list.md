@@ -88,7 +88,7 @@ All three MCP servers call vmauth's read tier with the caller's own token
 bounds every tool call; a tool whose endpoint is off the list gets vmauth's
 400.
 
-Update: with `metrics.mode = "cluster"` the same client paths are kept, but the
+Update: with the metrics cluster ([0033](./0033-metrics-cluster-replaces-single-node.md)) the same client paths are kept, but the
 metrics route goes to vmselect with the path rewritten under
 `/select/0/prometheus/` (tenant 0 only); the list stays closed, and vmselect's own
 `/delete/*`, `/internal/*` and other tenants' `/select/*` stay unreachable.

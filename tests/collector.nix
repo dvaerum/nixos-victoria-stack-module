@@ -239,7 +239,9 @@ in
       ${testLib.waitActivePython}
       start_all()
       wait_active(stack, "vmauth.service")
-      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "vmstorage.service")
+      wait_active(stack, "vminsert.service")
+      wait_active(stack, "vmselect.service")
       wait_active(collector, "alloy.service")
 
       stack.systemctl("start network-online.target")
@@ -262,7 +264,7 @@ in
       # the backend AT ALL through vmauth's authenticated write path is
       # the actual thing this test cares about).
       stack.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
           timeout=120,
       )
     '';
@@ -492,7 +494,9 @@ in
       ${testLib.waitActivePython}
       start_all()
       wait_active(stack, "vmauth.service")
-      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "vmstorage.service")
+      wait_active(stack, "vminsert.service")
+      wait_active(stack, "vmselect.service")
       wait_active(stack, "victoriatraces.service")
       wait_active(collector, "alloy.service")
       collector.wait_for_open_port(4318)
@@ -526,7 +530,7 @@ in
           timeout=120,
       )
       stack.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
           timeout=120,
       )
     '';
@@ -674,7 +678,9 @@ in
       ${testLib.waitActivePython}
       start_all()
       wait_active(stack, "vmauth.service")
-      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "vmstorage.service")
+      wait_active(stack, "vminsert.service")
+      wait_active(stack, "vmselect.service")
       wait_active(stack, "victoriatraces.service")
       wait_active(collector, "alloy.service")
       collector.wait_for_open_port(4318)
@@ -701,7 +707,7 @@ in
           "'http://127.0.0.1:4318/v1/traces'"
       )
       stack.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
           timeout=180,
       )
       stack.wait_until_succeeds(
@@ -2096,7 +2102,9 @@ in
       start_all()
       wait_active(stack, "nginx.service")
       wait_active(stack, "vmauth.service")
-      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "vmstorage.service")
+      wait_active(stack, "vminsert.service")
+      wait_active(stack, "vmselect.service")
       wait_active(collector, "alloy.service")
       stack.systemctl("start network-online.target")
       collector.systemctl("start network-online.target")
@@ -2109,7 +2117,7 @@ in
       collector.wait_until_succeeds("ping -c 1 stack")
 
       stack.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
           timeout=120,
       )
       # The data really arrived over TLS, through nginx.
@@ -2144,7 +2152,9 @@ in
       ${testLib.waitActivePython}
       start_all()
       wait_active(stack, "vmauth.service")
-      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "vmstorage.service")
+      wait_active(stack, "vminsert.service")
+      wait_active(stack, "vmselect.service")
       wait_active(collector, "alloy.service")
       stack.systemctl("start network-online.target")
       collector.systemctl("start network-online.target")
@@ -2157,7 +2167,7 @@ in
       collector.wait_until_succeeds("ping -c 1 stack")
 
       stack.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
           timeout=120,
       )
       collector.succeed("test -n \"$(ls -A /run/alloy-queue-test)\"")
@@ -2205,7 +2215,9 @@ in
       ${testLib.waitActivePython}
       start_all()
       wait_active(stack, "vmauth.service")
-      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "vmstorage.service")
+      wait_active(stack, "vminsert.service")
+      wait_active(stack, "vmselect.service")
       wait_active(stack, "victorialogs.service")
       wait_active(stack, "victoriatraces.service")
       wait_active(collector, "alloy.service")
@@ -2241,7 +2253,7 @@ in
       )
 
       stack.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
           timeout=120,
       )
       stack.wait_until_succeeds(
@@ -2276,7 +2288,7 @@ in
 
       def instant(query):
           rc, out = stack.execute(
-              f"curl -sf -G http://127.0.0.1:4201/api/v1/query --data-urlencode 'query={query}'"
+              f"curl -sf -G http://127.0.0.1:4201/select/0/prometheus/api/v1/query --data-urlencode 'query={query}'"
           )
           assert rc == 0, out
           return json.loads(out)["data"]["result"]
@@ -2373,7 +2385,9 @@ in
       ${testLib.waitActivePython}
       start_all()
       wait_active(stack, "vmauth.service")
-      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "vmstorage.service")
+      wait_active(stack, "vminsert.service")
+      wait_active(stack, "vmselect.service")
       for c in (collector_a, collector_b):
           wait_active(c, "alloy.service")
       for m in (stack, collector_a, collector_b):
@@ -2390,7 +2404,7 @@ in
       # could match.)
       for host_type in ("server", "edge-device"):
           stack.wait_until_succeeds(
-              "curl -sfG 'http://127.0.0.1:4201/api/v1/query' "
+              "curl -sfG 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query' "
               f"--data-urlencode 'query=alloy_up{{host_type=\"{host_type}\"}}' "
               "| grep -q '\"value\"'",
               timeout=120,
@@ -2398,7 +2412,7 @@ in
 
       # Both hosts' series are present side by side and distinguishable.
       hosts = stack.succeed(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=alloy_up'"
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=alloy_up'"
       )
       assert "collector-a" in hosts and "collector-b" in hosts, hosts
     '';
@@ -2583,7 +2597,9 @@ in
       ${testLib.waitActivePython}
       start_all()
       wait_active(stack, "vmauth.service")
-      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "vmstorage.service")
+      wait_active(stack, "vminsert.service")
+      wait_active(stack, "vmselect.service")
       wait_active(collector, "alloy.service")
       stack.systemctl("start network-online.target")
       collector.systemctl("start network-online.target")
@@ -2597,17 +2613,17 @@ in
 
       def has(metric):
           return stack.succeed(
-              f"curl -sf 'http://127.0.0.1:4201/api/v1/query?query=count({metric})'"
+              f"curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=count({metric})'"
           )
 
       # Enabled by default, so a pipeline that works at all ships these...
       stack.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=node_cpu_seconds_total' | grep -q '\"value\"'",
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=node_cpu_seconds_total' | grep -q '\"value\"'",
           timeout=180,
       )
       # ...the extra collector's metric arrives...
       stack.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=node_processes_pids' | grep -q '\"value\"'",
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=node_processes_pids' | grep -q '\"value\"'",
           timeout=180,
       )
       # ...and the disabled collector's does not (node_load1 is shipped by
@@ -3899,7 +3915,9 @@ in
 
       start_all()
       wait_active(stack, "victorialogs.service")
-      wait_active(stack, "victoriametrics.service")
+      wait_active(stack, "vmstorage.service")
+      wait_active(stack, "vminsert.service")
+      wait_active(stack, "vmselect.service")
       wait_active(stack, "vmauth.service")
       wait_active(collector, "alloy.service")
       wait_active(collector, "systemd-journal-upload.service", max_restarts=None)

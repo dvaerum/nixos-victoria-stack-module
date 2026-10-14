@@ -14,7 +14,10 @@ component's own choices; this page is purely the connective picture.
 │                              │                     │ out of the box?       │
 ├────────────────────────────┼───────────────────┼──────────────────────┤
 │ services.victoriaStack       │                     │                        │
-│   .metrics                   │ 127.0.0.1:4201      │ No                     │
+│   .metrics (vmselect, reads) │ 127.0.0.1:4201      │ No                     │
+│   .metrics.insert (vminsert)  │ 127.0.0.1:4209      │ No                     │
+│   .metrics.storage (vmstorage)│ 127.0.0.1:4210      │ No -- own HTTP only;   │
+│                                │ (RPC 4211/4212)     │ RPC is loopback, fixed │
 │   .logs                      │ 127.0.0.1:4202      │ No                     │
 │   .traces                     │ 127.0.0.1:4203      │ No                     │
 │   .vmauth (listenAddress)     │ 127.0.0.1:4204      │ No -- internal data    │

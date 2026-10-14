@@ -1,6 +1,6 @@
 { pkgs, nixosModule }:
 
-# vmauth in front of the metrics cluster (`metrics.mode = "cluster"`): client
+# vmauth in front of the metrics cluster: client
 # paths stay `/metrics/...` and `/opentelemetry/...`, vmauth rewrites them to
 # vmselect's `/select/0/prometheus/...` and vminsert's `/insert/0/...`.
 # L1: the rendered url maps; L3: config.json per token tier; L4: the real
@@ -34,12 +34,11 @@ let
     builtins.fromJSON (builtins.readFile (lib.removePrefix "${prefix}=" v));
 
   stack =
-    mode: extra:
+    extra:
     evalWith {
       services.victoriaStack = {
         metrics = {
           enable = true;
-          inherit mode;
         }
         // (extra.metrics or { });
       }
@@ -69,24 +68,20 @@ let
     headers = [ "Authorization:" ];
   };
 
-  cluster = stack "cluster" { };
-  single = stack "single" { };
-  wildcard = stack "cluster" {
+  cluster = stack { };
+  wildcard = stack {
     metrics = {
       listenAddress = "0.0.0.0:4301";
       insert.listenAddress = "[::]:4309";
     };
   };
-  withMcp = stack "cluster" {
+  withMcp = stack {
     metrics.mcp.enable = true;
     logs.enable = true;
     traces.enable = true;
   };
-  logsOnlyCluster = evalWith {
-    services.victoriaStack = {
-      metrics.mode = "cluster";
-      logs.enable = true;
-    };
+  logsOnly = evalWith {
+    services.victoriaStack.logs.enable = true;
   };
 
   afterOf = e: e.config.systemd.services.vmauth.after;
@@ -108,18 +103,13 @@ let
         tenant: a
   '';
 
-  mkRenderTest =
-    mode:
+  renderTest =
     let
-      sel =
-        if mode == "cluster" then
-          "http://127.0.0.1:4201/select/0/prometheus/"
-        else
-          "http://127.0.0.1:4201/";
-      ins = if mode == "cluster" then "http://127.0.0.1:4209/insert/0/" else "http://127.0.0.1:4201/";
+      sel = "http://127.0.0.1:4201/select/0/prometheus/";
+      ins = "http://127.0.0.1:4209/insert/0/";
     in
     pkgs.testers.nixosTest {
-      name = "victoria-stack-vmauth-${mode}-renders-each-token-tier";
+      name = "victoria-stack-vmauth-cluster-renders-each-token-tier";
       containers.machine = {
         imports = [
           module
@@ -128,7 +118,6 @@ let
         services.victoriaStack = {
           metrics = {
             enable = true;
-            inherit mode;
           };
           logs.enable = true;
           tenants.a.accountId = 1;
@@ -169,7 +158,7 @@ let
         assert metrics_routes(users["admin"]) == [READ], users["admin"]
         assert metrics_routes(users["cluster-read-token"]) == [READ], users["cluster-read-token"]
         assert metrics_routes(users["cluster-write-token"]) == [WRITE], users["cluster-write-token"]
-        # Tenant tokens get no metrics route (stage 3) in either mode.
+        # Tenant tokens get no metrics route (stage 3).
         assert metrics_routes(users["cluster-read-tenant-a"]) == [], users["cluster-read-tenant-a"]
         assert metrics_routes(users["cluster-write-tenant-a"]) == [], users["cluster-write-tenant-a"]
         assert metrics_routes(config["unauthorized_user"]["url_map"]) == [WRITE]
@@ -180,12 +169,8 @@ let
             assert secret not in journal, secret
 
         after = machine.succeed("systemctl show vmauth.service -p After --value").split()
-        if "${mode}" == "cluster":
-            assert "vmselect.service" in after and "vminsert.service" in after, after
-            assert "victoriametrics.service" not in after, after
-        else:
-            assert "victoriametrics.service" in after, after
-            assert "vmselect.service" not in after, after
+        assert "vmselect.service" in after and "vminsert.service" in after, after
+        assert "victoriametrics.service" not in after, after
       '';
     };
 
@@ -246,17 +231,10 @@ in
           && (lib.elemAt m 2).url_prefix == "http://127.0.0.1:4203/";
       };
 
-  single-mode-url-maps-are-unchanged = table "vmauth-cluster-single-unchanged" {
-    "read" = urlMapFile "READ_URL_MAP_FILE" single == [ (readEntry "http://127.0.0.1:4201/") ];
-    "write" = urlMapFile "WRITE_URL_MAP_FILE" single == [ (writeEntry "http://127.0.0.1:4201/") ];
-    "open door" =
-      urlMapFile "OPEN_INGEST_PATHS_FILE" single == [ (writeEntry "http://127.0.0.1:4201/") ];
-    "both new urls equal effectiveUrl" =
-      let
-        m = single.config.services.victoriaStack.metrics;
-      in
-      m.effectiveSelectUrl == m.effectiveUrl && m.effectiveInsertUrl == m.effectiveUrl;
-    "an effectiveUrl override still reaches both routes" =
+  # The seam of docs/decisions/0019, per direction: reads follow effectiveUrl,
+  # writes follow effectiveInsertUrl (vminsert is another process).
+  cluster-effective-url-overrides-reach-their-routes = table "vmauth-cluster-effective-urls" {
+    "effectiveUrl reaches the read route and only that" =
       let
         o = evalWith {
           services.victoriaStack.metrics = {
@@ -265,17 +243,25 @@ in
           };
         };
       in
-      urlMapFile "READ_URL_MAP_FILE" o == [ (readEntry "http://metrics.example.test:9/") ]
-      && urlMapFile "WRITE_URL_MAP_FILE" o == [ (writeEntry "http://metrics.example.test:9/") ];
-    "after lists the single-node unit only" =
-      lib.elem "victoriametrics.service" (afterOf single)
-      && !(lib.any (u: lib.elem u (afterOf single)) [
-        "vmselect.service"
-        "vminsert.service"
-      ]);
-    "package is the metrics package" =
-      single.config.services.victoriaStack.vmauth.package.outPath
-      == single.config.services.victoriaStack.metrics.package.outPath;
+      urlMapFile "READ_URL_MAP_FILE" o
+      == [ (readEntry "http://metrics.example.test:9/select/0/prometheus/") ]
+      && urlMapFile "WRITE_URL_MAP_FILE" o == [ (writeEntry "http://127.0.0.1:4209/insert/0/") ];
+    "effectiveInsertUrl reaches the write route, the open door and the self-monitoring push" =
+      let
+        o = evalWith {
+          services.victoriaStack.metrics = {
+            enable = true;
+            effectiveInsertUrl = "http://insert.example.test:9";
+          };
+        };
+      in
+      urlMapFile "WRITE_URL_MAP_FILE" o == [ (writeEntry "http://insert.example.test:9/insert/0/") ]
+      &&
+        urlMapFile "OPEN_INGEST_PATHS_FILE" o == [ (writeEntry "http://insert.example.test:9/insert/0/") ]
+      && urlMapFile "READ_URL_MAP_FILE" o == [ (readEntry "http://127.0.0.1:4201/select/0/prometheus/") ]
+      && lib.hasInfix "-pushmetrics.url=http://insert.example.test:9/insert/0/prometheus/api/v1/import/prometheus" (
+        lib.concatStringsSep " " (lib.toList o.config.systemd.services.vmauth.serviceConfig.ExecStart)
+      );
   };
 
   cluster-vmauth-orders-after-the-data-path-and-keeps-its-own-package =
@@ -289,18 +275,16 @@ in
         "no MCP unit (they start after vmauth)" = !(lib.any (lib.hasPrefix "mcp-") (afterOf withMcp));
         "package is pkgs.victoriametrics, not the cluster package" =
           cluster.config.services.victoriaStack.vmauth.package.outPath == pkgs.victoriametrics.outPath;
-        "an overridden single-node package is not used for vmauth in cluster mode" =
-          (stack "cluster" { metrics.package = pkgs.hello; })
-          .config.services.victoriaStack.vmauth.package.outPath == pkgs.victoriametrics.outPath;
-        "logs only, cluster switch set: still evaluates" =
-          logsOnlyCluster.config.services.victoriaStack.vmauth.package.outPath
+        "an overridden metrics.package is not used for vmauth" =
+          (stack { metrics.package = pkgs.hello; }).config.services.victoriaStack.vmauth.package.outPath
           == pkgs.victoriametrics.outPath;
+        "logs only: still evaluates, same package" =
+          logsOnly.config.services.victoriaStack.vmauth.package.outPath == pkgs.victoriametrics.outPath;
       };
 
   # --- L3 ---
 
-  cluster-renders-each-token-tier = mkRenderTest "cluster";
-  single-renders-each-token-tier = mkRenderTest "single";
+  cluster-renders-each-token-tier = renderTest;
 
   # --- L4 ---
 
@@ -315,7 +299,6 @@ in
       services.victoriaStack = {
         metrics = {
           enable = true;
-          mode = "cluster";
         };
         vmauth = {
           adminPasswordFile = "${adminPassword}";
@@ -325,6 +308,19 @@ in
           requireAuthForWrites = false;
           # A Prometheus import path for the write tier, as an operator would
           # add it: the module only derives the OTLP route.
+          # The same path on the anonymous door: openIngestPaths replaces the
+          # derived list, so the OTLP route is repeated. The operator's url_prefix
+          # carries the cluster path (docs/decisions/0033).
+          openIngestPaths = [
+            {
+              src_paths = [ "/opentelemetry.*" ];
+              url_prefix = "http://127.0.0.1:4209/insert/0/";
+            }
+            {
+              src_paths = [ "/api/v1/import/prometheus" ];
+              url_prefix = "http://127.0.0.1:4209/insert/0/prometheus/";
+            }
+          ];
           extraWriteUrlMap = [
             {
               src_paths = [ "/api/v1/import/prometheus" ];
@@ -378,6 +374,8 @@ in
       # The anonymous door (requireAuthForWrites = false).
       machine.succeed("${otlpMetricGenerator}/bin/gen-otlp-metric cluster_probe_open 9 > /tmp/otlp-open.bin")
       machine.succeed(f"curl -sf -X POST {PB} --data-binary @/tmp/otlp-open.bin {VMAUTH}/opentelemetry/v1/metrics")
+      # An operator's Prometheus import path on the anonymous door (openIngestPaths).
+      machine.succeed(f"curl -sf -X POST --data-binary 'cluster_probe_open_prom 11' {VMAUTH}/api/v1/import/prometheus")
 
       # ---- reads through vmauth, read token and admin password alike ----
       win = f"start={old_s - 60}&end={old_s + 120}"
@@ -385,6 +383,7 @@ in
           poll(f"curl -sfg {cred} '{VMAUTH}/metrics/api/v1/export?match[]=cluster_probe_prom&{win}'", '"values":\\[7\\]')
           poll(f"curl -sfg {cred} '{VMAUTH}/metrics/api/v1/export?match[]=cluster_probe_otlp&start={old_s}'", '"values":\\[3\\]')
           poll(f"curl -sfg {cred} '{VMAUTH}/metrics/api/v1/export?match[]=cluster_probe_open&start={old_s}'", '"values":\\[9\\]')
+          poll(f"curl -sfg {cred} '{VMAUTH}/metrics/api/v1/export?match[]=cluster_probe_open_prom&start={old_s}'", '"values":\\[11\\]')
           poll(f"curl -sfg {cred} '{VMAUTH}/metrics/api/v1/query?query=cluster_probe_prom&time={old_s + 30}'", '"cluster_probe_prom".*"7"', 30)
           poll(f"curl -sfg {cred} '{VMAUTH}/metrics/api/v1/query_range?query=cluster_probe_prom&{win}&step=30'", '"values":\\[\\[', 30)
           poll(f"curl -sfg {cred} '{VMAUTH}/metrics/api/v1/series?match[]=cluster_probe_prom&{win}'", '"__name__":"cluster_probe_prom"', 30)

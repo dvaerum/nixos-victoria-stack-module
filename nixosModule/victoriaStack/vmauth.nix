@@ -10,11 +10,10 @@ let
   cfg = topCfg.vmauth;
 
   anyBackendEnabled = topCfg.metrics.enable || topCfg.logs.enable || topCfg.traces.enable;
-  # The metrics cluster has no single address: reads go to vmselect, writes to
-  # vminsert, each under a tenant prefix. Tenant 0 only for now.
-  metricsCluster = topCfg.metrics.mode == "cluster";
-  metricsReadPrefix = "${topCfg.metrics.effectiveSelectUrl}${lib.optionalString metricsCluster "/select/0/prometheus"}/";
-  metricsWritePrefix = "${topCfg.metrics.effectiveInsertUrl}${lib.optionalString metricsCluster "/insert/0"}/";
+  # Reads go to vmselect, writes to vminsert, each under a tenant prefix.
+  # Tenant 0 only for now.
+  metricsReadPrefix = "${topCfg.metrics.effectiveSelectUrl}/select/0/prometheus/";
+  metricsWritePrefix = "${topCfg.metrics.effectiveInsertUrl}/insert/0/";
   selfMonitoring = import ./self-monitoring.nix { inherit lib; };
 
   # Applied only to user-supplied text: the module's own %d
@@ -491,20 +490,10 @@ in
       lib.optional (cfg.https.enable && cfg.https.openFirewall) cfg.https.port
       ++ lib.optional (cfg.http.enable && cfg.http.openFirewall) cfg.http.port;
 
-    # vmauth's binary ships inside the SAME victoriametrics package as the
-    # metrics storage server (docs/decisions/0007) -- but that package's
-    # own default is only ever set by metrics.nix's `lib.mkIf
-    # metrics.enable`, so reading `topCfg.metrics.package` unconditionally
-    # throws "has no value defined" whenever vmauth auto-enables from
-    # logs/traces alone with metrics itself off (a real, legitimate case:
-    # vmauth doesn't require metrics specifically, just any backend).
-    # Track metrics' own package when it's enabled (preserving 0007's
-    # actual intent: stay version-matched if someone overrides it), fall
-    # back to the plain upstream package otherwise.
-    services.victoriaStack.vmauth.package = lib.mkDefault (
-      # The cluster binaries have no vmauth, so cluster mode takes the upstream package too.
-      if topCfg.metrics.enable && !metricsCluster then topCfg.metrics.package else pkgs.victoriametrics
-    );
+    # vmauth's binary is not in the cluster tag the metrics package is built
+    # from, so it comes from nixpkgs' victoriametrics (docs/decisions/0007,
+    # 0033); tests/victoriametrics-cluster.nix keeps the two versions equal.
+    services.victoriaStack.vmauth.package = lib.mkDefault pkgs.victoriametrics;
     services.victoriaStack.vmauth.openIngestPaths = lib.mkDefault autoOpenIngestPaths;
 
     # requireAuthForWrites = false already grants unauthenticated write
@@ -568,15 +557,10 @@ in
       after = [
         "network.target"
       ]
-      ++ lib.optionals topCfg.metrics.enable (
-        if metricsCluster then
-          [
-            "vmselect.service"
-            "vminsert.service"
-          ]
-        else
-          [ "victoriametrics.service" ]
-      )
+      ++ lib.optionals topCfg.metrics.enable [
+        "vmselect.service"
+        "vminsert.service"
+      ]
       ++ lib.optional topCfg.logs.enable "victorialogs.service"
       ++ lib.optional topCfg.traces.enable "victoriatraces.service"
       # No MCP unit here: they start after vmauth (they call its read tier),
@@ -678,7 +662,6 @@ in
               selfMonitoring = cfg.selfMonitoring;
               metricsEnabled = topCfg.metrics.enable;
               insertUrl = topCfg.metrics.effectiveInsertUrl;
-              cluster = topCfg.metrics.mode == "cluster";
               job = "vmauth";
             }
           )

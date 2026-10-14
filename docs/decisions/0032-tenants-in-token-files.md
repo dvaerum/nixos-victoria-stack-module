@@ -78,3 +78,7 @@ routes are cut from the closed read allow-list of
 - Changing an `accountId` later orphans the stored data under the old number.
 - A tenant host's collector sends logs and traces only (`metrics.enable = false`);
   its tenant is its write token.
+
+Update: metrics now run on the cluster version, which has native tenants
+([0033](./0033-metrics-cluster-replaces-single-node.md)); vmauth still serves tenant
+0 only until the metrics tenant stage.

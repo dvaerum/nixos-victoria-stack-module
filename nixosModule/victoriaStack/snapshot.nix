@@ -1,5 +1,5 @@
-# The periodic snapshot oneshot + timer, shared by the single-node units of
-# storage-common.nix and vmstorage in cluster mode. A oneshot POSTs to the
+# The periodic snapshot oneshot + timer, shared by the units of
+# storage-common.nix (logs, traces) and vmstorage. A oneshot POSTs to the
 # binary's own snapshot API over loopback (the same trust boundary as every
 # other internal call in this module -- no credential), fired by a timer.
 # Pruning is the binary's own -snapshotsMaxAge, not this unit's job.

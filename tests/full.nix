@@ -67,7 +67,9 @@ in
       start_all()
 
       # Every real unit this configuration stands up.
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmstorage.service")
+      wait_active(machine, "vminsert.service")
+      wait_active(machine, "vmselect.service")
       wait_active(machine, "victorialogs.service")
       wait_active(machine, "victoriatraces.service")
       wait_active(machine, "vmauth.service")
@@ -312,7 +314,7 @@ in
       start_all()
 
       for unit in [
-          "victoriametrics", "victorialogs", "victoriatraces", "vmauth", "grafana",
+          "vmstorage", "vminsert", "vmselect", "victorialogs", "victoriatraces", "vmauth", "grafana",
           "nginx", "mcp-victoriametrics", "mcp-victorialogs", "mcp-victoriatraces",
           "alloy", "systemd-journal-upload",
       ]:

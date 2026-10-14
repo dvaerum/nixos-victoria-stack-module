@@ -60,9 +60,8 @@ let
       defaultText = lib.literalExpression "config.services.victoriaStack.metrics.enable";
       description = ''
         Whether ${binaryName} pushes its own `/metrics` page into the local
-        VictoriaMetrics instance. With `metrics.mode = "cluster"` the push goes
-        straight to vminsert's address (`metrics.insert.listenAddress`, tenant 0),
-        not through vmauth.
+        VictoriaMetrics instance. The push goes straight to vminsert's address
+        (`metrics.insert.listenAddress`, tenant 0), not through vmauth.
 
         - On by default whenever `services.victoriaStack.metrics.enable` is
           true (there is then a database to push into).
@@ -239,14 +238,16 @@ let
       supportsDiskRetention ? false, # victoria-logs / victoria-traces only
       # -syslog.* exists on victoria-logs only.
       supportsSyslog ? false,
-      # Text appended to the descriptions that read differently while
-      # `metrics.mode = "cluster"` (only metrics passes it).
+      # Text appended to the descriptions that read differently for the metrics
+      # cluster (only metrics passes it).
       clusterNote ? { },
+      # Replaces the stock package description (metrics: the cluster package).
+      packageDescription ? "The ${binaryName} package to use. Defaults to pkgs.${name}.",
     }:
     {
       enable = mkEnableOption name;
 
-      package = mkPackageOption' "The ${binaryName} package to use. Defaults to pkgs.${name}.";
+      package = mkPackageOption' packageDescription;
 
       dataDir = mkOption {
         type = types.path;
@@ -716,74 +717,50 @@ in
         defaultListenAddress = "127.0.0.1:4201";
         defaultMcpPort = 4205;
         retentionPeriodNullBehavior = "a 1 month default for this binary, NOT unbounded";
+        packageDescription = ''
+          The package with the cluster binaries (`vminsert`, `vmselect`,
+          `vmstorage`). Defaults to this flake's own
+          `packages/victoriametrics-cluster`, built from upstream's
+          `v<version>-cluster` tag at the version of `pkgs.victoriametrics`
+          (nixpkgs has no cluster package; docs/decisions/0033). A replacement
+          must be version-matched to vmauth's package.
+        '';
         clusterNote = {
           listenAddress = ''
 
-            With `mode = "cluster"` this is the READ API (vmselect). The write API
-            is `insert.listenAddress`; vmstorage's own HTTP address is
+            This is the READ API (vmselect). The write API is
+            `insert.listenAddress`; vmstorage's own HTTP address is
             `storage.listenAddress`.
           '';
           extraFlags = ''
 
-            With `mode = "cluster"` these go to vmselect, the process behind
-            `listenAddress`; `insert.extraFlags` and `storage.extraFlags` take
-            the flags of the other two processes.
+            These go to vmselect, the process behind `listenAddress`;
+            `insert.extraFlags` and `storage.extraFlags` take the flags of the
+            other two processes.
           '';
           dataDir = ''
 
-            With `mode = "cluster"` the data lives in vmstorage, which reads this.
+            The data lives in vmstorage, which reads this.
           '';
           retentionPeriod = ''
 
-            With `mode = "cluster"` this is vmstorage's `-retentionPeriod`.
+            This is vmstorage's `-retentionPeriod`.
           '';
           startupTimeout = ''
 
-            With `mode = "cluster"` this bounds the wait for vmstorage, and the
-            snapshot options (`snapshots.*`) apply to vmstorage as well.
+            This bounds the wait for vmstorage, and the snapshot options
+            (`snapshots.*`) apply to vmstorage as well.
           '';
         };
       }
       // {
-        mode = mkOption {
-          type = types.enum [
-            "single"
-            "cluster"
-          ];
-          default = "single";
-          internal = true;
-          description = ''
-            Transitional switch, internal to the build-up of the metrics cluster:
-            `single` is the VictoriaMetrics single-node binary as before, `cluster`
-            runs vminsert (writes), vmselect (reads) and vmstorage (data) on this
-            host. It exists only so the existing tests can be ported one step at a
-            time; the cluster replaces the single-node path for everyone and this
-            option goes away before any release.
-
-            `insert.*` and `storage.*` have no effect while this is `single`.
-          '';
-        };
-
-        clusterPackage = mkOption {
-          type = types.package;
-          internal = true;
-          description = ''
-            The package with the cluster binaries (`vminsert`, `vmselect`,
-            `vmstorage`). Defaults (via mkDefault) to this flake's own
-            `packages/victoriametrics-cluster`: nixpkgs has no cluster package.
-            `package` keeps meaning the single-node package until the two options
-            are folded together; only used while `mode = "cluster"`.
-          '';
-        };
-
         effectiveSelectUrl = mkOption {
           type = types.str;
           internal = true;
           description = ''
-            Internal: the base URL of the read API (`http://` plus `listenAddress`,
-            a wildcard address mapped to loopback). With `mode = "single"` it equals
-            `effectiveUrl`; with `mode = "cluster"` it is vmselect, and a consumer
-            adds `/select/<accountID>/prometheus`.
+            Internal: the base URL of the read API, vmselect (`http://` plus
+            `listenAddress`, a wildcard address mapped to loopback; equals
+            `effectiveUrl`). A consumer adds `/select/<accountID>/prometheus`.
           '';
         };
 
@@ -791,9 +768,8 @@ in
           type = types.str;
           internal = true;
           description = ''
-            Internal: the base URL of the write API. With `mode = "single"` it
-            equals `effectiveUrl`; with `mode = "cluster"` it is vminsert
-            (`insert.listenAddress`), and a consumer adds `/insert/<accountID>`.
+            Internal: the base URL of the write API, vminsert
+            (`insert.listenAddress`); a consumer adds `/insert/<accountID>`.
           '';
         };
 
@@ -808,8 +784,6 @@ in
               between the processes are fixed on loopback (127.0.0.1:4211 for
               vminsert's store, 127.0.0.1:4212 for vmselect's) and checked against
               every other listener.
-
-              Only used while `mode = "cluster"`.
             '';
           };
 
@@ -822,8 +796,6 @@ in
               flags the module renders itself are rejected at build time:
               `-httpListenAddr*`, `-storageNode`, `-tls*`, `-http.pathPrefix*` and
               `-httpAuth.*`.
-
-              Only used while `mode = "cluster"`.
             '';
           };
         };
@@ -836,8 +808,6 @@ in
               Address vmstorage's own HTTP server listens on (health, snapshots),
               not the data path between the processes. Same rules as
               `listenAddress`.
-
-              Only used while `mode = "cluster"`.
             '';
           };
 
@@ -855,8 +825,6 @@ in
               While `snapshots.enable` is true, `-snapshotAuthKey` is rejected
               here too: vmstorage serves the snapshot endpoint, and the snapshot
               timer sends no key.
-
-              Only used while `mode = "cluster"`.
             '';
           };
         };
@@ -952,7 +920,7 @@ in
         '';
       };
 
-      package = mkPackageOption' "The victoriametrics package vmauth's binary is bundled in. Defaults (via mkDefault) to config.services.victoriaStack.metrics.package -- see docs/decisions/0007-package-override-options.md.";
+      package = mkPackageOption' "The victoriametrics package vmauth's binary is bundled in. Defaults (via mkDefault) to pkgs.victoriametrics: vmauth is not part of the cluster tag that `metrics.package` is built from -- see docs/decisions/0007-package-override-options.md and 0033.";
 
       listenAddress = mkOption {
         type = types.str;

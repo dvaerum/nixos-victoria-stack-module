@@ -8,6 +8,9 @@ let
   testLib = import ./lib.nix { inherit pkgs nixosModule; };
   inherit (testLib) mkWarningFiresCheck mkNoWarningsCheck evalWith;
 
+  # The metrics database's package (docs/decisions/0033).
+  clusterPackage = pkgs.callPackage ../packages/victoriametrics-cluster/package.nix { };
+
   # Option types vs the real binaries' grammars. retentionPeriod and
   # retentionMaxDiskSpaceUsageBytes were plain strings, so "30days" evaluated
   # cleanly and the binary died at start (`cannot parse duration "ays"`). The
@@ -507,7 +510,7 @@ in
 
   metrics-wildcard-readiness-substitutes-loopback = mkWildcardReadinessCheck {
     name = "metrics-wildcard-readiness-substitutes-loopback";
-    serviceName = "victoriametrics";
+    serviceName = "vmselect";
     serviceAttr = "metrics";
   };
 
@@ -523,16 +526,9 @@ in
     serviceAttr = "traces";
   };
 
-  # Previously untested for all 3 storage services: retentionPeriod,
-  # extraFlags, and a listenAddress override all reaching ExecStart /
-  # effectiveUrl correctly. One shared check applied per service rather
-  # than 3x near-identical hand-written tests.
-  metrics-retention-extraoptions-listenaddress-reach-execstart = mkExecStartOptionsCheck {
-    name = "metrics-retention-extraoptions-listenaddress-reach-execstart";
-    serviceName = "victoriametrics";
-    serviceAttr = "metrics";
-  };
-
+  # Previously untested for logs/traces: retentionPeriod, extraFlags, and a
+  # listenAddress override all reaching ExecStart / effectiveUrl correctly.
+  # Metrics' equivalent is the exec-start table in metrics-cluster-units.nix.
   logs-retention-extraoptions-listenaddress-reach-execstart = mkExecStartOptionsCheck {
     name = "logs-retention-extraoptions-listenaddress-reach-execstart";
     serviceName = "victorialogs";
@@ -543,15 +539,6 @@ in
     name = "traces-retention-extraoptions-listenaddress-reach-execstart";
     serviceName = "victoriatraces";
     serviceAttr = "traces";
-  };
-
-  metrics-hardening-profile-and-readiness = mkHardeningCheck {
-    name = "metrics-hardening-profile-and-readiness";
-    serviceName = "victoriametrics";
-    enableModule = {
-      services.victoriaStack.metrics.enable = true;
-    };
-    expectLimitNOFILE = true; # same as nixpkgs' own victoriametrics module
   };
 
   metrics-manage-tmpfiles-default-true-rule-present = mkManageTmpfilesCheck {
@@ -612,22 +599,23 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       start_all()
-      wait_active(machine, "victoriametrics.service")
+      for unit in ["vmstorage", "vminsert", "vmselect"]:
+          wait_active(machine, f"{unit}.service")
       machine.wait_for_open_port(4201)
 
       # Prometheus exposition-format ingest -- the simplest real write path
-      # VictoriaMetrics' own HTTP API supports natively, no extra tooling
-      # needed beyond curl.
+      # the HTTP API supports natively, no extra tooling needed beyond curl.
+      # Written to vminsert, read from vmselect (tenant 0).
       machine.succeed(
           "curl -sf -X POST --data-binary "
           "'victoria_stack_test_metric{label=\"roundtrip\"} 42' "
-          "'http://127.0.0.1:4201/api/v1/import/prometheus'"
+          "'http://127.0.0.1:4209/insert/0/prometheus/api/v1/import/prometheus'"
       )
 
-      # VictoriaMetrics ingestion is not synchronous-to-query -- give it a
-      # moment before asserting the value is queryable.
+      # Ingestion is not synchronous-to-query -- give it a moment before
+      # asserting the value is queryable.
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_test_metric' "
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=victoria_stack_test_metric' "
           "| grep -q '\"value\":\\[.*,\"42\"\\]'"
       )
 
@@ -657,14 +645,15 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       start_all()
-      wait_active(machine, "victoriametrics.service")
+      for unit in ["vmstorage", "vminsert", "vmselect"]:
+          wait_active(machine, f"{unit}.service")
       machine.wait_for_open_port(4201)
 
-      # Confirm it's genuinely running as the static user, not DynamicUser,
+      # Confirm vmstorage is genuinely running as the static user, not DynamicUser,
       # and that the custom dataDir is real and owned correctly -- the
       # whole point of this option combination (docs/decisions/0001).
       user = machine.succeed(
-          "systemctl show victoriametrics.service --property=User --value"
+          "systemctl show vmstorage.service --property=User --value"
       ).strip()
       assert user == "victoriametrics", f"expected static User=victoriametrics, got {user!r}"
 
@@ -685,10 +674,10 @@ in
       machine.succeed(
           "curl -sf -X POST --data-binary "
           "'victoria_stack_static_user_test_metric{label=\"roundtrip\"} 7' "
-          "'http://127.0.0.1:4201/api/v1/import/prometheus'"
+          "'http://127.0.0.1:4209/insert/0/prometheus/api/v1/import/prometheus'"
       )
       machine.wait_until_succeeds(
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_static_user_test_metric' "
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=victoria_stack_static_user_test_metric' "
           "| grep -q victoria_stack_static_user_test_metric"
       )
     '';
@@ -715,20 +704,21 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       machine.start()
-      wait_active(machine, "victoriametrics.service")
-      machine.wait_until_succeeds("curl -sf http://127.0.0.1:4201/health")
-      machine.succeed(
+      for unit in ["vmstorage", "vminsert", "vmselect"]:
+          wait_active(machine, f"{unit}.service")
+      machine.wait_until_succeeds("curl -sf http://127.0.0.1:4210/health")
+      machine.wait_until_succeeds(
           "curl -sf -X POST --data-binary "
           "'victoria_stack_migration_probe{label=\"kept\"} 42' "
-          "'http://127.0.0.1:4201/api/v1/import/prometheus'"
+          "'http://127.0.0.1:4209/insert/0/prometheus/api/v1/import/prometheus'"
       )
       query = (
-          "curl -sf 'http://127.0.0.1:4201/api/v1/query?query=victoria_stack_migration_probe' "
+          "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=victoria_stack_migration_probe' "
           "| grep -q '\"value\":\\[.*,\"42\"\\]'"
       )
       machine.wait_until_succeeds(query)
       # Stopping flushes the in-memory samples to disk, so they survive the flip.
-      machine.succeed("systemctl stop victoriametrics.service")
+      machine.succeed("systemctl stop vmstorage.service")
       assert machine.succeed("test -L /var/lib/victoriametrics && readlink -f /var/lib/victoriametrics").strip() == "/var/lib/private/victoriametrics"
 
       # Flip dynamicUser to false and switch, without migrating.
@@ -738,31 +728,31 @@ in
       # The unit auto-restarts, so it is never steadily "failed"; wait for the
       # binary's own error instead.
       machine.wait_until_succeeds(
-          "journalctl -u victoriametrics.service --no-pager | grep -i 'permission denied'"
+          "journalctl -u vmstorage.service --no-pager | grep -i 'permission denied'"
       )
-      machine.fail("systemctl is-active victoriametrics.service")
+      machine.fail("systemctl is-active vmstorage.service")
       # The tmpfiles rule leaves the symlink to the root-only private dir alone.
       assert machine.succeed("test -L /var/lib/victoriametrics && readlink -f /var/lib/victoriametrics").strip() == "/var/lib/private/victoriametrics"
-      print(machine.succeed("journalctl -u victoriametrics.service --no-pager | tail -n 15"))
+      print(machine.succeed("journalctl -u vmstorage.service --no-pager | tail -n 15"))
 
       # The runbook, step for step.
-      machine.succeed("systemctl stop victoriametrics.service")
+      machine.succeed("systemctl stop vmstorage.service")
       machine.succeed("rm /var/lib/victoriametrics")
       machine.succeed("mv /var/lib/private/victoriametrics /var/lib/victoriametrics")
       machine.succeed("chown -R victoriametrics:victoriametrics /var/lib/victoriametrics")
-      machine.succeed("systemctl reset-failed victoriametrics.service")
-      machine.succeed("systemctl start victoriametrics.service")
-      wait_active(machine, "victoriametrics.service")
-      machine.wait_until_succeeds("curl -sf http://127.0.0.1:4201/health")
-      user = machine.succeed("systemctl show -p User --value victoriametrics.service").strip()
+      machine.succeed("systemctl reset-failed vmstorage.service")
+      machine.succeed("systemctl start vmstorage.service")
+      wait_active(machine, "vmstorage.service")
+      machine.wait_until_succeeds("curl -sf http://127.0.0.1:4210/health")
+      user = machine.succeed("systemctl show -p User --value vmstorage.service").strip()
       assert user == "victoriametrics", f"expected the static user, got {user!r}"
       machine.wait_until_succeeds(query)
 
       # Rollback direction: probe what systemd does with a real directory.
-      machine.succeed("systemctl stop victoriametrics.service")
+      machine.succeed("systemctl stop vmstorage.service")
       machine.succeed("/run/booted-system/bin/switch-to-configuration test 2>&1")
-      wait_active(machine, "victoriametrics.service")
-      machine.wait_until_succeeds("curl -sf http://127.0.0.1:4201/health")
+      wait_active(machine, "vmstorage.service")
+      machine.wait_until_succeeds("curl -sf http://127.0.0.1:4210/health")
       print(machine.succeed("ls -ld /var/lib/victoriametrics /var/lib/private/victoriametrics"))
       assert machine.succeed("test -L /var/lib/victoriametrics && readlink -f /var/lib/victoriametrics").strip() == "/var/lib/private/victoriametrics"
       machine.wait_until_succeeds(query)
@@ -773,7 +763,7 @@ in
     let
       overridePackage = pkgs.symlinkJoin {
         name = "victoriametrics-override-marker";
-        paths = [ pkgs.victoriametrics ];
+        paths = [ clusterPackage ];
       };
     in
     pkgs.testers.nixosTest {
@@ -793,14 +783,15 @@ in
       testScript = ''
         ${testLib.waitActivePython}
         start_all()
-        wait_active(machine, "victoriametrics.service")
-        exec_start = machine.succeed(
-            "systemctl show victoriametrics.service --property=ExecStart --value"
-        )
-        assert "${overridePackage}" in exec_start, (
-            f"expected ExecStart to resolve through the overridden package "
-            f"(${overridePackage}), got: {exec_start!r}"
-        )
+        for unit in ["vmstorage", "vminsert", "vmselect"]:
+            wait_active(machine, f"{unit}.service")
+            exec_start = machine.succeed(
+                f"systemctl show {unit}.service --property=ExecStart --value"
+            )
+            assert "${overridePackage}" in exec_start, (
+                f"expected {unit}'s ExecStart to resolve through the overridden package "
+                f"(${overridePackage}), got: {exec_start!r}"
+            )
       '';
     };
 
@@ -1035,7 +1026,7 @@ in
   metrics-retention-period-doc-states-real-1-month-default = mkRetentionDocCheck {
     name = "metrics-retention-period-doc-states-real-1-month-default";
     serviceAttr = "metrics";
-    binary = "${pkgs.victoriametrics}/bin/victoria-metrics";
+    binary = "${clusterPackage}/bin/vmstorage";
     docClaim = "1 month";
     helpDefault = "1M";
   };
@@ -1315,7 +1306,8 @@ in
               "${attr}: flag reaches ExecStart" = lib.hasInfix flag (execStart viaOld);
             };
           checks =
-            perService "metrics" "victoriametrics"
+            # extraFlags are the read API's (vmselect).
+            perService "metrics" "vmselect"
             // perService "logs" "victorialogs"
             // perService "traces" "victoriatraces";
           failed = lib.filterAttrs (_: ok: !ok) checks;
@@ -1404,7 +1396,8 @@ in
             ];
         };
       checks =
-        perService "metrics" "victoriametrics"
+        # The snapshot API is vmstorage's.
+        perService "metrics" "vmstorage"
         // perService "logs" "victorialogs"
         // perService "traces" "victoriatraces";
       failed = lib.filterAttrs (_: ok: !ok) checks;
@@ -1435,42 +1428,43 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       start_all()
-      wait_active(machine, "victoriametrics.service")
-      machine.wait_for_open_port(4201)
+      for unit in ["vmstorage", "vminsert", "vmselect"]:
+          wait_active(machine, f"{unit}.service")
+      machine.wait_for_open_port(4210)
       import json
 
-      machine.succeed("systemctl start victoriametrics-snapshot.service")
-      listed = json.loads(machine.succeed("curl -sf http://127.0.0.1:4201/snapshot/list"))
+      machine.succeed("systemctl start vmstorage-snapshot.service")
+      listed = json.loads(machine.succeed("curl -sf http://127.0.0.1:4210/snapshot/list"))
       assert listed["snapshots"], f"expected a snapshot, got {listed!r}"
 
       # The schedule is really armed: enabled at boot and counting down.
-      machine.succeed("systemctl is-enabled victoriametrics-snapshot.timer")
-      machine.succeed("systemctl is-active victoriametrics-snapshot.timer")
+      machine.succeed("systemctl is-enabled vmstorage-snapshot.timer")
+      machine.succeed("systemctl is-active vmstorage-snapshot.timer")
       timers = machine.succeed("systemctl list-timers --no-pager")
-      assert "victoriametrics-snapshot.timer" in timers, timers
+      assert "vmstorage-snapshot.timer" in timers, timers
 
       # A deliberately stopped backend stays stopped: the oneshot is skipped
       # (not failed) and does not start it.
-      machine.succeed("systemctl stop victoriametrics.service")
-      machine.succeed("systemctl start victoriametrics-snapshot.service")
-      assert machine.succeed("systemctl is-active victoriametrics.service || true").strip() == "inactive"
-      assert machine.succeed("systemctl is-failed victoriametrics-snapshot.service || true").strip() != "failed"
-      assert machine.succeed("systemctl show -p Result --value victoriametrics-snapshot.service").strip() == "exec-condition"
+      machine.succeed("systemctl stop vmstorage.service")
+      machine.succeed("systemctl start vmstorage-snapshot.service")
+      assert machine.succeed("systemctl is-active vmstorage.service || true").strip() == "inactive"
+      assert machine.succeed("systemctl is-failed vmstorage-snapshot.service || true").strip() != "failed"
+      assert machine.succeed("systemctl show -p Result --value vmstorage-snapshot.service").strip() == "exec-condition"
 
       # An HTTP error from the backend must fail the unit, not just a refused
       # connection: swap the backend for a server that answers every POST
       # with 501 (the skip condition is dropped so the oneshot reaches curl).
-      machine.succeed("mkdir -p /run/systemd/system/victoriametrics-snapshot.service.d")
-      machine.succeed("printf '[Service]\\nExecCondition=\\n' > /run/systemd/system/victoriametrics-snapshot.service.d/no-condition.conf")
+      machine.succeed("mkdir -p /run/systemd/system/vmstorage-snapshot.service.d")
+      machine.succeed("printf '[Service]\\nExecCondition=\\n' > /run/systemd/system/vmstorage-snapshot.service.d/no-condition.conf")
       machine.succeed("systemctl daemon-reload")
       machine.succeed(
           "systemd-run --unit=fake-backend "
-          "${pkgs.python3}/bin/python3 -m http.server 4201 --bind 127.0.0.1 --directory /tmp"
+          "${pkgs.python3}/bin/python3 -m http.server 4210 --bind 127.0.0.1 --directory /tmp"
       )
-      machine.wait_for_open_port(4201)
-      machine.fail("systemctl start --job-mode=ignore-dependencies victoriametrics-snapshot.service")
-      machine.succeed("systemctl is-failed victoriametrics-snapshot.service")
-      journal = machine.succeed("journalctl -u victoriametrics-snapshot.service --no-pager")
+      machine.wait_for_open_port(4210)
+      machine.fail("systemctl start --job-mode=ignore-dependencies vmstorage-snapshot.service")
+      machine.succeed("systemctl is-failed vmstorage-snapshot.service")
+      journal = machine.succeed("journalctl -u vmstorage-snapshot.service --no-pager")
       assert "501" in journal, journal
     '';
   };
@@ -1589,7 +1583,8 @@ in
         logs.enable = true;
         traces.enable = true;
       };
-      url = "-pushmetrics.url=http://127.0.0.1:4201/api/v1/import/prometheus";
+      # Every process pushes to vminsert's tenant-0 import endpoint.
+      url = "-pushmetrics.url=http://127.0.0.1:4209/insert/0/prometheus/api/v1/import/prometheus";
       perUnit = unit: job: {
         "${unit}: on by default when the metrics database is enabled" = lib.hasInfix url (
           execStart byDefault unit
@@ -1604,7 +1599,9 @@ in
           !(lib.hasInfix "pushmetrics" (execStart explicitlyOff unit));
       };
       checks =
-        perUnit "victoriametrics" "victoriametrics"
+        perUnit "vmstorage" "vmstorage"
+        // perUnit "vminsert" "vminsert"
+        // perUnit "vmselect" "vmselect"
         // perUnit "victorialogs" "victorialogs"
         // perUnit "victoriatraces" "victoriatraces"
         // perUnit "vmauth" "vmauth"
@@ -1706,13 +1703,13 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       start_all()
-      for unit in ["victoriametrics", "victorialogs", "victoriatraces", "vmauth"]:
+      for unit in ["vmstorage", "vminsert", "vmselect", "victorialogs", "victoriatraces", "vmauth"]:
           wait_active(machine, f"{unit}.service")
       machine.wait_for_open_port(4201)
 
-      for job in ["victoriametrics", "victorialogs", "victoriatraces", "vmauth"]:
+      for job in ["vmstorage", "vminsert", "vmselect", "victorialogs", "victoriatraces", "vmauth"]:
           machine.wait_until_succeeds(
-              "curl -sfG 'http://127.0.0.1:4201/api/v1/query' "
+              "curl -sfG 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query' "
               f"--data-urlencode 'query=count({{job=\"{job}\"}})' | grep -q '\"value\"'",
               timeout=120,
           )
@@ -1911,9 +1908,7 @@ in
             sc.serviceConfig.TimeoutStartSec == "6min";
         };
       checks =
-        perUnit "metrics" "victoriametrics"
-        // perUnit "logs" "victorialogs"
-        // perUnit "traces" "victoriatraces";
+        perUnit "metrics" "vmstorage" // perUnit "logs" "victorialogs" // perUnit "traces" "victoriatraces";
       failed = lib.filterAttrs (_: ok: !ok) checks;
     in
     if failed == { } then
@@ -1948,7 +1943,7 @@ in
             };
           forEveryService =
             timeout: expectedStart: expectedDeadline:
-            perUnit "metrics" "victoriametrics" timeout expectedStart expectedDeadline
+            perUnit "metrics" "vmstorage" timeout expectedStart expectedDeadline
             // perUnit "logs" "victorialogs" timeout expectedStart expectedDeadline
             // perUnit "traces" "victoriatraces" timeout expectedStart expectedDeadline;
           checks =
@@ -1991,9 +1986,21 @@ in
             };
           };
           expected = {
-            victoriametrics = {
+            vmstorage = {
               kind = "http";
-              target = "http://127.0.0.1:4201/ping";
+              target = "http://127.0.0.1:4210/health";
+              deadline = "300";
+              start = "6min";
+            };
+            vminsert = {
+              kind = "http";
+              target = "http://127.0.0.1:4209/health";
+              deadline = "300";
+              start = "6min";
+            };
+            vmselect = {
+              kind = "http";
+              target = "http://127.0.0.1:4201/health";
               deadline = "300";
               start = "6min";
             };
@@ -2063,9 +2070,9 @@ in
                 enable = true;
                 listenAddress = "[::1]:4201";
               };
-            }).config.systemd.services.victoriametrics.serviceConfig.ExecStartPost;
+            }).config.systemd.services.vmselect.serviceConfig.ExecStartPost;
         in
-        if failed == { } && lib.hasSuffix " 300 http 'http://[::1]:4201/ping'" bracketed then
+        if failed == { } && lib.hasSuffix " 300 http 'http://[::1]:4201/health'" bracketed then
           "echo OK > $out"
         else
           throw "readiness probe rendering wrong for: ${builtins.toJSON (builtins.attrNames failed)} (${bracketed})"
@@ -2150,16 +2157,16 @@ in
                   kind = "http";
                   target = "http://127.0.0.1:${
                     {
-                      metrics = "4201";
+                      metrics = "4210";
                       logs = "4202";
                       traces = "4203";
                     }
                     .${attr}
-                  }/ping";
+                  }/${if attr == "metrics" then "health" else "ping"}";
                 };
           })
           {
-            metrics = "victoriametrics";
+            metrics = "vmstorage";
             logs = "victorialogs";
             traces = "victoriatraces";
           };
@@ -2178,7 +2185,7 @@ in
       (
         let
           units = {
-            metrics = "victoriametrics";
+            metrics = "vmstorage";
             logs = "victorialogs";
             traces = "victoriatraces";
           };
@@ -2189,8 +2196,7 @@ in
               services.victoriaStack = lib.recursiveUpdate (lib.mapAttrs (_: _: { enable = true; }) units) extra;
             };
           defaults = (evaluated { }).config.systemd.services;
-          overridden =
-            (evaluated { metrics.startupTimeout = "45s"; }).config.systemd.services.victoriametrics;
+          overridden = (evaluated { metrics.startupTimeout = "45s"; }).config.systemd.services.vmstorage;
           checks =
             lib.mapAttrs' (
               _: unit:
@@ -2270,26 +2276,19 @@ in
 
     containers.machine = {
       imports = [ module ];
-      services.victoriaStack = {
-        metrics = {
-          enable = true;
-          extraFlags = [ "-noSuchFlag=1" ];
-        };
-        logs = {
-          enable = true;
-          dynamicUser = false;
-          extraFlags = [ "-noSuchFlag=1" ];
-        };
+      services.victoriaStack.logs = {
+        enable = true;
+        dynamicUser = false;
+        extraFlags = [ "-noSuchFlag=1" ];
       };
       # A unit failing in a loop keeps the container's boot job pending.
-      systemd.services.victoriametrics.wantedBy = lib.mkForce [ ];
       systemd.services.victorialogs.wantedBy = lib.mkForce [ ];
     };
 
     testScript = ''
       ${testLib.brokenUnitFailureSeconds}
       start_all()
-      for unit in ["victoriametrics.service", "victorialogs.service"]:
+      for unit in ["victorialogs.service"]:
           took = broken_unit_failure_seconds(machine, unit)
           print(f"{unit}: probe gave up {took:.1f}s after the start, default startupTimeout")
           assert took < 20, f"{unit}: took {took:.1f}s; the default startupTimeout is 300s"
@@ -2401,12 +2400,12 @@ in
       ${testLib.waitActivePython}
       start_all()
       services = [
-          "victoriametrics", "victorialogs", "victoriatraces", "vmauth",
+          "vmstorage", "vminsert", "vmselect", "victorialogs", "victoriatraces", "vmauth",
           "mcp-victoriametrics", "mcp-victorialogs", "mcp-victoriatraces",
       ]
       for unit in services:
           wait_active(dyn, f"{unit}.service")
-      wait_active(static, "victoriametrics.service")
+      wait_active(static, "vmstorage.service")
 
       problems = []
 
@@ -2421,10 +2420,10 @@ in
 
       for unit in services:
           check_running(dyn, unit)
-      check_running(static, "victoriametrics")
+      check_running(static, "vmstorage")
 
       # Oneshots are not running now; their loaded properties are authoritative.
-      for unit in ["victoriametrics-snapshot", "vmauth-secret-restart"]:
+      for unit in ["vmstorage-snapshot", "vmauth-secret-restart"]:
           cap = dyn.succeed(f"systemctl show -p CapabilityBoundingSet --value {unit}.service").strip()
           if cap != "":
               problems.append(f"{unit}: CapabilityBoundingSet={cap}")
@@ -2446,13 +2445,30 @@ in
     in
     pkgs.runCommand "execstart-escapes-systemd-specifiers" { } (
       let
+        # Metrics is the cluster: extraFlags are vmselect's, the data directory
+        # and the snapshot unit are vmstorage's (whose address is storage.listenAddress).
         units = {
-          metrics = "victoriametrics";
-          logs = "victorialogs";
-          traces = "victoriatraces";
+          metrics = {
+            flagUnit = "vmselect";
+            dataUnit = "vmstorage";
+            snapshotUnit = "vmstorage";
+            addressOption = "storage.listenAddress";
+          };
+          logs = {
+            flagUnit = "victorialogs";
+            dataUnit = "victorialogs";
+            snapshotUnit = "victorialogs";
+            addressOption = "listenAddress";
+          };
+          traces = {
+            flagUnit = "victoriatraces";
+            dataUnit = "victoriatraces";
+            snapshotUnit = "victoriatraces";
+            addressOption = "listenAddress";
+          };
         };
         results = lib.mapAttrsToList (
-          attr: unit:
+          attr: u:
           let
             e = evalWith {
               services.victoriaStack.${attr} = {
@@ -2461,20 +2477,19 @@ in
                 dataDir = "/data/100%/\${x}";
               };
             };
-            execStart = e.config.systemd.services.${unit}.serviceConfig.ExecStart;
+            execStart = unit: e.config.systemd.services.${unit}.serviceConfig.ExecStart;
             snapshotStart =
               (evalWith {
-                services.victoriaStack.${attr} = {
+                services.victoriaStack.${attr} = lib.recursiveUpdate {
                   enable = true;
                   snapshots.enable = true;
-                  listenAddress = "127.0.0.1:1%h";
-                };
-              }).config.systemd.services."${unit}-snapshot".serviceConfig.ExecStart;
+                } (lib.setAttrByPath (lib.splitString "." u.addressOption) "127.0.0.1:1%h");
+              }).config.systemd.services."${u.snapshotUnit}-snapshot".serviceConfig.ExecStart;
           in
           {
-            "${attr}: extraFlags escaped" = lib.hasInfix escaped execStart;
-            "${attr}: no raw %h left" = !(lib.hasInfix "p%h" execStart);
-            "${attr}: dataDir escaped" = lib.hasInfix "/data/100%%/$${x}" execStart;
+            "${attr}: extraFlags escaped" = lib.hasInfix escaped (execStart u.flagUnit);
+            "${attr}: no raw %h left" = !(lib.hasInfix "p%h" (execStart u.flagUnit));
+            "${attr}: dataDir escaped" = lib.hasInfix "/data/100%%/$${x}" (execStart u.dataUnit);
             "${attr}: snapshot URL escaped" = lib.hasInfix ":1%%h" snapshotStart;
           }
         ) units;
@@ -2504,9 +2519,9 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       start_all()
-      wait_active(machine, "victoriametrics.service")
+      wait_active(machine, "vmselect.service")
       wait_active(machine, "vmauth.service")
-      for unit in ["victoriametrics", "vmauth"]:
+      for unit in ["vmselect", "vmauth"]:
           pid = machine.succeed(f"systemctl show -p MainPID --value {unit}.service").strip()
           cmdline = machine.succeed(f"tr '\\0' '\\n' < /proc/{pid}/cmdline")
           assert "-envflag.prefix=p%h-''${HOME}" in cmdline.splitlines(), f"{unit}: flag was expanded: {cmdline!r}"
@@ -2602,6 +2617,13 @@ in
       # One background job per value: an accepted value has to be seen
       # surviving a few seconds, which in series would take minutes.
       mkdir failures
+      # vmstorage also listens on two RPC ports (8400/8401 by default), which
+      # the concurrent probes would fight over.
+      extra_flags() {
+        case "$1" in
+          */vmstorage) echo "-vminsertAddr=127.0.0.1:0 -vmselectAddr=127.0.0.1:0" ;;
+        esac
+      }
       probe() {
         bin=$1 flag=$2 want=$3
         shift 3
@@ -2609,7 +2631,7 @@ in
           (
             d=$(mktemp -d)
             rc=0
-            out=$(timeout 3 "$bin" -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-$flag=$v" 2>&1) || rc=$?
+            out=$(timeout 3 "$bin" $(extra_flags "$bin") -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-$flag=$v" 2>&1) || rc=$?
             # 124 = still running when the timeout hit, i.e. the flag parsed.
             if [ "$want" = accept ] && [ "$rc" -ne 124 ]; then
               echo "FAIL: $bin did not start with -$flag=$v (rc=$rc): $out" > "failures/$(mktemp -u XXXXXX)"
@@ -2623,7 +2645,7 @@ in
       ${lib.concatMapStrings probe [
         {
           svc = "metrics";
-          bin = "victoria-metrics";
+          bin = "vmstorage";
           flag = "retentionPeriod";
           accepted = retentionAccepted;
           rejected = retentionRejected;
@@ -2644,7 +2666,7 @@ in
         }
         {
           svc = "metrics";
-          bin = "victoria-metrics";
+          bin = "vmstorage";
           flag = "snapshotsMaxAge";
           accepted = snapshotMaxAgeAccepted;
           rejected = snapshotMaxAgeRejected;
@@ -2740,7 +2762,7 @@ in
         ${lib.concatMapStrings binary [
           {
             svc = "metrics";
-            bin = "victoria-metrics";
+            bin = "vmstorage";
             flag = "snapshotAuthKey";
             path = "/snapshot/create";
           }
@@ -2863,7 +2885,7 @@ in
   retention-minimum-matches-the-real-binaries =
     let
       bins = {
-        metrics = "victoria-metrics";
+        metrics = "vmstorage";
         logs = "victoria-logs";
         traces = "victoria-traces";
       };
@@ -2874,12 +2896,19 @@ in
     in
     pkgs.runCommand "retention-minimum-matches-the-real-binaries" { } ''
       mkdir failures
+      # vmstorage also listens on two RPC ports (8400/8401 by default), which
+      # the concurrent probes would fight over.
+      extra_flags() {
+        case "$1" in
+          */vmstorage) echo "-vminsertAddr=127.0.0.1:0 -vmselectAddr=127.0.0.1:0" ;;
+        esac
+      }
       probe() {
         bin=$1 v=$2 want=$3
         (
           d=$(mktemp -d)
           rc=0
-          out=$(timeout 3 "$bin" -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-retentionPeriod=$v" 2>&1) || rc=$?
+          out=$(timeout 3 "$bin" $(extra_flags "$bin") -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-retentionPeriod=$v" 2>&1) || rc=$?
           if [ "$want" = start ] && [ "$rc" -ne 124 ]; then
             echo "FAIL: $bin refused -retentionPeriod=$v: $out" > "failures/$(mktemp -u XXXXXX)"
           elif [ "$want" = refuse ] && ! echo "$out" | grep -q "cannot be smaller than a day"; then
@@ -2912,7 +2941,7 @@ in
   retention-maximum-matches-the-real-binaries =
     let
       bins = {
-        metrics = "victoria-metrics";
+        metrics = "vmstorage";
         logs = "victoria-logs";
         traces = "victoria-traces";
       };
@@ -2923,12 +2952,19 @@ in
     in
     pkgs.runCommand "retention-maximum-matches-the-real-binaries" { } ''
       mkdir failures
+      # vmstorage also listens on two RPC ports (8400/8401 by default), which
+      # the concurrent probes would fight over.
+      extra_flags() {
+        case "$1" in
+          */vmstorage) echo "-vminsertAddr=127.0.0.1:0 -vmselectAddr=127.0.0.1:0" ;;
+        esac
+      }
       probe() {
         bin=$1 v=$2 want=$3
         (
           d=$(mktemp -d)
           rc=0
-          out=$(timeout 3 "$bin" -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-retentionPeriod=$v" 2>&1) || rc=$?
+          out=$(timeout 3 "$bin" $(extra_flags "$bin") -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-retentionPeriod=$v" 2>&1) || rc=$?
           if [ "$want" = start ] && [ "$rc" -ne 124 ]; then
             echo "FAIL: $bin refused -retentionPeriod=$v: $out" > "failures/$(mktemp -u XXXXXX)"
           elif [ "$want" = refuse ] && ! echo "$out" | grep -q "must be smaller than 1200"; then

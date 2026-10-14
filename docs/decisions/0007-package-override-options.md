@@ -22,3 +22,8 @@ silent, easy-to-miss version mismatch between the two in the common case
 (someone bumps `metrics.package`, forgets `vmauth.package` exists as a
 separate knob) — while the rare case of genuinely wanting to decouple them
 stays available via the same option.
+
+Update: `metrics.package` is now the cluster package, which has no vmauth, so
+`vmauth.package` defaults to `pkgs.victoriametrics` again and no longer follows
+`metrics.package`. A check keeps the two versions equal
+([0033](./0033-metrics-cluster-replaces-single-node.md)).

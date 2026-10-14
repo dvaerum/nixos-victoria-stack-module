@@ -1,8 +1,7 @@
-# The three systemd units of the metrics cluster (`metrics.mode = "cluster"`):
-# vmstorage owns the data, vminsert and vmselect are stateless. Mirrors the
-# single-node unit of storage-common.nix (hardening, readiness probe, restart
-# backoff, data directory handling); the process facts come from
-# metrics-cluster.nix.
+# The three systemd units of the metrics cluster: vmstorage owns the data,
+# vminsert and vmselect are stateless. The process facts come from
+# metrics-cluster.nix, the static user and data directory from
+# storage-common.nix.
 {
   config,
   lib,
@@ -13,7 +12,6 @@
 let
   topCfg = config.services.victoriaStack;
   cfg = topCfg.metrics;
-  on = cfg.enable && cfg.mode == "cluster";
 
   cluster = import ./metrics-cluster.nix { inherit lib; };
   procs = cluster.processes cfg;
@@ -59,17 +57,16 @@ let
           ExecStart = lib.escapeShellArgs (
             map escape (
               [
-                "${cfg.clusterPackage}/bin/${proc.binary}"
+                "${cfg.package}/bin/${proc.binary}"
                 "-httpListenAddr=${proc.listenAddr}"
               ]
               ++ cluster.tcp6Flags proc
-              # Each process pushes its own metrics to vminsert, like the
-              # single-node process did to itself (docs/decisions/0026).
+              # Each process pushes its own metrics to vminsert
+              # (docs/decisions/0026).
               ++ selfMonitoring.mkFlags {
                 selfMonitoring = cfg.selfMonitoring;
                 metricsEnabled = cfg.enable;
                 insertUrl = cfg.effectiveInsertUrl;
-                cluster = true;
                 job = proc.binary;
               }
               ++ flags
@@ -92,26 +89,14 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
-        services.victoriaStack.metrics.clusterPackage = lib.mkDefault (
-          pkgs.callPackage ../../packages/victoriametrics-cluster/package.nix { }
-        );
-      }
-
-      # Single mode: both are the one URL of the single-node server, so an
-      # override of `effectiveUrl` still reaches every consumer.
-      {
         services.victoriaStack.metrics = {
-          effectiveSelectUrl = lib.mkDefault (
-            if on then "http://${listen.connectAddr cfg.listenAddress}" else cfg.effectiveUrl
-          );
-          effectiveInsertUrl = lib.mkDefault (
-            if on then "http://${listen.connectAddr cfg.insert.listenAddress}" else cfg.effectiveUrl
-          );
+          effectiveSelectUrl = lib.mkDefault cfg.effectiveUrl;
+          effectiveInsertUrl = lib.mkDefault "http://${listen.connectAddr cfg.insert.listenAddress}";
         };
       }
 
       # The snapshot API is vmstorage's: it is the process that owns the data.
-      (lib.mkIf (on && cfg.snapshots.enable) {
+      (lib.mkIf cfg.snapshots.enable {
         systemd = snapshot.mkUnits {
           inherit (cfg) snapshots;
           service = "vmstorage";
@@ -120,7 +105,7 @@ in
         };
       })
 
-      (lib.mkIf on {
+      {
         systemd.services = {
           vmstorage = mkUnit {
             proc = storage;
@@ -177,7 +162,7 @@ in
             serviceConfig.DynamicUser = true;
           };
         };
-      })
+      }
     ]
   );
 }

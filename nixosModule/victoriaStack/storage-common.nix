@@ -5,7 +5,7 @@
   name, # "metrics" | "logs" | "traces" -- the services.victoriaStack.<name> option subtree
   unitName, # systemd unit + static user/group name, e.g. "victoriametrics"
   binaryName, # binary under ${package}/bin, e.g. "victoria-metrics"
-  packageAttr, # attribute name in pkgs used as <name>.package's default, e.g. "victoriametrics"
+  packageFor, # pkgs -> <name>.package's default, e.g. pkgs: pkgs.victorialogs
   defaultDataDir,
   description,
   # The snapshot API differs per binary (confirmed by probing each):
@@ -18,6 +18,9 @@
   limitNOFILE ? null,
   # -syslog.* exists on victoria-logs only (docs/decisions/0031).
   supportsSyslog ? false,
+  # false for metrics: its units are the cluster's (metrics-cluster-units.nix);
+  # only the shared parts (user, data directory, warnings) come from here.
+  renderUnit ? true,
 }:
 {
   config,
@@ -88,10 +91,6 @@ let
     else
       retentionSeconds >= (maxRetentionMonths + 1) * monthSeconds;
 
-  # `mode` exists on metrics only. In cluster mode the units (and the snapshot
-  # unit of vmstorage) come from metrics-cluster-units.nix.
-  singleUnit = (cfg.mode or "single") == "single";
-
   inherit (import ./exec-escape.nix { inherit lib; }) escape escapeEnvironment;
 in
 {
@@ -111,7 +110,7 @@ in
         # One attrset, not two dotted paths: Nix rejects two definitions
         # of the same dynamic attribute prefix in one set.
         services.victoriaStack.${name} = {
-          package = lib.mkDefault pkgs.${packageAttr};
+          package = lib.mkDefault (packageFor pkgs);
           # docs/decisions/0019's structural seam -- consumers (vmauth, Grafana,
           # the MCP servers, the self-monitoring push) read this, never
           # cfg.listenAddress directly.
@@ -164,7 +163,7 @@ in
         ];
       })
 
-      (lib.mkIf singleUnit {
+      (lib.mkIf renderUnit {
         systemd.services.${unitName} = {
           inherit description;
           wantedBy = [ "multi-user.target" ];
@@ -206,7 +205,6 @@ in
                     selfMonitoring = cfg.selfMonitoring;
                     metricsEnabled = topCfg.metrics.enable;
                     insertUrl = topCfg.metrics.effectiveInsertUrl;
-                    cluster = topCfg.metrics.mode == "cluster";
                     job = unitName;
                   }
                   ++ snapshot.maxAgeFlags cfg.snapshots
@@ -306,7 +304,7 @@ in
       })
 
       # Periodic snapshot creation (snapshot.nix).
-      (lib.mkIf (cfg.snapshots.enable && singleUnit) {
+      (lib.mkIf (cfg.snapshots.enable && renderUnit) {
         systemd = {
           inherit
             (snapshot.mkUnits {

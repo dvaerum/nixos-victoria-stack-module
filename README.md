@@ -35,8 +35,9 @@ The smallest valid configuration:
 }
 ```
 
-That alone gives you a VictoriaMetrics instance listening on loopback, plus
-vmauth, which starts by default whenever a backend is on (also on loopback, with
+That alone gives you the VictoriaMetrics cluster (vminsert, vmselect and
+vmstorage, [0033](./docs/decisions/0033-metrics-cluster-replaces-single-node.md))
+listening on loopback, plus vmauth, which starts by default whenever a backend is on (also on loopback, with
 no users configured). No Grafana, no nginx,
 no collector. A fuller,
 realistic single-host setup (metrics + logs + traces + vmauth with both
@@ -335,6 +336,14 @@ The collector takes over a few things; everything else on those services stays y
 
 What changed incompatibly, and what to do:
 
+- **Metrics is a cluster**
+  ([0033](./docs/decisions/0033-metrics-cluster-replaces-single-node.md)):
+  `victoriametrics.service` is replaced by `vmstorage`, `vminsert` and `vmselect`
+  (`vmstorage-snapshot` for snapshots). Writes straight to a backend go to
+  `:4209` under `/insert/0/...`, reads to `:4201` under `/select/0/prometheus/...`;
+  vmauth's client paths are unchanged. Routes you add in `extraWriteUrlMap`,
+  `extraReadUrlMap` or `openIngestPaths` must point at those paths, and
+  `extraFlags` is per process (`insert.extraFlags`, `storage.extraFlags`).
 - **Ports renumbered** ([0017](./docs/decisions/0017-port-renumbering.md)):
   services now default to `:4201`-`:4207`. Check firewalls and anything that dialled
   `:8428`/`:9428`/`:10428`/`:8880`, or pin the old ports through each `listenAddress`.
@@ -363,12 +372,12 @@ mechanism here would just be a worse version of something you already have:
 - **Systemd resource limits** (`MemoryMax`, `CPUQuota`, etc.) for the
   storage services: `systemd.services.<name>.serviceConfig` already does
   this for every NixOS service. The unit names are a stable contract you
-  can target directly: `victoriametrics`, `victorialogs`, `victoriatraces`,
-  `vmauth`, `mcp-victoriametrics`, `mcp-victorialogs`, `mcp-victoriatraces`.
+  can target directly: `vmstorage`, `vminsert`, `vmselect`, `victorialogs`,
+  `victoriatraces`, `vmauth`, `mcp-victoriametrics`, `mcp-victorialogs`, `mcp-victoriatraces`.
   For example:
 
   ```nix
-  systemd.services.victoriametrics.serviceConfig.MemoryMax = "4G";
+  systemd.services.vmstorage.serviceConfig.MemoryMax = "4G";
   ```
 
 - **Grafana datasource tuning** (which datasource is `isDefault`, custom

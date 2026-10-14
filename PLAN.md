@@ -914,4 +914,5 @@ Tenants, stage 1 (logs and traces; the plan's stage 1):
 - Metrics cluster build-up started: the cluster binaries are packaged
   (`packages/victoriametrics-cluster`, same version as `pkgs.victoriametrics`,
   a guard check and the weekly bump workflow follow it) and the option layout
-  and ports exist behind a transitional `metrics.mode` switch that stage 2 removes.
+  and ports exist (ADR 0033). The transitional `metrics.mode` switch is gone: the
+  cluster replaced the single-node unit and every test was ported.

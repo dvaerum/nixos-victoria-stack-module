@@ -5,9 +5,6 @@ let
   anyBackendEnabled = cfg.metrics.enable || cfg.logs.enable || cfg.traces.enable;
   listen = import ./listen.nix { inherit lib; };
   metricsCluster = import ./metrics-cluster.nix { inherit lib; };
-  # What only exists while the metrics cluster is the thing being built; in
-  # `single` mode insert.* and storage.* are never looked at.
-  clusterOn = cfg.metrics.enable && cfg.metrics.mode == "cluster";
   clusterProcesses = metricsCluster.processes cfg.metrics;
 
   active = cfg.vmauth.enable && anyBackendEnabled;
@@ -125,7 +122,9 @@ let
     ++ lib.optional cfg.traces.enable (
       at "services.victoriaStack.traces.listenAddress" cfg.traces.listenAddress
     )
-    ++ lib.optionals clusterOn (map (l: at l.name l.addr) (metricsCluster.extraListeners cfg.metrics))
+    ++ lib.optionals cfg.metrics.enable (
+      map (l: at l.name l.addr) (metricsCluster.extraListeners cfg.metrics)
+    )
     ++ lib.optional active (at "services.victoriaStack.vmauth.listenAddress" cfg.vmauth.listenAddress)
     ++ lib.optional active (
       at "services.victoriaStack.vmauth.internalListenAddress" cfg.vmauth.internalListenAddress
@@ -193,13 +192,12 @@ let
       name = "metrics";
       active = cfg.metrics.enable;
       inherit (cfg.metrics) extraFlags;
-      # In cluster mode the process behind listenAddress is vmselect.
-      ownedPrefixes = if clusterOn then clusterProcesses.select.ownedPrefixes else storageOwnedPrefixes;
-      ownedNames = if clusterOn then clusterProcesses.select.ownedNames else [ ];
+      # The process behind listenAddress is vmselect.
+      inherit (clusterProcesses.select) ownedPrefixes ownedNames;
       snapshotKeyFlags = [ "snapshotAuthKey" ];
-      # The process serving /snapshot: vmstorage in cluster mode, not the one behind listenAddress.
-      snapshotFlagsOption = if clusterOn then "storage.extraFlags" else "extraFlags";
-      snapshotExtraFlags = if clusterOn then cfg.metrics.storage.extraFlags else cfg.metrics.extraFlags;
+      # The process serving /snapshot is vmstorage, not the one behind listenAddress.
+      snapshotFlagsOption = "storage.extraFlags";
+      snapshotExtraFlags = cfg.metrics.storage.extraFlags;
       alternative = "put nginx in front of the service";
     }
     {
@@ -240,7 +238,7 @@ let
     map
       (proc: {
         name = clusterProcesses.${proc}.option;
-        active = clusterOn;
+        active = cfg.metrics.enable;
         inherit (clusterProcesses.${proc}) extraFlags ownedPrefixes ownedNames;
         alternative = "use the matching typed option, or put nginx in front of the service";
       })
@@ -466,7 +464,7 @@ let
         value = cfg.metrics.listenAddress;
       }
     ]
-    ++ lib.optionals clusterOn [
+    ++ lib.optionals cfg.metrics.enable [
       {
         name = "metrics.insert.listenAddress";
         value = cfg.metrics.insert.listenAddress;

@@ -34,6 +34,6 @@ opposite undermines that premise silently — exactly the kind of gap a
 security-focused reviewer needs to be able to trust the docs not to have.
 </content>
 
-Update: with `metrics.mode = "cluster"` the derived metrics write route
+Update: with the metrics cluster ([0033](./0033-metrics-cluster-replaces-single-node.md)) the derived metrics write route
 (`/opentelemetry.*`) goes to vminsert under `/insert/0/`, for write tokens and
 for the open door alike.

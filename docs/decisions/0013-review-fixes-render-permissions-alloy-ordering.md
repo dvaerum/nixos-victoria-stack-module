@@ -86,3 +86,6 @@ broad nor too narrow for this module's own message set; all three MCP
 packages' hashes/versions/`vendorHash = null` claims were independently
 re-verified against live upstream sources, not just trusted from
 comments.
+
+Update: the metrics MCP server now starts after `vmselect.service`; there is no
+`victoriametrics.service` ([0033](./0033-metrics-cluster-replaces-single-node.md)).

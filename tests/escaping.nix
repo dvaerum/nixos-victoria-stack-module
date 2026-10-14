@@ -108,7 +108,8 @@ let
       };
     in
     [
-      e.config.systemd.services.victoriametrics.serviceConfig.ExecStart
+      # extraFlags are the read API's (vmselect).
+      e.config.systemd.services.vmselect.serviceConfig.ExecStart
       e.config.systemd.services.vmauth.serviceConfig.ExecStart
     ];
 in
@@ -165,7 +166,7 @@ in
       trick = open("${trickFile}").read()
       expected = "-envflag.prefix=" + trick
 
-      for unit in ["victoriametrics", "victorialogs", "victoriatraces", "vmauth"]:
+      for unit in ["vmselect", "victorialogs", "victoriatraces", "vmauth"]:
           # Bounded: a unit that dies on a mangled flag must fail fast.
           machine.wait_until_succeeds(f"systemctl is-active {unit}.service", timeout=120)
           pid = machine.succeed(f"systemctl show {unit}.service --property=MainPID --value").strip()

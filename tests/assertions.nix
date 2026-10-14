@@ -79,22 +79,33 @@ let
   ) flagServices;
   # The snapshot oneshot POSTs without a key, so a flag that makes the service
   # demand one for its snapshot endpoint fails it every run.
+  # `option` is the extraFlags list of the process serving the endpoint (the
+  # metrics cluster's vmstorage, not the one behind listenAddress).
   snapshotKeyFlags = {
-    metrics = "snapshotAuthKey";
-    logs = "partitionManageAuthKey";
-    traces = "partitionManageAuthKey";
+    metrics = {
+      flag = "snapshotAuthKey";
+      option = "storage.extraFlags";
+    };
+    logs = {
+      flag = "partitionManageAuthKey";
+      option = "extraFlags";
+    };
+    traces = {
+      flag = "partitionManageAuthKey";
+      option = "extraFlags";
+    };
   };
   snapshotKeyChecks = lib.concatMapAttrs (
-    svc: flag:
+    svc:
+    { flag, option }:
     let
       mod =
         enable: flags:
         lib.recursiveUpdate flagServices.${svc} {
-          services.victoriaStack.${svc} = {
+          services.victoriaStack.${svc} = lib.recursiveUpdate {
             enable = true;
             snapshots.enable = enable;
-            extraFlags = flags;
-          };
+          } (lib.setAttrByPath (lib.splitString "." option) flags);
         };
     in
     lib.listToAttrs (
@@ -103,7 +114,7 @@ let
           f:
           lib.nameValuePair "${svc}-snapshots-reject-key-flag${slug f}" (mkAssertionFiresCheck {
             name = "${svc}-snapshots-reject-key-flag${slug f}";
-            expectMessageSubstring = "services.victoriaStack.${svc}.snapshots.enable is true but extraFlags contains `${f}`";
+            expectMessageSubstring = "services.victoriaStack.${svc}.snapshots.enable is true but ${option} contains `${f}`";
             module = mod true [ f ];
           })
         )

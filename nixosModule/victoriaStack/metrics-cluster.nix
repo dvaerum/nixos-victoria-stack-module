@@ -2,8 +2,7 @@
 # seen by the assertions and by the unit builder: which address each one binds
 # for HTTP, the fixed loopback ports the processes talk to each other on, and
 # which extraFlags each one owns. Plain data over the `services.victoriaStack.metrics`
-# config, so there is one definition for both. Only meaningful while
-# `metrics.mode = "cluster"`.
+# config, so there is one definition for both.
 { lib }:
 let
   listen = import ./listen.nix { inherit lib; };
@@ -74,7 +73,7 @@ rec {
     };
 
   # Every address the cluster binds, labelled for the collision check. The
-  # read API (`metrics.listenAddress`) is listed by the caller like in single mode.
+  # read API (`metrics.listenAddress`) is listed by the caller.
   extraListeners = cfg: [
     {
       name = "services.victoriaStack.metrics.insert.listenAddress";

@@ -12,7 +12,9 @@ let
   # that must not: nixpkgs-owned units keep their own policy, helpers never restart.
   backedOff = {
     stack = [
-      "victoriametrics"
+      "vmstorage"
+      "vminsert"
+      "vmselect"
       "victorialogs"
       "victoriatraces"
       "vmauth"
@@ -121,22 +123,6 @@ in
     pinsCheck "restart-backoff-stack" stackEval.config.systemd.services
       backedOff.stack;
 
-  cluster-units-carry-the-backoff-and-nothing-else-does =
-    pinsCheck "restart-backoff-cluster"
-      (evalWith {
-        services.victoriaStack.metrics = {
-          enable = true;
-          mode = "cluster";
-        };
-      }).config.systemd.services
-      [
-        "vmstorage"
-        "vminsert"
-        "vmselect"
-        # vmauth comes on with the metrics database.
-        "vmauth"
-      ];
-
   collector-alloy-carries-the-backoff-and-the-others-do-not =
     pinsCheck "restart-backoff-collector" collectorEval.config.systemd.services
       backedOff.collector;
@@ -165,7 +151,6 @@ in
       services.victoriaStack = {
         metrics = {
           enable = true;
-          extraFlags = [ "-noSuchFlag=1" ];
           mcp = {
             enable = true;
             package = pkgs.writeShellScriptBin "mcp-victoriametrics" "exit 3";
@@ -179,18 +164,16 @@ in
         vmauth.extraFlags = [ "-noSuchFlag=1" ];
       };
       # A unit failing in a loop keeps the container's boot job pending.
-      systemd.services =
-        lib.genAttrs [ "victoriametrics" "victorialogs" "vmauth" "mcp-victoriametrics" ]
-          (_: {
-            wantedBy = lib.mkForce [ ];
-          });
+      systemd.services = lib.genAttrs [ "victorialogs" "vmauth" "mcp-victoriametrics" ] (_: {
+        wantedBy = lib.mkForce [ ];
+      });
     };
 
     testScript = ''
       ${delaysPython}
       start_all()
       machine.wait_for_unit("multi-user.target")
-      units = ["victoriametrics", "victorialogs", "vmauth", "mcp-victoriametrics"]
+      units = ["victorialogs", "vmauth", "mcp-victoriametrics"]
       for u in units:
           machine.succeed(f"systemctl start --no-block {u}.service")
       for u in units:
@@ -198,9 +181,9 @@ in
     '';
   };
 
-  # All three at once: vminsert and vmselect `want` vmstorage, and a start job
-  # for a unit waiting out its backoff would cut that wait short. Each unit's
-  # delays must still be the nominal 5, 9, 16.5, 30 s.
+  # All three at once: a start job for a unit waiting out its backoff would cut
+  # that wait short (metrics-cluster-units.nix says why the units carry no
+  # `wants`). Each unit's delays must still be the nominal 5, 9, 16.5, 30 s.
   broken-cluster-units-back-off = pkgs.testers.nixosTest {
     name = "victoria-stack-broken-cluster-units-back-off";
 
@@ -211,7 +194,6 @@ in
       ];
       services.victoriaStack.metrics = {
         enable = true;
-        mode = "cluster";
         extraFlags = [ "-noSuchFlag=1" ];
         insert.extraFlags = [ "-noSuchFlag=1" ];
         storage.extraFlags = [ "-noSuchFlag=1" ];

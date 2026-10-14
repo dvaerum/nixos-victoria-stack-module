@@ -4,18 +4,18 @@ let
   cluster = pkgs.callPackage ../packages/victoriametrics-cluster/package.nix { };
 in
 {
-  # Skew guard: vmauth ships in pkgs.victoriametrics and the cluster
+  # Skew guard: vmauth ships in pkgs.victoriametrics (the default of vmauth.package) and the cluster
   # binaries are built from source, so a nixpkgs bump moves one without the
   # other. Failing here is the signal to bump the cluster package.
-  cluster-version-matches-single-node-package =
-    pkgs.runCommand "cluster-version-matches-single-node-package"
+  cluster-version-matches-vmauth-package =
+    pkgs.runCommand "cluster-version-matches-vmauth-package"
       {
         clusterVersion = cluster.version;
-        singleNodeVersion = pkgs.victoriametrics.version;
+        vmauthVersion = pkgs.victoriametrics.version;
       }
       ''
-        if [ "$clusterVersion" != "$singleNodeVersion" ]; then
-          echo "packages/victoriametrics-cluster is $clusterVersion but pkgs.victoriametrics is $singleNodeVersion: bump the cluster package (version + hash)" >&2
+        if [ "$clusterVersion" != "$vmauthVersion" ]; then
+          echo "packages/victoriametrics-cluster is $clusterVersion but pkgs.victoriametrics is $vmauthVersion: bump the cluster package (version + hash)" >&2
           exit 1
         fi
         touch $out

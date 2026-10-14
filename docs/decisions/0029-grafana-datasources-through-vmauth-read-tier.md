@@ -79,6 +79,6 @@ boundary") was wrong, because Grafana users are not same-host code.
   elsewhere; provisioned datasources are `editable = false`, but Grafana
   Admin can create new ones. That is Grafana's own trust model.
 
-Update: with `metrics.mode = "cluster"` the metrics datasource is unchanged
+Update: with the metrics cluster ([0033](./0033-metrics-cluster-replaces-single-node.md)) the metrics datasource is unchanged
 (vmauth's `/metrics` read tier); every call the plugin makes, the Metrics browser
 pair included, goes through vmauth's rewrite onto vmselect.
