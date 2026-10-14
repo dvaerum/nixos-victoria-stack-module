@@ -774,6 +774,27 @@ in
           '';
         };
 
+        effectiveSelectUrl = mkOption {
+          type = types.str;
+          internal = true;
+          description = ''
+            Internal: the base URL of the read API (`http://` plus `listenAddress`,
+            a wildcard address mapped to loopback). With `mode = "single"` it equals
+            `effectiveUrl`; with `mode = "cluster"` it is vmselect, and a consumer
+            adds `/select/<accountID>/prometheus`.
+          '';
+        };
+
+        effectiveInsertUrl = mkOption {
+          type = types.str;
+          internal = true;
+          description = ''
+            Internal: the base URL of the write API. With `mode = "single"` it
+            equals `effectiveUrl`; with `mode = "cluster"` it is vminsert
+            (`insert.listenAddress`), and a consumer adds `/insert/<accountID>`.
+          '';
+        };
+
         insert = {
           listenAddress = mkOption {
             type = types.str;

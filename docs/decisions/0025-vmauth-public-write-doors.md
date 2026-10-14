@@ -47,3 +47,6 @@ writes       collectors --------------------------> vmauth :8443 (HTTPS)  [vmaut
   nothing like `X-Forwarded-For` handling is needed there. Behind a reverse
   proxy it would not (the setting that fixes that is Enterprise-only): see
   docs/architecture.md, "Client addresses behind a reverse proxy".
+
+Update: with `metrics.mode = "cluster"` the metrics write doors reach vminsert
+under `/insert/0/`; the doors themselves are unchanged.

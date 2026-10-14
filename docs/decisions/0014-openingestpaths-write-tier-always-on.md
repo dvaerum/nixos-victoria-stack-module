@@ -33,3 +33,7 @@ writes, keep my credentialed writers working" but whose code does the
 opposite undermines that premise silently — exactly the kind of gap a
 security-focused reviewer needs to be able to trust the docs not to have.
 </content>
+
+Update: with `metrics.mode = "cluster"` the derived metrics write route
+(`/opentelemetry.*`) goes to vminsert under `/insert/0/`, for write tokens and
+for the open door alike.

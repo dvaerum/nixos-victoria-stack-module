@@ -83,6 +83,17 @@ in
       pkgs.callPackage ../../packages/victoriametrics-cluster/package.nix { }
     );
 
+    # Single mode: both are the one URL of the single-node server, so an
+    # override of `effectiveUrl` still reaches every consumer.
+    services.victoriaStack.metrics = {
+      effectiveSelectUrl = lib.mkDefault (
+        if on then "http://${listen.connectAddr cfg.listenAddress}" else cfg.effectiveUrl
+      );
+      effectiveInsertUrl = lib.mkDefault (
+        if on then "http://${listen.connectAddr cfg.insert.listenAddress}" else cfg.effectiveUrl
+      );
+    };
+
     systemd.services = lib.mkIf on {
       vmstorage = mkUnit {
         proc = storage;

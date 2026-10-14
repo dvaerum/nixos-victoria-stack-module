@@ -10,6 +10,11 @@ let
   cfg = topCfg.vmauth;
 
   anyBackendEnabled = topCfg.metrics.enable || topCfg.logs.enable || topCfg.traces.enable;
+  # The metrics cluster has no single address: reads go to vmselect, writes to
+  # vminsert, each under a tenant prefix. Tenant 0 only for now.
+  metricsCluster = topCfg.metrics.mode == "cluster";
+  metricsReadPrefix = "${topCfg.metrics.effectiveSelectUrl}${lib.optionalString metricsCluster "/select/0/prometheus"}/";
+  metricsWritePrefix = "${topCfg.metrics.effectiveInsertUrl}${lib.optionalString metricsCluster "/insert/0"}/";
   selfMonitoring = import ./self-monitoring.nix { inherit lib; };
 
   # Applied only to user-supplied text: the module's own %d
@@ -168,7 +173,7 @@ let
           "/metrics/federate"
         ];
         drop_src_path_prefix_parts = 1;
-        url_prefix = "${topCfg.metrics.effectiveUrl}/";
+        url_prefix = metricsReadPrefix;
       }
       ++ lib.optional topCfg.logs.enable {
         # VictoriaLogs' entire read API lives under /select/* -- confirmed
@@ -225,7 +230,7 @@ let
   autoOpenIngestPaths =
     lib.optional topCfg.metrics.enable {
       src_paths = [ "/opentelemetry.*" ];
-      url_prefix = "${topCfg.metrics.effectiveUrl}/";
+      url_prefix = metricsWritePrefix;
     }
     ++ lib.optional topCfg.logs.enable {
       src_paths = [ "/insert/journald.*" ];
@@ -497,7 +502,8 @@ in
     # actual intent: stay version-matched if someone overrides it), fall
     # back to the plain upstream package otherwise.
     services.victoriaStack.vmauth.package = lib.mkDefault (
-      if topCfg.metrics.enable then topCfg.metrics.package else pkgs.victoriametrics
+      # The cluster binaries have no vmauth, so cluster mode takes the upstream package too.
+      if topCfg.metrics.enable && !metricsCluster then topCfg.metrics.package else pkgs.victoriametrics
     );
     services.victoriaStack.vmauth.openIngestPaths = lib.mkDefault autoOpenIngestPaths;
 
@@ -562,7 +568,15 @@ in
       after = [
         "network.target"
       ]
-      ++ lib.optional topCfg.metrics.enable "victoriametrics.service"
+      ++ lib.optionals topCfg.metrics.enable (
+        if metricsCluster then
+          [
+            "vmselect.service"
+            "vminsert.service"
+          ]
+        else
+          [ "victoriametrics.service" ]
+      )
       ++ lib.optional topCfg.logs.enable "victorialogs.service"
       ++ lib.optional topCfg.traces.enable "victoriatraces.service"
       # No MCP unit here: they start after vmauth (they call its read tier),
