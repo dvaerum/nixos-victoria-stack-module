@@ -20,6 +20,10 @@ buildGoModule (finalAttrs: {
     hash = "sha256-As1ERHKytCmFRqg3ndcSQFBFg0MBs6M5zyaGUmIntuU=";
   };
 
+  # Upstream 1.5.0 lacks MCP_PASSTHROUGH_HEADERS, which mcp-victoriametrics and
+  # mcp-victorialogs have; drop once upstream ships it.
+  patches = [ ./passthrough.patch ];
+
   vendorHash = null;
 
   subPackages = [ "cmd/mcp-victoriatraces" ];
