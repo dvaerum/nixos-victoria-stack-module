@@ -94,18 +94,26 @@ jobs:
             nix-update --flake "$pkg" --build
           done
 
+      # Not "latest release": the cluster binaries must match the vmauth
+      # that nixpkgs' victoriametrics ships (after update-flake's bump),
+      # and the `-cluster` tag is not a release nix-update would pick.
+      - name: Bump the VictoriaMetrics cluster package to pkgs.victoriametrics' version
+        run: |
+          version=$(nix eval --raw --inputs-from . nixpkgs#victoriametrics.version)
+          nix-update --flake victoriametrics-cluster --version "$version" --build
+
       - name: nix flake check
         run: nix flake check -L
 
       - name: Commit and push if anything changed
         run: |
           if git diff --quiet -- packages/; then
-            echo "no MCP package changes, nothing to commit"
+            echo "no package changes, nothing to commit"
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add packages/
-          git commit -m "mcp: bump package versions"
+          git commit -m "packages: bump versions"
           git pull --rebase
           git push

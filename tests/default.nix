@@ -8,6 +8,7 @@ let
     listen = import ./listen.nix { inherit pkgs nixosModule; };
     docs = import ./docs.nix { inherit pkgs nixosModule; };
     storage = import ./storage.nix { inherit pkgs nixosModule; };
+    cluster-package = import ./victoriametrics-cluster.nix { inherit pkgs nixosModule; };
     vmauth = import ./vmauth.nix { inherit pkgs nixosModule; };
     grafana = import ./grafana.nix { inherit pkgs nixosModule; };
     nginx = import ./nginx.nix { inherit pkgs nixosModule; };
