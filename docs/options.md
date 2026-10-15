@@ -1041,22 +1041,24 @@ rejected at build time too: the snapshot timer sends no key, so it
 would fail every run\. Drop the flag, or disable ` snapshots.enable ` and
 take snapshots yourself\.
 
-The ` syslog.udp ` / ` syslog.tcp ` options own the ` -syslog.listenAddr.* `,
+The syslog listeners (the ` syslog.udp ` / ` syslog.tcp ` / ` syslog.tls ` slots
+and ` syslog.listeners `) own the ` -syslog.listenAddr.* `,
 ` -syslog.extraFields.* ` and ` -syslog.tenantID.* ` arrays of their transport (and the
 ` -syslog.tls `, ` -syslog.tlsCertFile ` and ` -syslog.tlsKeyFile ` arrays
-while a tcp or a tls slot is enabled): those arrays are positional with
+while a tcp or a tls listener exists): those arrays are positional with
 the listeners, so a flag of the same array here is rejected at build
 time\. Every other ` -syslog.* ` flag, and the ` unix ` transport, can be
 passed here freely\.
 
-The ` tcp ` and ` tls ` slots are the first and second tcp listener, so a
+The listeners of one transport are the entries of its arrays in order
+(the slots first, then the ` listeners ` by name; ` tls ` is tcp), so a
 ` -syslog.<name>.tcp ` flag given once (` streamFields `,
-` compressMethod `, …) applies to the ` tcp ` slot only and the ` tls ` slot
-keeps the default; with both slots enabled evaluation warns about it\. Give
-such a flag twice, the ` tcp ` slot’s value first and the ` tls ` slot’s
-second (a blank value means the default)\.
+` compressMethod `, …) applies to the first listener only and the others
+keep the default; with more than one listener of the transport evaluation
+warns about it\. Give such a flag once per listener, in that order
+(a blank value means the default)\.
 
-A unix socket is not a slot (and the module does not test it): pass
+A unix socket is not a listener (and the module does not test it): pass
 ` -syslog.listenAddr.unix=/run/victorialogs/syslog.sock ` here
 (` unixgram:/run/victorialogs/syslog.sock ` for datagrams) and give the
 unit a runtime folder yourself,
@@ -1758,6 +1760,365 @@ false
 
 
 
+## services\.victoriaStack\.logs\.syslog\.listeners
+
+
+
+Named syslog listeners of VictoriaLogs: any number, each with its own
+address, port and tenant, e\.g\. one address per tenant with the same
+transport\. The attribute name is the listener’s name (lower-case
+letters, digits and hyphens, at most 63 characters; it also names the
+listener’s TLS credentials, and it must differ from the name of an
+enabled slot: ` udp `, ` tcp `, ` tls `)\.
+
+The ` udp `, ` tcp ` and ` tls ` slots are shorthand for three of these:
+both feed one ordered list, the slots first, then the listeners by
+name, and the same configuration written either way renders the same
+unit\. The order is the position of a listener in VictoriaLogs’
+positional ` -syslog.* ` arrays, which the module generates from that
+one list, so they cannot drift apart\.
+
+Syslog has no authentication and bypasses vmauth, so the listener a
+packet reaches is the only thing that decides its tenant: keep each
+tenant’s devices on their own address (firewall or VLAN)\. See
+docs/decisions/0035-syslog-listeners-are-a-named-set\.md\.
+
+
+
+*Type:*
+attribute set of (submodule)
+
+
+
+*Default:*
+
+```nix
+{ }
+```
+
+
+
+*Example:*
+
+```nix
+{
+  team-a-udp = { transport = "udp"; ipAddress = "192.0.2.10"; tenant = "team-a"; };
+  team-b-udp = { transport = "udp"; ipAddress = "192.0.2.11"; tenant = "team-b"; };
+  team-b-tls = {
+    transport = "tls";
+    ipAddress = "192.0.2.11";
+    tenant = "team-b";
+    certFile = "/run/secrets/syslog-b.pem";
+    keyFile = "/run/secrets/syslog-b.key";
+  };
+}
+
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.syslog\.listeners\.\<name>\.certFile
+
+
+
+Path (plain string; see ` vmauth.writeTokensFile `) to the PEM
+certificate chain of this listener\. Set together with ` keyFile `;
+required when ` transport ` is ` tls `, and only valid then\. Staged through systemd
+` LoadCredential= `, so it never enters the Nix store and the unit’s
+dynamic user needs no access to the file\.
+
+TLS only encrypts: VictoriaLogs has no client-certificate option for
+syslog, so a client with no certificate is accepted, and the
+minimum version is TLS 1\.3 (` -syslog.tlsMinVersion=TLS12 ` in
+` extraFlags ` allows older devices)\.
+
+Writing this file, or renaming a new file over it, restarts VictoriaLogs automatically,
+since the unit reads a copy made at start\. A secrets manager that instead
+swaps a symlinked directory (sops-nix) does not trigger that watch, so it
+must restart ` victorialogs.service ` itself: with sops-nix, list it in the
+secret’s ` restartUnits `\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.syslog\.listeners\.\<name>\.extraFields
+
+
+
+Fields added to every entry received on this listener
+(` -syslog.extraFields.* `)\. The default labels everything ` source=syslog `;
+override ` source ` or add fields as needed\. ` { } ` adds nothing\.
+
+
+
+*Type:*
+attribute set of string
+
+
+
+*Default:*
+
+```nix
+{
+  source = "syslog";
+}
+```
+
+
+
+*Example:*
+
+```nix
+{
+  site = "lab";
+  source = "router";
+}
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.syslog\.listeners\.\<name>\.ipAddress
+
+
+
+Address the listener binds; required, with no
+default so that nothing opens by accident\. ` 0.0.0.0 ` or ` :: ` accept
+syslog from every network the host is on\. An IPv6 address (contains
+` : `) is bracketed automatically and the unit is started with
+` -enableTCP6 `\.
+
+VictoriaLogs’ syslog ingestion has NO authentication: anyone who can
+reach the port can write log lines, claim any hostname or program name,
+and create new streams (each distinct hostname/app_name/proc_id
+combination is one)\. Bind a specific address and restrict who can
+reach the port with a firewall\. Evaluation warns about a listener on a
+non-loopback address (see ` suppressExposureWarning `), which also sends the logs unencrypted unless the transport is ` tls `\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"192.0.2.10"
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.syslog\.listeners\.\<name>\.keyFile
+
+
+
+Path (plain string) to the PEM private key matching ` certFile `\.
+
+Writing this file, or renaming a new file over it, restarts VictoriaLogs automatically,
+since the unit reads a copy made at start\. A secrets manager that instead
+swaps a symlinked directory (sops-nix) does not trigger that watch, so it
+must restart ` victorialogs.service ` itself: with sops-nix, list it in the
+secret’s ` restartUnits `\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.syslog\.listeners\.\<name>\.openFirewall
+
+
+
+Whether to open the listener’s port in the NixOS firewall
+(` networking.firewall.allowedUDPPorts ` for udp, ` allowedTCPPorts ` for tcp and tls) for every interface\. Off by
+default, since the listener has no authentication: open it only where
+every host that can reach the port may write logs, or restrict it with
+your own firewall rules instead\. It does not change the address the
+listener binds\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.syslog\.listeners\.\<name>\.port
+
+
+
+Port of the listener\. A port below 1024 gives the VictoriaLogs unit
+` CAP_NET_BIND_SERVICE ` (and turns off ` PrivateUsers `, since a
+capability inside a user namespace does not count for binding); the
+unit keeps its empty capability set otherwise\.
+
+
+
+*Type:*
+integer between 1 and 65535 (both inclusive)
+
+
+
+*Default:*
+` 514 ` for ` udp ` and ` tcp `, ` 6514 ` for ` tls `
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.syslog\.listeners\.\<name>\.suppressExposureWarning
+
+
+
+Silences the evaluation warning that this listener accepts unauthenticated syslog (unencrypted unless the transport is ` tls `) from the network
+(an address other than loopback)\. Set it once you have confirmed that a
+firewall or a trusted network restricts who can reach the port; same idea
+as ` suppressDynamicUserWarning `
+(docs/decisions/0009-dynamicuser-warning-not-assertion\.md)\.
+
+
+
+*Type:*
+boolean
+
+
+
+*Default:*
+
+```nix
+false
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.syslog\.listeners\.\<name>\.tenant
+
+
+
+Name of the tenant (` services.victoriaStack.tenants.<name> `) every
+entry received on this listener is stored under
+(` -syslog.tenantID.* `)\. ` null ` keeps the default tenant 0:0\.
+
+Syslog does not pass through vmauth, so this is the ONLY place the
+tenant of a device’s logs is decided: the sender cannot choose it, and
+every device that sends to this listener lands in this tenant\. Give
+devices of different tenants their own listener (their own address or
+port; ` syslog.listeners ` holds as many as needed)\.
+A name that is not a declared tenant is a build error\.
+
+
+
+*Type:*
+null or string
+
+
+
+*Default:*
+
+```nix
+null
+```
+
+
+
+*Example:*
+
+```nix
+"lab"
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
+## services\.victoriaStack\.logs\.syslog\.listeners\.\<name>\.transport
+
+
+
+What the listener speaks: ` udp `, ` tcp `, or ` tls ` (tcp with TLS,
+RFC 5425; needs ` certFile ` and ` keyFile `)\. No default: the
+choice decides what an operator expects to be exposed\.
+
+
+
+*Type:*
+one of “udp”, “tcp”, “tls”
+
+
+
+*Example:*
+
+```nix
+"udp"
+```
+
+*Declared by:*
+ - [nixosModule/victoriaStack/options\.nix](https://github.com/dvaerum/nixos-victoria-stack-module/blob/main/nixosModule/victoriaStack/options.nix)
+
+
+
 ## services\.victoriaStack\.logs\.syslog\.tcp\.enable
 
 
@@ -1967,7 +2328,8 @@ entry received on this listener is stored under
 Syslog does not pass through vmauth, so this is the ONLY place the
 tenant of a device’s logs is decided: the sender cannot choose it, and
 every device that sends to this listener lands in this tenant\. Give
-devices of different tenants their own listener (their own port)\.
+devices of different tenants their own listener (their own address or
+port; ` syslog.listeners ` holds as many as needed)\.
 A name that is not a declared tenant is a build error\.
 
 
@@ -2274,7 +2636,8 @@ entry received on this listener is stored under
 Syslog does not pass through vmauth, so this is the ONLY place the
 tenant of a device’s logs is decided: the sender cannot choose it, and
 every device that sends to this listener lands in this tenant\. Give
-devices of different tenants their own listener (their own port)\.
+devices of different tenants their own listener (their own address or
+port; ` syslog.listeners ` holds as many as needed)\.
 A name that is not a declared tenant is a build error\.
 
 
@@ -2512,7 +2875,8 @@ entry received on this listener is stored under
 Syslog does not pass through vmauth, so this is the ONLY place the
 tenant of a device’s logs is decided: the sender cannot choose it, and
 every device that sends to this listener lands in this tenant\. Give
-devices of different tenants their own listener (their own port)\.
+devices of different tenants their own listener (their own address or
+port; ` syslog.listeners ` holds as many as needed)\.
 A name that is not a declared tenant is a build error\.
 
 
@@ -3091,8 +3455,6 @@ false
 
 ## services\.victoriaStack\.metrics\.retentionPeriod
 
-
-
 How long to retain data for\. ` null ` (the default) means
 whatever vmstorage itself does when the flag is omitted
 entirely (a 1 month default for vmstorage, NOT unbounded) – matching
@@ -3485,6 +3847,8 @@ true
 
 
 ## services\.victoriaStack\.nginx\.domain
+
+
 
 Optional FQDN for the vhost’s ` server_name `\. ` null ` (the
 default) serves on plain IP/hostname with no domain-specific
