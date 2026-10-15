@@ -68,6 +68,14 @@ from the tenant, deploy, and start again at step 2.
    (Administration, Users and access). Every member of the organisation can
    query every datasource in it.
 
+   Grafana also adds every new user to the main organisation as a Viewer
+   (default `[users] auto_assign_org = true`), where the main datasources are,
+   and that user can query them through Grafana's datasource API. For a tenant
+   user, either remove them from the main organisation (Administration, Users
+   and access, Users, the user, Organizations) or set
+   `services.grafana.settings.users.auto_assign_org = false` and add users to
+   organisations yourself.
+
 3. **Set `grafanaOrgId` and `readTokenFile` and deploy.** Both together, or the
    build stops. The id must not be 1 (the organisation of the main
    datasources) and must be different for every tenant.
@@ -93,6 +101,9 @@ from the tenant, deploy, and start again at step 2.
      then Connections, Data sources lists `VictoriaLogs (<tenant>)`,
      `VictoriaTraces (<tenant>)` and, with metrics on, `VictoriaMetrics (<tenant>)`.
      In Explore, pick one and run a query: it shows only that tenant's data.
+     Behind nginx's `/grafana/` sub-path, the two cards on the Connections home
+     page link to a doubled path (`/grafana/grafana/connections/...`, a Grafana
+     13.1.6 bug); use the sidebar or open `/grafana/connections/datasources`.
    - API (the same check):
 
      ```sh
