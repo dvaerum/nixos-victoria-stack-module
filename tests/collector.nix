@@ -2012,6 +2012,10 @@ in
           writeTokenFile = "${writeTokenFixture}";
           hostType = "server";
         };
+        # Widens the window the test must not race: a loaded build server
+        # delays the helper's `systemctl start` the same way.
+        systemd.services.victoria-collector-write-token-appeared.serviceConfig.ExecStartPre =
+          "${pkgs.coreutils}/bin/sleep 6";
         specialisation.changed-helper.configuration = {
           systemd.services.victoria-collector-write-token-appeared.environment.PROBE = "1";
         };
@@ -2024,7 +2028,10 @@ in
       machine.wait_for_unit("victoria-collector-write-token-appeared.path")
       helper = "victoria-collector-write-token-appeared.service"
       invocation = lambda: machine.succeed(f"systemctl show -p InvocationID --value {helper}").strip()
-      machine.wait_until_succeeds(f"test -n \"$(systemctl show -p InvocationID --value {helper})\"")
+      # Active, not merely started: the helper's `systemctl start --no-block
+      # alloy` is only queued once its ExecStart ran, and a queued start after
+      # the stop below would be the helper's, not the switch's.
+      machine.wait_for_unit(helper)
       before = invocation()
 
       machine.succeed("systemctl stop alloy.service")
