@@ -17,16 +17,13 @@ on:
   pull_request:
 
 jobs:
-  flake-check:
+  check:
+    uses: ./.github/workflows/check.yml
+
+  # One stable status for branch protection, whatever the group list is.
+  ci:
+    if: always()
+    needs: check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes auto-allocate-uids cgroups
-            auto-allocate-uids = true
-
-      - name: nix flake check
-        run: nix flake check -L
+      - run: test "${{ needs.check.result }}" = success

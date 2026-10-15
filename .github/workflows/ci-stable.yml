@@ -19,17 +19,11 @@ on:
   pull_request:
 
 jobs:
-  flake-check-stable:
+  resolve:
     runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.stable.outputs.branch }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v27
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes auto-allocate-uids cgroups
-            auto-allocate-uids = true
-
       - name: Resolve current stable NixOS release branch
         id: stable
         run: |
@@ -80,6 +74,9 @@ jobs:
           echo "resolved stable branch: nixos-$candidate"
           echo "branch=nixos-$candidate" >> "$GITHUB_OUTPUT"
 
-      - name: nix flake check against current stable
-        run: |
-          nix flake check -L --override-input nixpkgs "github:NixOS/nixpkgs/${{ steps.stable.outputs.branch }}"
+
+  check:
+    needs: resolve
+    uses: ./.github/workflows/check.yml
+    with:
+      nixpkgs-branch: ${{ needs.resolve.outputs.branch }}

@@ -26,8 +26,9 @@ README.md
 docs/options.md                  — generated via generate-doc.nix, CI-committed
 docs/decisions/NNNN-*.md         — ADRs, terse, WHY only
 .github/workflows/
-  ci.yml                          — nix flake check -L
-  ci-stable.yml                   — dynamic current-stable nixpkgs override
+  ci.yml                          — calls check.yml (docs/decisions/0035)
+  ci-stable.yml                   — same, with the current-stable nixpkgs override
+  check.yml                       — reusable: one matrix job per test group/shard
   update-dependencies.yml         — weekly nixpkgs bump + MCP package bump
                                     (two sequential jobs, docs/decisions/0018)
   update-docs.yml                 — regenerate + commit docs/options.md

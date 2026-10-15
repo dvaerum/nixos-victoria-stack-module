@@ -1,0 +1,116 @@
+name: Check (reusable)
+
+# One job per test group (tests/*.nix, exposed as testSections.<system>.<group>),
+# each evaluating and building only its own checks; groups of more than
+# `shard-size` checks are split into shards (ADR 0035). A single
+# `nix flake check` evaluates all ~630 checks in one process (tens of GB, ~30
+# min) and the 16 GB hosted runner is killed before it finishes building anything.
+#
+# No `concurrency:` here: a called workflow shares its caller's
+# `github.workflow`, so the callers (ci.yml, ci-stable.yml) own it.
+on:
+  workflow_call:
+    inputs:
+      nixpkgs-branch:
+        description: nixpkgs branch to test against; empty keeps the flake.lock pin
+        type: string
+        default: ""
+
+env:
+  # Checks per job. Keeps each job well inside the 14 GB runner disk and far
+  # below the 6 h job limit for the largest groups (vmauth, storage, collector).
+  SHARD_SIZE: 30
+
+jobs:
+  groups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.groups.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes auto-allocate-uids cgroups
+            auto-allocate-uids = true
+
+      # From the flake itself, so a new tests/*.nix file is covered without
+      # touching this workflow. Attribute names only: no derivation is evaluated.
+      - name: List test groups and shards
+        id: groups
+        run: |
+          set -euo pipefail
+          matrix=$(nix eval --json ".#testSections.x86_64-linux" \
+            --apply 'builtins.mapAttrs (_: checks: builtins.length (builtins.attrNames checks))' |
+            jq -c --argjson size "$SHARD_SIZE" '
+              to_entries
+              | map(.key as $group | ((.value + $size - 1) / $size | floor) as $shards
+                    | range(0; $shards) | {group: $group, shard: ., shards: $shards})')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "$matrix" | jq -r '"\(length) jobs"'
+
+  check:
+    needs: groups
+    name: check (${{ matrix.group }} ${{ matrix.shard }}/${{ matrix.shards }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.groups.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Nix's default store is on the root filesystem; the preinstalled
+      # toolchains below are never used and take ~30 GB of it.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache
+          df -h /
+
+      # Hosted runners have /dev/kvm but only root may open it; the VM tests
+      # fall back to software emulation (hours) without this. Must precede the
+      # Nix install: the daemon detects the `kvm` system feature at start.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes auto-allocate-uids cgroups
+            auto-allocate-uids = true
+
+      # Rewrites flake.lock in this throwaway checkout only; the repository's
+      # pin is never touched.
+      - name: Pin nixpkgs to ${{ inputs.nixpkgs-branch }}
+        if: inputs.nixpkgs-branch != ''
+        run: nix flake lock --override-input nixpkgs "github:NixOS/nixpkgs/${{ inputs.nixpkgs-branch }}"
+
+      # nix-eval-jobs workers (scripts/gate.sh) were measured at 15+ GB each on
+      # tests/assertions.nix datadir-accepts-only-plain-absolute-paths and are
+      # SIGKILLed under a 14 GB cap, so they are not used on a 16 GB runner.
+      # --max-jobs 2: each VM test needs about 1-2 GB of RAM next to the evaluator.
+      - name: Evaluate and build ${{ matrix.group }} ${{ matrix.shard }}/${{ matrix.shards }}
+        env:
+          GROUP: ${{ matrix.group }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
+        run: |
+          # shellcheck disable=SC2016 # `${...}` below is Nix, not shell
+          nix build -L --keep-going --no-link --max-jobs 2 --impure \
+            --argstr group "$GROUP" --argstr shard "$SHARD" --argstr shards "$SHARDS" --expr '
+            { group, shard, shards }:
+            let
+              section = (builtins.getFlake "path:${toString ./.}").testSections.${builtins.currentSystem}.${group};
+              names = builtins.attrNames section;
+              s = builtins.fromJSON shard;
+              n = builtins.fromJSON shards;
+              mine = i: i - (i / n) * n == s;
+            in
+            map (i: section.${builtins.elemAt names i})
+              (builtins.filter mine (builtins.genList (i: i) (builtins.length names)))'
