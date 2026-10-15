@@ -125,8 +125,29 @@ let
       text = "# found by a ${reviewer} review\n";
     };
   };
+
+  # The metrics database is a cluster (vminsert/vmselect/vmstorage): no
+  # `victoria-metrics` binary exists, so its option texts must name the real
+  # process (options.nix `processNames`).
+  metricsOptionDescriptions =
+    let
+      eval = lib.evalModules { modules = [ ../nixosModule/victoriaStack/options.nix ]; };
+    in
+    map (o: toString o.description) (
+      lib.filter (o: o ? description) (
+        lib.collect lib.isOption eval.options.services.victoriaStack.metrics
+      )
+    );
+  staleMetricsBinary = lib.filter (lib.hasInfix "victoria-metrics") metricsOptionDescriptions;
 in
 {
+  metrics-option-docs-name-no-missing-binary =
+    assert metricsOptionDescriptions != [ ];
+    if staleMetricsBinary == [ ] then
+      pkgs.runCommand "docs-metrics-option-docs-name-no-missing-binary" { } "touch $out"
+    else
+      throw "a metrics option description names the nonexistent victoria-metrics binary: ${builtins.head staleMetricsBinary}";
+
   references-resolve-and-no-stale-names = pkgs.runCommand "docs-references-resolve" { } ''
     ${lib.getExe docsCheck} ${src}
     touch $out

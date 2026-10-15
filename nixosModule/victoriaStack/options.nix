@@ -51,7 +51,7 @@ let
 
   # Same two options on all 4 services whose binary has the -pushmetrics.*
   # flags (metrics, logs, traces, vmauth) -- see self-monitoring.nix.
-  mkSelfMonitoringOptions = binaryName: {
+  mkSelfMonitoringOptions = pusher: {
     enable = mkOption {
       type = types.bool;
       # The real default is set with mkDefault in assertions.nix (like
@@ -59,7 +59,7 @@ let
       default = false;
       defaultText = lib.literalExpression "config.services.victoriaStack.metrics.enable";
       description = ''
-        Whether ${binaryName} pushes its own `/metrics` page into the local
+        Whether ${pusher} pushes its own `/metrics` page into the local
         VictoriaMetrics instance. The push goes straight to vminsert's address
         (`metrics.insert.listenAddress`, tenant 0), not through vmauth.
 
@@ -76,7 +76,7 @@ let
       type = types.strMatching "([0-9]+(ms|s|m|h))+";
       default = "30s";
       description = ''
-        How often ${binaryName} pushes its own metrics (`-pushmetrics.interval`).
+        How often ${pusher} pushes its own metrics (`-pushmetrics.interval`).
         Only used when `selfMonitoring.enable` is true. The series carry a
         `job` label naming the service, so the four services stay apart.
       '';
@@ -228,6 +228,12 @@ let
       defaultListenAddress,
       defaultMcpPort,
       binaryName,
+      # Which process an option's text names, where the service is not one
+      # binary (the metrics cluster). Every key defaults to `binaryName`, so
+      # logs and traces read as before. data: dataDir, retention, snapshots;
+      # listen: listenAddress; flags: extraFlags; running: "a running <this>"
+      # in startupTimeout; each: who pushes in selfMonitoring.
+      processNames ? { },
       # Each binary's own default when retentionPeriod is omitted, confirmed
       # per binary via its `-help` (metrics 1 month, logs and traces 7 days;
       # none is unbounded).
@@ -244,7 +250,19 @@ let
       clusterNote ? { },
       # Replaces the stock package description (metrics: the cluster package).
       packageDescription ? "The ${binaryName} package to use. Defaults to pkgs.${name}.",
+      # The extraFlags paragraph about the snapshot-key flag.
+      snapshotKeyFlagNote ? ''
+        While `snapshots.enable` is true, the flag that makes the snapshot
+        endpoint demand a key (`-snapshotAuthKey` on VictoriaMetrics,
+        `-partitionManageAuthKey` on VictoriaLogs and VictoriaTraces) is
+        rejected at build time too: the snapshot timer sends no key, so it
+        would fail every run. Drop the flag, or disable `snapshots.enable` and
+        take snapshots yourself.
+      '',
     }:
+    let
+      names = lib.genAttrs [ "data" "listen" "flags" "running" "each" ] (_: binaryName) // processNames;
+    in
     {
       enable = mkEnableOption name;
 
@@ -255,7 +273,7 @@ let
         default = /var/lib/${name};
         defaultText = lib.literalExpression "/var/lib/${name}";
         description = ''
-          Directory the ${binaryName} binary stores its data in
+          Directory the ${names.data} binary stores its data in
           (`-storageDataPath`). Changing this away from the default
           `/var/lib/${name}` -- e.g. to point at an externally-mounted
           dataset -- requires `dynamicUser = false` (static user); see
@@ -274,7 +292,7 @@ let
         type = types.bool;
         default = true;
         description = ''
-          Whether to run ${binaryName} under a systemd `DynamicUser`
+          Whether to run ${names.data} under a systemd `DynamicUser`
           (nixpkgs' own default behavior for these binaries) or a static,
           stable system user. `DynamicUser`'s `StateDirectory` handling
           tries to migrate a pre-existing `dataDir` into a private
@@ -326,7 +344,7 @@ let
         type = types.str;
         default = defaultListenAddress;
         description = ''
-          Address ${binaryName} listens on. Defaults to loopback-only --
+          Address ${names.listen} listens on. Defaults to loopback-only --
           `services.victoriaStack.vmauth` is the sanctioned way to reach it
           from outside this host. Override to `0.0.0.0:<port>` to bypass
           vmauth entirely and expose it directly, if that's deliberately
@@ -362,16 +380,16 @@ let
         example = "30d";
         description = ''
           How long to retain data for. `null` (the default) means
-          whatever ${binaryName} itself does when the flag is omitted
+          whatever ${names.data} itself does when the flag is omitted
           entirely (${retentionPeriodNullBehavior}) -- matching
           upstream's own default rather than imposing an opinionated one.
 
           The minimum is 1 day: a shorter value (`1h`, `23h`, `0`) makes
-          ${binaryName} refuse to start, and evaluation warns about it. A bare
+          ${names.data} refuse to start, and evaluation warns about it. A bare
           number means months, so `1` is one month, not one day.
 
           The maximum is 1200 months (a month counts as 31 days): a longer
-          value (`1201`, `37231d`) makes ${binaryName} refuse to start, and
+          value (`1201`, `37231d`) makes ${names.data} refuse to start, and
           evaluation warns about it. At most 10 digits before and 9 after the
           decimal point are accepted.
         ''
@@ -383,7 +401,7 @@ let
         default = "5m";
         example = "20m";
         description = ''
-          How long the unit's readiness probe waits for a running ${binaryName}
+          How long the unit's readiness probe waits for a running ${names.running}
           to answer before the start counts as failed. systemd's `TimeoutStartSec` is
           derived from it, always one minute longer, so systemd never kills the
           unit before its own probe gives up.
@@ -406,7 +424,7 @@ let
         default = [ ];
         example = [ "-search.maxUniqueTimeseries=300000" ];
         description = ''
-          Extra command-line flags passed straight through to ${binaryName},
+          Extra command-line flags passed straight through to ${names.flags},
           for anything not worth promoting to its own typed option.
 
           Flags that change addressing or auth (`-http.pathPrefix*`, `-tls*`,
@@ -414,12 +432,7 @@ let
           readiness check and self-push use plain http on the known address and path.
           Put nginx in front of the service instead.
 
-          While `snapshots.enable` is true, the flag that makes the snapshot
-          endpoint demand a key (`-snapshotAuthKey` on VictoriaMetrics,
-          `-partitionManageAuthKey` on VictoriaLogs and VictoriaTraces) is
-          rejected at build time too: the snapshot timer sends no key, so it
-          would fail every run. Drop the flag, or disable `snapshots.enable` and
-          take snapshots yourself.
+          ${snapshotKeyFlagNote}
         ''
         + clusterNote.extraFlags or ""
         + lib.optionalString supportsSyslog ''
@@ -539,10 +552,10 @@ let
       };
     }
     // {
-      selfMonitoring = mkSelfMonitoringOptions binaryName;
+      selfMonitoring = mkSelfMonitoringOptions names.each;
 
       snapshots = {
-        enable = mkEnableOption "periodic on-disk snapshot creation (a systemd timer calling ${binaryName}'s own snapshot API)";
+        enable = mkEnableOption "periodic on-disk snapshot creation (a systemd timer calling ${names.data}'s own snapshot API)";
 
         schedule = mkOption {
           type = types.str;
@@ -715,11 +728,23 @@ in
       mkStorageServiceOptions {
         name = "victoriametrics";
         binaryName = "victoria-metrics";
+        processNames = {
+          data = "vmstorage";
+          listen = "vmselect";
+          flags = "vmselect";
+          running = "process of the VictoriaMetrics cluster";
+          each = "each process of the VictoriaMetrics cluster";
+        };
+        snapshotKeyFlagNote = ''
+          The flag that makes the snapshot endpoint demand a key
+          (`-snapshotAuthKey`) belongs to vmstorage, which serves it: it is
+          rejected in `storage.extraFlags` while `snapshots.enable` is true.
+        '';
         # docs/decisions/0017: sequential 4201-4207 scheme, an explicit
         # operator decision, not any binary's own upstream default.
         defaultListenAddress = "127.0.0.1:4201";
         defaultMcpPort = 4205;
-        retentionPeriodNullBehavior = "a 1 month default for this binary, NOT unbounded";
+        retentionPeriodNullBehavior = "a 1 month default for vmstorage, NOT unbounded";
         packageDescription = ''
           The package with the cluster binaries (`vminsert`, `vmselect`,
           `vmstorage`). Defaults to this flake's own
@@ -737,13 +762,8 @@ in
           '';
           extraFlags = ''
 
-            These go to vmselect, the process behind `listenAddress`;
             `insert.extraFlags` and `storage.extraFlags` take the flags of the
             other two processes.
-          '';
-          dataDir = ''
-
-            The data lives in vmstorage, which reads this.
           '';
           retentionPeriod = ''
 
