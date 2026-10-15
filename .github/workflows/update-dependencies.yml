@@ -187,7 +187,10 @@ jobs:
 
   check-packages:
     needs: bump-packages
-    if: needs.bump-packages.outputs.changed == 'true'
+    # `!failure() && !cancelled()` is not optional: an `if:` without a status
+    # function implies `success()`, which is false when ANY ancestor job was
+    # skipped, and push-flake is skipped in every week without a flake.lock change.
+    if: ${{ !failure() && !cancelled() && needs.bump-packages.outputs.changed == 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/check.yml
@@ -196,6 +199,9 @@ jobs:
 
   push-packages:
     needs: [bump-packages, check-packages]
+    # Same reason as check-packages; `result == 'success'` keeps it skipped when
+    # there was nothing to check (check-packages skipped) or a shard failed.
+    if: ${{ !failure() && !cancelled() && needs.check-packages.result == 'success' }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
