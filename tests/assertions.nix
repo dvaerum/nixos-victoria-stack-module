@@ -854,19 +854,22 @@ in
         "logs"
         "traces"
       ];
-      setup = enabled: svc: value: {
-        services.victoriaStack.${svc} = {
+      # One evaluation per value covers all three services: the dataDir
+      # assertions are per service, and a module-system evaluation is what costs.
+      setup = enabled: value: {
+        services.victoriaStack = lib.genAttrs services (_: {
           enable = enabled;
           dataDir = value;
-        };
+        });
       };
       namedFor =
-        enabled: svc: value:
-        lib.any (lib.hasInfix "services.victoriaStack.${svc}.dataDir = ") (
-          map (a: a.message) (
-            builtins.filter (a: !a.assertion) (testLib.evalWith (setup enabled svc value)).config.assertions
-          )
-        );
+        enabled: value:
+        let
+          messages = map (a: a.message) (
+            builtins.filter (a: !a.assertion) (testLib.evalWith (setup enabled value)).config.assertions
+          );
+        in
+        svc: lib.any (lib.hasInfix "services.victoriaStack.${svc}.dataDir = ") messages;
       rejected = [
         "/srv/my data/100%"
         "/srv/a b"
@@ -892,17 +895,21 @@ in
       ];
       verdicts =
         wantNamed: value:
+        let
+          named = namedFor true value;
+        in
         lib.listToAttrs (
           map (svc: {
             name = "${svc} ${builtins.toJSON value}";
-            value = namedFor true svc value == wantNamed;
+            value = named svc == wantNamed;
           }) services
         );
       # A disabled service never renders the unit, so it must not fail the build.
+      namedDisabled = namedFor false "/srv/my data/100%";
       disabled = lib.listToAttrs (
         map (svc: {
           name = "disabled ${svc}";
-          value = !namedFor false svc "/srv/my data/100%";
+          value = !namedDisabled svc;
         }) services
       );
       checks = lib.foldl' (a: b: a // b) disabled (
