@@ -490,9 +490,9 @@ already cover them:
 ## Running the tests
 
 The suite is about 630 checks (`nix flake check -L`), most of them VM or
-container boots. Evaluating it in one process takes the better part of half
-an hour; `nix run .#gate` evaluates it in parallel instead and builds only
-what changed.
+container boots. Evaluating it in one process takes about 12 minutes (731 s
+measured); a cold full `nix flake check` takes about 20 minutes. `nix run .#gate`
+evaluates it in parallel instead and builds only what changed.
 
 ```sh
 nix run .#gate -- --all                    # per task: every check, fail-closed
