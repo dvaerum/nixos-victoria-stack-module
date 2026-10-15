@@ -2626,7 +2626,7 @@ in
             # 124 = still running when the timeout hit, i.e. the flag parsed.
             if [ "$want" = accept ] && [ "$rc" -ne 124 ]; then
               echo "FAIL: $bin did not start with -$flag=$v (rc=$rc): $out" > "failures/$(mktemp -u XXXXXX)"
-            elif [ "$want" = reject ] && ! echo "$out" | grep -q "invalid value"; then
+            elif [ "$want" = reject ] && ! grep -q "invalid value" <<<"$out"; then
               echo "FAIL: $bin parsed -$flag=$v (rc=$rc): $out" > "failures/$(mktemp -u XXXXXX)"
             fi
             rm -rf "$d"
@@ -2901,7 +2901,7 @@ in
           out=$(timeout 3 "$bin" $(extra_flags "$bin") -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-retentionPeriod=$v" 2>&1) || rc=$?
           if [ "$want" = start ] && [ "$rc" -ne 124 ]; then
             echo "FAIL: $bin refused -retentionPeriod=$v: $out" > "failures/$(mktemp -u XXXXXX)"
-          elif [ "$want" = refuse ] && ! echo "$out" | grep -q "cannot be smaller than a day"; then
+          elif [ "$want" = refuse ] && ! grep -q "cannot be smaller than a day" <<<"$out"; then
             echo "FAIL: $bin did not refuse -retentionPeriod=$v as below a day (rc=$rc): $out" > "failures/$(mktemp -u XXXXXX)"
           fi
           rm -rf "$d"
@@ -2956,7 +2956,7 @@ in
           out=$(timeout 3 "$bin" $(extra_flags "$bin") -storageDataPath="$d" -httpListenAddr=127.0.0.1:0 "-retentionPeriod=$v" 2>&1) || rc=$?
           if [ "$want" = start ] && [ "$rc" -ne 124 ]; then
             echo "FAIL: $bin refused -retentionPeriod=$v: $out" > "failures/$(mktemp -u XXXXXX)"
-          elif [ "$want" = refuse ] && ! echo "$out" | grep -q "must be smaller than 1200"; then
+          elif [ "$want" = refuse ] && ! grep -q "must be smaller than 1200" <<<"$out"; then
             echo "FAIL: $bin did not refuse -retentionPeriod=$v as above 1200 months (rc=$rc): $out" > "failures/$(mktemp -u XXXXXX)"
           fi
           rm -rf "$d"
