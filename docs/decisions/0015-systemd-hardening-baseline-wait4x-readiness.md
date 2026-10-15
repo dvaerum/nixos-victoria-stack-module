@@ -44,13 +44,21 @@ apply — none of these binaries implement `sd_notify()` or
 `sd_listen_fds()`, so the readiness signal stays a probe.
 
 The probe is one shared script (`readiness.nix` / `readiness.sh`) used by every unit. It
-retries `wait4x` with a 2-second per-attempt `--timeout` about once a second, and also
+retries `wait4x` with a 2-second per-attempt `--timeout` and a 250 ms poll interval, and also
 watches the unit's main process (`$MAINPID`, which systemd sets for `ExecStartPost`):
 when that process is gone the probe fails at once, naming the unit, instead of
 polling a port nobody will ever listen on. systemd waits for `ExecStartPost`, so a
 plain `wait4x --timeout 5m` left a crashed unit in `activating (start-post)` for the
 whole five minutes. The deadline therefore only bounds how long a *live* but
 unready process is waited for; a slow start is still given all of it.
+
+Update: the poll interval went from 1 s to 250 ms. A unit's start used to end at the
+first poll after its port opened, so on a unit that is ready within a second the wait
+was 0.9 s or 1.9 s depending on the phase of the poll (6 starts of `victorialogs` in
+each of 3 boots: mean about 1.4 s before, about 0.95 s after, floor 0.87 s); chained
+backend boots were about 2 s shorter. `--quiet` keeps the log silent at any rate and
+the probe still ends at once when the main process dies, so only the number of
+loopback connection attempts grows (4x, harmless).
 
 Update: the metrics cluster units (`vmstorage`, `vminsert`, `vmselect`) probe `/health`
 instead of `/ping`, and `LimitNOFILE` sits on the cluster processes that carry it

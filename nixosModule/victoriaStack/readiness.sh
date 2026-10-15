@@ -34,7 +34,7 @@ while true; do
   # wait4x exits 0 when ready and 124 when its --timeout passes without a
   # connection; any other code (usage error) must not be retried until the deadline.
   rc=0
-  wait4x "$kind" "$target" --timeout "${attempt}s" --interval 1s --quiet || rc=$?
+  wait4x "$kind" "$target" --timeout "${attempt}s" --interval 250ms --quiet || rc=$?
   case $rc in
   0) exit 0 ;;
   124) ;;

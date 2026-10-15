@@ -523,6 +523,29 @@ in
     serviceAttr = "traces";
   };
 
+  # The probe's poll interval is a boot-time cost: every unit's start waits
+  # for the next poll after its port opens (1s -> 250ms shortened backend boots
+  # by about 2s, docs/decisions/0015). Reads the BUILT probe script, not the
+  # source file, so a wrapper change cannot bypass it.
+  readiness-probe-polls-every-250ms =
+    let
+      probe = testLib.readinessProbe (
+        (evalWith { services.victoriaStack.logs.enable = true; }).config.systemd.services.victorialogs
+      );
+    in
+    pkgs.runCommand "readiness-probe-polls-every-250ms" { } ''
+      if ! grep -qF -- '--interval 250ms' ${probe.exe}; then
+        echo "readiness probe does not poll every 250ms:" >&2
+        grep -n -- '--interval' ${probe.exe} >&2 || echo "no --interval at all" >&2
+        exit 1
+      fi
+      if grep -qE -- '--interval 1s' ${probe.exe}; then
+        echo "readiness probe still polls every 1s" >&2
+        exit 1
+      fi
+      echo OK > $out
+    '';
+
   # retentionPeriod, extraFlags, and a
   # listenAddress override all reaching ExecStart / effectiveUrl correctly.
   # Metrics' equivalent is the exec-start table in metrics-cluster-units.nix.
