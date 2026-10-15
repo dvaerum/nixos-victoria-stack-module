@@ -2312,7 +2312,8 @@ in
           rc, out = stack.execute(
               "curl -sf http://127.0.0.1:4203/select/jaeger/api/traces/00000000000000000000000000000006"
           )
-          assert rc == 0, out
+          if rc != 0:  # the span has not been stored yet: keep polling
+              return False
 
           def walk(node):
               if isinstance(node, dict):
