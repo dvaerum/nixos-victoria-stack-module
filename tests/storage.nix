@@ -743,7 +743,25 @@ in
 
       # Rollback direction: probe what systemd does with a real directory.
       machine.succeed("systemctl stop vmstorage.service")
-      machine.succeed("/run/booted-system/bin/switch-to-configuration test 2>&1")
+      # systemd (the same migration code in 260 and 261) moves the real directory
+      # itself, but forks the unit's ExecStartPost readiness probe at the same
+      # time as the main process and both run that migration. The one that
+      # loses the race finds /var/lib/<name> already turned into a symlink and
+      # fails the rename with EISDIR: STATE_DIRECTORY, status 238. Which one
+      # wins depends on fork timing (stable's 260.5 loses it in about 3 of 8
+      # boots, unstable's 261.3 in 0 of 8), so the switch may report the unit
+      # failed once; Restart=on-failure then starts it on the finished
+      # migration. Accept that one failure only when it is exactly this error,
+      # and require the unit to come up either way.
+      rc, switch_out = machine.execute(
+          "/run/booted-system/bin/switch-to-configuration test 2>&1"
+      )
+      print(switch_out)
+      if rc != 0:
+          assert rc == 4, f"switch-to-configuration exited {rc}, expected 0 or 4"
+          assert "the following units failed: vmstorage.service" in switch_out, switch_out
+          journal = machine.succeed("journalctl -u vmstorage.service --no-pager")
+          assert "Failed to set up special execution directory in /var/lib: Is a directory" in journal, journal
       wait_active(machine, "vmstorage.service")
       machine.wait_until_succeeds("curl -sf http://127.0.0.1:4210/health")
       print(machine.succeed("ls -ld /var/lib/victoriametrics /var/lib/private/victoriametrics"))

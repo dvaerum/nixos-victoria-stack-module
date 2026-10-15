@@ -56,11 +56,26 @@ A custom `dataDir` follows the same steps with that path in place of
 ## Rollback (false to true)
 
 Flipping back (or rolling back to a generation with `dynamicUser = true`) needs
-no manual step. Probed in the test: with the real directory at
+no manual step, on every systemd the test has covered (260.5 and 261.3 run the
+same code). Probed in the test: with the real directory at
 `/var/lib/<name>`, systemd moves it to `/var/lib/private/<name>`, recreates the
 `/var/lib/<name>` symlink and re-owns the contents for the dynamic user, and
 the old data is served again. Stop the service before the switch so it is not
 writing during the move, then verify as in step 6 of the procedure above.
+
+The first start after the flip can fail once and then recover by itself. systemd
+runs the migration in the service's main process and, at the same moment, in the
+unit's `ExecStartPost` readiness probe. The one that loses the race finds the
+symlink already in place and fails with
+`Failed to set up special execution directory in /var/lib: Is a directory`
+(status `238/STATE_DIRECTORY`). `switch-to-configuration` then exits 4 and lists
+the unit as failed, but `Restart=on-failure` starts it again after
+`RestartSec` (5 s) on the finished migration, and it comes up with the data. No
+manual step is needed or helps: do not move anything by hand. Observed in the
+test's VM: about 3 boots in 8 on systemd 260.5 (nixos-26.05), none in 8 on 261.3
+(unstable); the migration code is identical, so the difference is timing. If the unit
+is still failing after a few restarts, the cause is something else; read its
+journal.
 
 ## Snapshots and backups
 
