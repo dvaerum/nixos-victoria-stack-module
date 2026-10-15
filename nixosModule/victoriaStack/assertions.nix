@@ -123,7 +123,7 @@ let
   syslogListeners = lib.optionals cfg.logs.enable (
     map (
       s:
-      (at "services.victoriaStack.logs.syslog.${s.name}" (listen.hostPort s.slot.ipAddress s.slot.port))
+      (at s.option (listen.hostPort s.slot.ipAddress s.slot.port))
       // {
         proto = s.transport;
       }
@@ -371,18 +371,20 @@ let
   syslogOwnedFlags = lib.optionals cfg.logs.enable (
     lib.filter (f: isSyslogOwned (flagName f)) cfg.logs.extraFlags
   );
-  # -syslog.tls* belong to the tls slot; the tcp arrays are shared by tcp and tls.
+  # -syslog.tls* belong to the tls listeners; the tcp arrays are shared by tcp and tls.
   syslogSlotFor =
     f:
     let
       n = flagName f;
+      slots = "services.victoriaStack.logs.syslog";
+      listeners = "an entry of ${slots}.listeners";
     in
     if lib.hasSuffix ".udp" n then
-      "services.victoriaStack.logs.syslog.udp"
+      "${slots}.udp or ${listeners}"
     else if lib.hasSuffix ".tcp" n then
-      "services.victoriaStack.logs.syslog.tcp or services.victoriaStack.logs.syslog.tls"
+      "${slots}.tcp, ${slots}.tls or ${listeners}"
     else
-      "services.victoriaStack.logs.syslog.tls";
+      "${slots}.tls or ${listeners}";
 
   syslogFlagAssertions = [
     {
@@ -392,39 +394,85 @@ let
           lib.concatMapStringsSep ", " (f: "`${f}` (use ${syslogSlotFor f})") syslogOwnedFlags
         }. The -syslog.* arrays are positional per transport: the module renders
         its own syslog listeners into them, so a hand-written entry would
-        misalign them. Configure the listener through the matching slot option
-        (services.victoriaStack.logs.syslog.udp, .tcp or .tls) instead.
+        misalign them. Configure the listener through the matching option
+        (services.victoriaStack.logs.syslog.udp, .tcp, .tls or .listeners) instead.
       '';
     }
   ];
 
+  syslogEntries = syslogLib.entriesOf cfg.logs.syslog;
+  enabledSyslogEntries = lib.filter (s: s.enable) syslogEntries;
+  syslogListenerEntries = lib.filter (
+    s: s.option == "${syslogOpt}.listeners.${s.name}"
+  ) syslogEntries;
+  syslogOpt = "services.victoriaStack.logs.syslog";
+  syslogSlotEntries = lib.filter (s: s.option == "${syslogOpt}.${s.name}") syslogEntries;
+
   syslogTenants = map (s: {
     assertion = s.slot.tenant == null || cfg.tenants ? ${s.slot.tenant};
     message = ''
-      services.victoriaStack.logs.syslog.${s.name}.tenant is "${s.slot.tenant}", which is
+      ${s.option}.tenant is "${s.slot.tenant}", which is
       not a declared tenant. Declared tenants: ${
         if tenantNames == [ ] then "none" else lib.concatStringsSep ", " tenantNames
       }. Declare it
       under services.victoriaStack.tenants, or set the option to null for the default tenant.
     '';
-  }) (lib.filter (s: s.slot.enable) (syslogLib.slotsOf cfg.logs.syslog));
+  }) enabledSyslogEntries;
 
-  syslogSlotNames = [
-    "udp"
-    "tcp"
-    "tls"
-  ];
+  syslogAssertions = map (s: {
+    assertion = s.slot.ipAddress != null;
+    message =
+      if s.option == "${syslogOpt}.${s.name}" then
+        ''
+          ${s.option}.enable is true but
+          ${s.option}.ipAddress is not set. There is
+          no default address on purpose: syslog has no authentication, so nothing
+          opens until you name the address to bind.
+        ''
+      else
+        ''
+          ${s.option}.ipAddress is not set. There is
+          no default address on purpose: syslog has no authentication, so nothing
+          opens until you name the address to bind.
+        '';
+  }) enabledSyslogEntries;
 
-  syslogAssertions = map (slot: {
-    assertion = !cfg.logs.syslog.${slot}.enable || cfg.logs.syslog.${slot}.ipAddress != null;
-    message = ''
-      services.victoriaStack.logs.syslog.${slot}.enable is true but
-      services.victoriaStack.logs.syslog.${slot}.ipAddress is not set. There is
-      no default address on purpose: syslog has no authentication, so nothing
-      opens until you name the address to bind.
-    '';
-  }) syslogSlotNames;
+  # A listener's name is the key of a set, a credential name and part of a
+  # path unit's name; the enabled slots' names are taken.
+  validListenerName = n: builtins.match "[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?" n != null;
+  syslogListenerNames = lib.attrNames cfg.logs.syslog.listeners;
+  syslogNames =
+    map (n: {
+      assertion = false;
+      message = ''
+        ${syslogOpt}.listeners: "${n}" is not a valid listener name. A name is 1 to 63
+        characters of lower-case letters, digits and hyphens (a-z, 0-9, -), and does not
+        start or end with a hyphen.
+      '';
+    }) (lib.filter (n: !validListenerName n) syslogListenerNames)
+    ++
+      map
+        (n: {
+          assertion = false;
+          message = ''
+            ${syslogOpt}.listeners.${n} is also the name of the `${n}` slot, which is enabled:
+            two listeners would share the name. Rename the listener or disable the slot.
+          '';
+        })
+        (
+          lib.filter (
+            n:
+            lib.elem n [
+              "udp"
+              "tcp"
+              "tls"
+            ]
+            && cfg.logs.syslog.${n}.enable
+          ) syslogListenerNames
+        );
 
+  # The `tls` slot: both files or neither, even while it is disabled. A
+  # listener: both files exactly when its transport is tls.
   syslogTlsFiles = [
     {
       assertion =
@@ -437,25 +485,48 @@ let
         even while the slot is disabled (tls.enable = false), and an enabled slot needs both.
       '';
     }
-  ];
-
-  syslogRequiresLogs = map (slot: {
-    assertion = !cfg.logs.syslog.${slot}.enable || cfg.logs.enable;
+  ]
+  ++ map (s: {
+    assertion = !s.tls || (s.slot.certFile != null && s.slot.keyFile != null);
     message = ''
-      services.victoriaStack.logs.syslog.${slot}.enable requires
-      services.victoriaStack.logs.enable = true -- the listener is part of the
-      VictoriaLogs process, so without it nothing would receive the syslog.
+      ${s.option} needs a certificate: a listener with transport "tls" needs BOTH
+      ${s.option}.certFile and .keyFile (VictoriaLogs serves no TLS without them).
     '';
-  }) syslogSlotNames;
+  }) syslogListenerEntries
+  ++ map (s: {
+    assertion = s.tls || (s.slot.certFile == null && s.slot.keyFile == null);
+    message = ''
+      ${s.option}.certFile and .keyFile are for transport "tls" only, and this
+      listener's transport is "${s.slot.transport}". Remove them, or change the transport.
+    '';
+  }) syslogListenerEntries;
+
+  syslogRequiresLogs =
+    map (s: {
+      assertion = !s.enable || cfg.logs.enable;
+      message = ''
+        ${s.option}.enable requires
+        services.victoriaStack.logs.enable = true -- the listener is part of the
+        VictoriaLogs process, so without it nothing would receive the syslog.
+      '';
+    }) syslogSlotEntries
+    ++ map (s: {
+      assertion = cfg.logs.enable;
+      message = ''
+        ${s.option} is defined but services.victoriaStack.logs.enable is not true --
+        the listener is part of the VictoriaLogs process, so without it nothing would
+        receive the syslog.
+      '';
+    }) syslogListenerEntries;
 
   syslogWarnings = lib.optionals cfg.logs.enable (
     map (
       s:
       let
         addr = listen.hostPort s.slot.ipAddress s.slot.port;
-        option = "services.victoriaStack.logs.syslog.${s.name}";
+        option = s.option;
       in
-      if s.name == "tls" then
+      if s.tls then
         ''
           ${option} listens on ${addr} (tcp, TLS) and
           VictoriaLogs' syslog ingestion has no authentication (docs/decisions/0031).
@@ -543,7 +614,7 @@ let
         }
       ]
       ++ map (s: {
-        name = "logs.syslog.${s.name}.ipAddress";
+        name = "${lib.removePrefix "services.victoriaStack." s.option}.ipAddress";
         value = s.slot.ipAddress;
       }) (syslogLib.active cfg.logs.syslog)
     )
@@ -642,20 +713,26 @@ let
         ]
       );
 
-  # Positional arrays: a single entry reaches the first tcp listener only.
-  syslogSharedArrayWarnings =
+  # Positional arrays: a single entry reaches the first listener of its transport only.
+  syslogSharedArrayWarnings = lib.concatMap (
+    transport:
     let
-      shared = lib.filter (f: syslogLib.isSharedTcpArray (flagName f)) cfg.logs.extraFlags;
+      shared = lib.filter (f: syslogLib.isSharedArray transport (flagName f)) cfg.logs.extraFlags;
+      entries = syslogLib.onTransport cfg.logs.syslog transport;
     in
-    lib.optional (cfg.logs.enable && syslogLib.bothTcpSlots cfg.logs.syslog && shared != [ ]) ''
+    lib.optional (cfg.logs.enable && lib.length entries > 1 && shared != [ ]) ''
       services.victoriaStack.logs.extraFlags contains ${lib.concatStringsSep ", " shared}, an
-      array flag of VictoriaLogs' tcp listeners, while both the tcp and the tls
-      syslog slots are enabled. The array is positional: the tcp slot is the
-      first tcp listener and the tls slot the second, so one entry applies to the
-      tcp slot only and the tls slot keeps the default. Give the flag twice, the
-      tcp slot's value first and the tls slot's second (a blank value means the
-      default), or enable only one of the two slots (docs/decisions/0031).
-    '';
+      array flag of VictoriaLogs' ${transport} listeners, while ${toString (lib.length entries)} syslog listeners
+      share the ${transport} arrays (in order: ${
+        lib.concatMapStringsSep ", " (s: "`${s.name}`") entries
+      }). The array is positional: the
+      first ${transport} listener (`${(lib.head entries).name}`) takes the first entry, the second
+      the second, and so on, so one entry applies to the first listener only and
+      the others keep the default. Give the flag once per listener in that order
+      (twice for two; a blank value means the default), or use fewer listeners
+      (docs/decisions/0031, docs/decisions/0035).
+    ''
+  ) syslogLib.transports;
 
   moduleAssertions =
     tenantAssertions
@@ -667,6 +744,7 @@ let
     ++ syslogTenants
     ++ syslogTlsFiles
     ++ syslogRequiresLogs
+    ++ syslogNames
     ++ addressAssertions
     ++ dataDirAssertions
     ++ domainAssertions;

@@ -404,6 +404,94 @@ let
       startupTimeout = lib.mkDefault "2m";
     });
   };
+  # Sends one syslog message the way a device would: RFC 3164 or 5424, over
+  # UDP, TCP (newline or octet-counting framing) or TLS, with a timestamp of
+  # "now" (VictoriaLogs infers the year of an RFC 3164 stamp).
+  syslogSend =
+    pkgs.writers.writePython3Bin "syslog-send"
+      {
+        flakeIgnore = [
+          "E501"
+          "E302"
+          "E305"
+          "E231"
+          "E722"
+        ];
+      }
+      ''
+        import argparse
+        import datetime
+        import socket
+        import ssl
+
+        p = argparse.ArgumentParser()
+        p.add_argument("--proto", choices=["udp", "tcp", "tls"], required=True)
+        p.add_argument("--host", default="127.0.0.1")
+        p.add_argument("--port", type=int, required=True)
+        p.add_argument("--format", choices=["3164", "5424", "raw"], default="3164")
+        p.add_argument("--framing", choices=["newline", "octet"], default="newline")
+        p.add_argument("--hostname", default="testhost")
+        p.add_argument("--cacert")
+        p.add_argument("--tls-max", choices=["1.2", "1.3"], default="1.3")
+        p.add_argument("--client-cert")
+        p.add_argument("--client-key")
+        p.add_argument("message")
+        a = p.parse_args()
+
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if a.format == "3164":
+            ts = now.strftime("%b %e %H:%M:%S")
+            line = f"<34>{ts} {a.hostname} su[1234]: {a.message}"
+        elif a.format == "5424":
+            ts = now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+            line = f'<165>1 {ts} {a.hostname} evntslog 4321 ID47 [exampleSDID@32473 iut="3" eventSource="Application"] {a.message}'
+        else:
+            line = a.message
+        data = line.encode()
+        if a.proto != "udp":
+            data = f"{len(data)} ".encode() + data if a.framing == "octet" else data + b"\n"
+
+        if a.proto == "udp":
+            s = socket.socket(socket.AF_INET6 if ":" in a.host else socket.AF_INET, socket.SOCK_DGRAM)
+            s.sendto(data, (a.host, a.port))
+        else:
+            s = socket.create_connection((a.host, a.port), timeout=10)
+            if a.proto == "tls":
+                ctx = ssl.create_default_context(cafile=a.cacert)
+                if a.tls_max == "1.2":
+                    ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+                if a.client_cert:
+                    ctx.load_cert_chain(a.client_cert, a.client_key)
+                s = ctx.wrap_socket(s, server_hostname=a.host)
+                print(s.version())
+            s.sendall(data)
+            # Close the way a well-behaved sender does. Closing a TLS 1.3 socket
+            # with unread session tickets resets the connection, and the reset
+            # discards the message the server had not read yet.
+            if a.proto == "tls":
+                s = s.unwrap()
+            s.shutdown(socket.SHUT_WR)
+            s.settimeout(3)
+            try:
+                while s.recv(4096):
+                    pass
+            except OSError:
+                # The data is already sent; a peer that resets while draining
+                # (it refused the stream) changes nothing for the sender.
+                pass
+        s.close()
+      '';
+
+  # Throwaway server certificates (the SAN must cover the address the client
+  # dials); generated at build time, never committed.
+  mkCert =
+    cn: san:
+    pkgs.runCommand "syslog-test-cert-${cn}" { nativeBuildInputs = [ pkgs.openssl ]; } ''
+      mkdir -p $out
+      openssl req -x509 -newkey rsa:2048 -nodes -days 36500 \
+        -subj "/CN=${cn}" -addext "subjectAltName=${san}" \
+        -keyout $out/key.pem -out $out/cert.pem
+    '';
 in
 {
   inherit
@@ -427,5 +515,7 @@ in
     otlpMetricGenerator
     otlpTestPython
     httpTestPython
+    syslogSend
+    mkCert
     ;
 }

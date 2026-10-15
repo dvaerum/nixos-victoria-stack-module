@@ -9,6 +9,10 @@ options, never one `ip:port` string; defaults 514, 514 and 6514) and `extraField
 Anything beyond a slot (a second listener of one transport, a unix socket, tenants,
 stream fields, compression, `-syslog.timezone`) goes through `logs.extraFlags`.
 
+- **Update:** a second listener of one transport no longer goes through `extraFlags`:
+  `logs.syslog.listeners` holds any number of named ones, and the slots are sugar for
+  three of them ([0035](0035-syslog-listeners-are-a-named-set.md)).
+
 - **No default address.** A slot does nothing until `ipAddress` is set; enabling it
   without one is an assertion failure.
 - **Every entry is labelled.** `extraFields` defaults to `{ source = "syslog"; }`,

@@ -170,10 +170,14 @@ listener on a non-loopback address until you set that slot's
 `suppressExposureWarning` (a plain udp or tcp listener lets anyone write logs;
 the `tls` slot is encrypted but still unauthenticated, so its warning says so).
 Ports below 1024 give the
-VictoriaLogs unit `CAP_NET_BIND_SERVICE` and nothing else. Anything beyond the
-three slots (unix sockets, stream fields) goes through `logs.extraFlags`; a slot's
-`tenant` names the declared tenant its rows are stored under (default: tenant 0:0);
-see [`docs/decisions/0031`](./docs/decisions/0031-victorialogs-syslog-listeners.md).
+VictoriaLogs unit `CAP_NET_BIND_SERVICE` and nothing else. A slot's
+`tenant` names the declared tenant its rows are stored under (default: tenant 0:0).
+For more than one listener of a transport (one address per tenant, say) use
+`logs.syslog.listeners`, a set of named listeners that take the same options plus a
+`transport`; the three slots are shorthand for three of them (see [Tenants](#tenants)).
+Unix sockets and stream fields go through `logs.extraFlags`. See
+[`docs/decisions/0031`](./docs/decisions/0031-victorialogs-syslog-listeners.md) and
+[`docs/decisions/0035`](./docs/decisions/0035-syslog-listeners-are-a-named-set.md).
 
 ### Tenants
 
@@ -208,6 +212,40 @@ tenant it names. Declare the tenants once; token files refer to them by name
   };
 }
 ```
+
+Devices that only speak syslog bypass vmauth, so the listener a packet reaches is
+the only thing that decides its tenant. Give each tenant's devices their own address
+and a listener of their own (any number, any transport); keep the network from
+letting one tenant's devices reach another's address (firewall or VLAN). The
+same transport on two addresses is two listeners:
+
+```nix
+{
+  imports = [ victoria-stack-module.nixosModules.victoriaStack ];
+  services.victoriaStack = {
+    tenants = {
+      team-a.accountId = 7;
+      team-b.accountId = 8;
+    };
+    logs.enable = true;
+    logs.syslog.listeners = {
+      team-a-udp = { transport = "udp"; ipAddress = "192.0.2.10"; tenant = "team-a"; };
+      team-b-udp = { transport = "udp"; ipAddress = "192.0.2.11"; tenant = "team-b"; };
+      team-a-tcp = { transport = "tcp"; ipAddress = "192.0.2.10"; port = 1514; tenant = "team-a"; };
+      team-b-tls = {
+        transport = "tls";
+        ipAddress = "192.0.2.11";
+        tenant = "team-b";
+        certFile = "/run/secrets/syslog-b.pem";
+        keyFile = "/run/secrets/syslog-b.key";
+      };
+    };
+  };
+}
+```
+
+The full example is [`examples/syslog-tenants.nix`](./examples/syslog-tenants.nix),
+the design [`docs/decisions/0035`](./docs/decisions/0035-syslog-listeners-are-a-named-set.md).
 
 ```yaml
 # victoria-write-tokens.yaml: one tenant per write token

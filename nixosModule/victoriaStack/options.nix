@@ -91,6 +91,41 @@ let
     secret's `restartUnits`.
   '';
 
+  # The TLS files of a syslog listener: the `tls` slot and every `tls` entry of
+  # `listeners`.
+  mkSyslogTlsFiles =
+    { subject, required }:
+    {
+      certFile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          Path (plain string; see `vmauth.writeTokensFile`) to the PEM
+          certificate chain of ${subject}. Set together with `keyFile`;
+          ${required}. Staged through systemd
+          `LoadCredential=`, so it never enters the Nix store and the unit's
+          dynamic user needs no access to the file.
+
+          TLS only encrypts: VictoriaLogs has no client-certificate option for
+          syslog, so a client with no certificate is accepted, and the
+          minimum version is TLS 1.3 (`-syslog.tlsMinVersion=TLS12` in
+          `extraFlags` allows older devices).
+
+          ${syslogSecretReplacementNote}
+        '';
+      };
+
+      keyFile = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        description = ''
+          Path (plain string) to the PEM private key matching `certFile`.
+
+          ${syslogSecretReplacementNote}
+        '';
+      };
+    };
+
   grafanaSecretReplacementNote = ''
     Writing this file, or renaming a new file over it, restarts Grafana automatically,
     since Grafana reads the token only at start. A secrets manager that instead
@@ -110,24 +145,33 @@ let
     never opened.
   '';
 
-  # One syslog listener (docs/decisions/0031). The slots differ only in
-  # transport and default port; the notes below are shared so every slot says the
-  # same thing about exposure.
+  # The options of one syslog listener (docs/decisions/0031, 0035). The slots
+  # and the entries of `listeners` differ only in how the transport is chosen
+  # (`proto` null: by the listener's own `transport` option) and in the
+  # default port; the notes below are shared so every listener says the same
+  # thing about exposure.
   mkSyslogSlot =
     {
       proto,
       defaultPort,
       encrypted ? false,
     }:
-    {
+    let
+      perListener = proto == null;
+    in
+    lib.optionalAttrs (!perListener) {
       enable = mkEnableOption "the ${proto} syslog listener of VictoriaLogs";
+    }
+    // {
 
       ipAddress = mkOption {
         type = types.nullOr types.str;
         default = null;
         example = "192.0.2.10";
         description = ''
-          Address the listener binds; required once the slot is enabled, with no
+          Address the listener binds; required${
+            lib.optionalString (!perListener) " once the slot is enabled"
+          }, with no
           default so that nothing opens by accident. `0.0.0.0` or `::` accept
           syslog from every network the host is on. An IPv6 address (contains
           `:`) is bracketed automatically and the unit is started with
@@ -139,7 +183,10 @@ let
           combination is one). Bind a specific address and restrict who can
           reach the port with a firewall. Evaluation warns about a listener on a
           non-loopback address (see `suppressExposureWarning`)${
-            lib.optionalString (!encrypted) ", which also sends the logs unencrypted"
+            if perListener then
+              ", which also sends the logs unencrypted unless the transport is `tls`"
+            else
+              lib.optionalString (!encrypted) ", which also sends the logs unencrypted"
           }.
         '';
       };
@@ -160,9 +207,12 @@ let
         default = false;
         description = ''
           Whether to open the listener's port in the NixOS firewall
-          (`networking.firewall.allowed${
-            if proto == "udp" then "UDP" else "TCP"
-          }Ports`) for every interface. Off by
+          (${
+            if perListener then
+              "`networking.firewall.allowedUDPPorts` for udp, `allowedTCPPorts` for tcp and tls"
+            else
+              "`networking.firewall.allowed${if proto == "udp" then "UDP" else "TCP"}Ports`"
+          }) for every interface. Off by
           default, since the listener has no authentication: open it only where
           every host that can reach the port may write logs, or restrict it with
           your own firewall rules instead. It does not change the address the
@@ -198,7 +248,8 @@ let
           Syslog does not pass through vmauth, so this is the ONLY place the
           tenant of a device's logs is decided: the sender cannot choose it, and
           every device that sends to this listener lands in this tenant. Give
-          devices of different tenants their own listener (their own port).
+          devices of different tenants their own listener (their own address or
+          port; `syslog.listeners` holds as many as needed).
           A name that is not a declared tenant is a build error.
         '';
       };
@@ -208,7 +259,12 @@ let
         default = false;
         description = ''
           Silences the evaluation warning that this listener accepts ${
-            if encrypted then "syslog from any sender" else "unencrypted, unauthenticated syslog"
+            if encrypted then
+              "syslog from any sender"
+            else if perListener then
+              "unauthenticated syslog (unencrypted unless the transport is `tls`)"
+            else
+              "unencrypted, unauthenticated syslog"
           } from the network
           (an address other than loopback). Set it once you have confirmed that a
           firewall or a trusted network restricts who can reach the port; same idea
@@ -437,22 +493,24 @@ let
         + clusterNote.extraFlags or ""
         + lib.optionalString supportsSyslog ''
 
-          The `syslog.udp` / `syslog.tcp` options own the `-syslog.listenAddr.*`,
+          The syslog listeners (the `syslog.udp` / `syslog.tcp` / `syslog.tls` slots
+          and `syslog.listeners`) own the `-syslog.listenAddr.*`,
           `-syslog.extraFields.*` and `-syslog.tenantID.*` arrays of their transport (and the
           `-syslog.tls`, `-syslog.tlsCertFile` and `-syslog.tlsKeyFile` arrays
-          while a tcp or a tls slot is enabled): those arrays are positional with
+          while a tcp or a tls listener exists): those arrays are positional with
           the listeners, so a flag of the same array here is rejected at build
           time. Every other `-syslog.*` flag, and the `unix` transport, can be
           passed here freely.
 
-          The `tcp` and `tls` slots are the first and second tcp listener, so a
+          The listeners of one transport are the entries of its arrays in order
+          (the slots first, then the `listeners` by name; `tls` is tcp), so a
           `-syslog.<name>.tcp` flag given once (`streamFields`,
-          `compressMethod`, ...) applies to the `tcp` slot only and the `tls` slot
-          keeps the default; with both slots enabled evaluation warns about it. Give
-          such a flag twice, the `tcp` slot's value first and the `tls` slot's
-          second (a blank value means the default).
+          `compressMethod`, ...) applies to the first listener only and the others
+          keep the default; with more than one listener of the transport evaluation
+          warns about it. Give such a flag once per listener, in that order
+          (a blank value means the default).
 
-          A unix socket is not a slot (and the module does not test it): pass
+          A unix socket is not a listener (and the module does not test it): pass
           `-syslog.listenAddr.unix=/run/victorialogs/syslog.sock` here
           (`unixgram:/run/victorialogs/syslog.sock` for datagrams) and give the
           unit a runtime folder yourself,
@@ -491,36 +549,90 @@ let
             defaultPort = 6514;
             encrypted = true;
           }
-          // {
-            certFile = mkOption {
-              type = types.nullOr types.str;
-              default = null;
-              description = ''
-                Path (plain string; see `vmauth.writeTokensFile`) to the PEM
-                certificate chain of the `tls` listener. Set together with `keyFile`;
-                required while the slot is enabled. Staged through systemd
-                `LoadCredential=`, so it never enters the Nix store and the unit's
-                dynamic user needs no access to the file.
-
-                TLS only encrypts: VictoriaLogs has no client-certificate option for
-                syslog, so a client with no certificate is accepted, and the
-                minimum version is TLS 1.3 (`-syslog.tlsMinVersion=TLS12` in
-                `extraFlags` allows older devices).
-
-                ${syslogSecretReplacementNote}
-              '';
-            };
-
-            keyFile = mkOption {
-              type = types.nullOr types.str;
-              default = null;
-              description = ''
-                Path (plain string) to the PEM private key matching `certFile`.
-
-                ${syslogSecretReplacementNote}
-              '';
-            };
+          // mkSyslogTlsFiles {
+            subject = "the `tls` listener";
+            required = "required while the slot is enabled";
           };
+
+        listeners = mkOption {
+          type = types.attrsOf (
+            types.submodule (
+              { config, ... }:
+              {
+                options =
+                  mkSyslogSlot {
+                    proto = null;
+                    defaultPort = 514;
+                  }
+                  // {
+                    transport = mkOption {
+                      type = types.enum [
+                        "udp"
+                        "tcp"
+                        "tls"
+                      ];
+                      example = "udp";
+                      description = ''
+                        What the listener speaks: `udp`, `tcp`, or `tls` (tcp with TLS,
+                        RFC 5425; needs `certFile` and `keyFile`). No default: the
+                        choice decides what an operator expects to be exposed.
+                      '';
+                    };
+
+                    port = mkOption {
+                      type = types.ints.between 1 65535;
+                      default = if config.transport == "tls" then 6514 else 514;
+                      defaultText = lib.literalMD "`514` for `udp` and `tcp`, `6514` for `tls`";
+                      description = ''
+                        Port of the listener. A port below 1024 gives the VictoriaLogs unit
+                        `CAP_NET_BIND_SERVICE` (and turns off `PrivateUsers`, since a
+                        capability inside a user namespace does not count for binding); the
+                        unit keeps its empty capability set otherwise.
+                      '';
+                    };
+                  }
+                  // mkSyslogTlsFiles {
+                    subject = "this listener";
+                    required = "required when `transport` is `tls`, and only valid then";
+                  };
+              }
+            )
+          );
+          default = { };
+          example = lib.literalExpression ''
+            {
+              team-a-udp = { transport = "udp"; ipAddress = "192.0.2.10"; tenant = "team-a"; };
+              team-b-udp = { transport = "udp"; ipAddress = "192.0.2.11"; tenant = "team-b"; };
+              team-b-tls = {
+                transport = "tls";
+                ipAddress = "192.0.2.11";
+                tenant = "team-b";
+                certFile = "/run/secrets/syslog-b.pem";
+                keyFile = "/run/secrets/syslog-b.key";
+              };
+            }
+          '';
+          description = ''
+            Named syslog listeners of VictoriaLogs: any number, each with its own
+            address, port and tenant, e.g. one address per tenant with the same
+            transport. The attribute name is the listener's name (lower-case
+            letters, digits and hyphens, at most 63 characters; it also names the
+            listener's TLS credentials, and it must differ from the name of an
+            enabled slot: `udp`, `tcp`, `tls`).
+
+            The `udp`, `tcp` and `tls` slots are shorthand for three of these:
+            both feed one ordered list, the slots first, then the listeners by
+            name, and the same configuration written either way renders the same
+            unit. The order is the position of a listener in VictoriaLogs'
+            positional `-syslog.*` arrays, which the module generates from that
+            one list, so they cannot drift apart.
+
+            Syslog has no authentication and bypasses vmauth, so the listener a
+            packet reaches is the only thing that decides its tenant: keep each
+            tenant's devices on their own address (firewall or VLAN). See
+            docs/decisions/0035-syslog-listeners-are-a-named-set.md.
+          '';
+        };
       };
     }
     // lib.optionalAttrs supportsDiskRetention {

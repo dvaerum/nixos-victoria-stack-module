@@ -32,10 +32,10 @@ component's own choices; this page is purely the connective picture.
 │   .vmauth.http (opt-in)       │ 0.0.0.0:8080        │ As configured: open,   │
 │                                │ (or 127.0.0.1)      │ or loopback for        │
 │                                │                     │ `tailscale serve`      │
-│   .logs.syslog.{udp,tcp,tls}  │ (no listener until   │ YES once an address is │
-│    (opt-in)                    │ ipAddress is set;    │ set -- unauthenticated,│
+│   .logs.syslog.{udp,tcp,tls,   │ (no listener until   │ YES once an address is │
+│    listeners.*} (opt-in)       │ ipAddress is set;    │ set -- unauthenticated,│
 │                                │ ports 514/514/6514)  │ TLS only encrypts      │
-│                                │                     │ (ADR 0031)            │
+│                                │                     │ (ADR 0031, 0035)       │
 │   .metrics.mcp                │ 127.0.0.1:4205      │ No                     │
 │   .logs.mcp                   │ 127.0.0.1:4206      │ No                     │
 │   .traces.mcp                 │ 127.0.0.1:4207      │ No                     │
@@ -60,11 +60,11 @@ component's own choices; this page is purely the connective picture.
 write to vmauth's own `https` / `http` listeners; nginx fronts reads and
 Grafana only. The public doors also accept (credentialed) reads.
 
-**Syslog is a third door that bypasses vmauth** (docs/decisions/0031): devices
+**Syslog is a third door that bypasses vmauth** (docs/decisions/0031, 0035): devices
 that only speak syslog write straight to VictoriaLogs' own listeners, which have
 no authentication, so vmauth's per-host tokens do not apply to them. The slots
-are opt-in, and the module opens no firewall port unless a slot sets
-`openFirewall`.
+and the named `listeners` are opt-in, and the module opens no firewall port unless
+one sets `openFirewall`. The listener a packet reaches decides its tenant.
 
 **Important note on vmauth's default:** vmauth is the one service in
 `victoriaStack` whose entire *purpose* is accepting traffic from other
