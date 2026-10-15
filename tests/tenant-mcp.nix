@@ -150,6 +150,7 @@ in
       imports = [
         module
         testLib.testStartupTimeouts
+        testLib.mcpWithoutDocs
       ];
       services.victoriaStack = allServices // {
         inherit tenants;
@@ -412,6 +413,7 @@ in
       imports = [
         module
         testLib.testStartupTimeouts
+        testLib.mcpWithoutDocs
       ];
       services.victoriaStack = {
         inherit tenants;

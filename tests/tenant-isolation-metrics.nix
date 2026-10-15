@@ -409,6 +409,8 @@ in
       imports = [
         module
         testLib.testStartupTimeouts
+        # Only the rendered config is read back; no backend is queried.
+        testLib.dataUnitsNotStarted
       ];
       services.victoriaStack = {
         metrics.enable = true;

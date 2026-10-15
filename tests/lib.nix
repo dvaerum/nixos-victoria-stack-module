@@ -414,6 +414,46 @@ let
           metrics.extraFlags = [ "-search.latencyOffset=0" ];
         };
   };
+  # For nodes whose MCP servers are not under test for their tool set: the
+  # `documentation` tool makes mcp-victoriametrics load its embedded docs at
+  # start (12 s of CPU alone on a quiet host, 60 s and more in a busy gate),
+  # and every unit ordered after it waits. mkDefault: a test that sets
+  # `disabledTools` itself keeps its own list.
+  mcpWithoutDocs = {
+    services.victoriaStack = lib.genAttrs [ "metrics" "logs" "traces" ] (_: {
+      mcp.disabledTools = lib.mkDefault [ "documentation" ];
+    });
+  };
+  # Units that stay installed but are not started at boot, for a node whose test
+  # never queries them (a fake stands in for them, or only what vmauth rendered or
+  # Grafana provisioned is read back): fewer processes in every container of a
+  # busy gate, and the vmstorage -> vmselect -> vmauth start chain is gone.
+  # `dataUnitsNotStarted` covers the enabled storage backends, `mcpUnitsNotStarted`
+  # the enabled MCP servers.
+  unitsNotStarted =
+    pick:
+    { config, lib, ... }:
+    {
+      systemd.services = lib.genAttrs (pick config.services.victoriaStack) (_: {
+        wantedBy = lib.mkForce [ ];
+      });
+    };
+  dataUnitsNotStarted = unitsNotStarted (
+    s:
+    lib.optionals s.metrics.enable [
+      "vmstorage"
+      "vminsert"
+      "vmselect"
+    ]
+    ++ lib.optional s.logs.enable "victorialogs"
+    ++ lib.optional s.traces.enable "victoriatraces"
+  );
+  mcpUnitsNotStarted = unitsNotStarted (
+    s:
+    lib.optional s.metrics.mcp.enable "mcp-victoriametrics"
+    ++ lib.optional s.logs.mcp.enable "mcp-victorialogs"
+    ++ lib.optional s.traces.mcp.enable "mcp-victoriatraces"
+  );
   # Sends one syslog message the way a device would: RFC 3164 or 5424, over
   # UDP, TCP (newline or octet-counting framing) or TLS, with a timestamp of
   # "now" (VictoriaLogs infers the year of an RFC 3164 stamp).
@@ -508,6 +548,9 @@ in
     waitActivePython
     brokenUnitFailureSeconds
     testStartupTimeouts
+    mcpWithoutDocs
+    dataUnitsNotStarted
+    mcpUnitsNotStarted
     grafanaReadToken
     grafanaReadTokenFile
     vmauthReadTokensWithGrafana

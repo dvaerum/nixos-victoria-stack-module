@@ -98,6 +98,9 @@ let
         imports = [
           module
           testLib.testStartupTimeouts
+          # Only what vmauth rendered and logged is read back; no backend is queried.
+          testLib.dataUnitsNotStarted
+          testLib.mcpUnitsNotStarted
         ];
         services.victoriaStack = lib.recursiveUpdate (allBackends // { inherit tenants; }) services;
       };

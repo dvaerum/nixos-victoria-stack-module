@@ -579,6 +579,7 @@ in
       imports = [
         module
         testLib.testStartupTimeouts
+        testLib.mcpWithoutDocs
       ];
       services.victoriaStack = {
         metrics = {
@@ -1250,6 +1251,7 @@ in
       imports = [
         module
         testLib.testStartupTimeouts
+        testLib.mcpWithoutDocs
       ];
       services.victoriaStack = {
         metrics.enable = true;
@@ -2219,6 +2221,7 @@ in
       imports = [
         module
         testLib.testStartupTimeouts
+        testLib.mcpWithoutDocs
       ];
       services.victoriaStack = {
         metrics = {

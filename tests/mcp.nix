@@ -588,6 +588,7 @@ in
         imports = [
           module
           testLib.testStartupTimeouts
+          testLib.mcpWithoutDocs
         ];
         services.victoriaStack = {
           metrics.enable = true;
@@ -607,6 +608,9 @@ in
         imports = [
           module
           testLib.testStartupTimeouts
+          testLib.mcpWithoutDocs
+          # The fake answers for every backend; the real ones are never queried.
+          testLib.dataUnitsNotStarted
         ];
         services.victoriaStack = {
           metrics.enable = true;
@@ -811,6 +815,7 @@ in
       imports = [
         module
         testLib.testStartupTimeouts
+        testLib.mcpWithoutDocs
       ];
       services.victoriaStack = {
         metrics.enable = true;
