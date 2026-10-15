@@ -101,16 +101,28 @@ jobs:
           SHARD: ${{ matrix.shard }}
           SHARDS: ${{ matrix.shards }}
         run: |
-          # shellcheck disable=SC2016 # `${...}` below is Nix, not shell
-          nix build -L --keep-going --no-link --max-jobs 2 --impure \
-            --argstr group "$GROUP" --argstr shard "$SHARD" --argstr shards "$SHARDS" --expr '
-            { group, shard, shards }:
-            let
-              section = (builtins.getFlake "path:${toString ./.}").testSections.${builtins.currentSystem}.${group};
-              names = builtins.attrNames section;
-              s = builtins.fromJSON shard;
-              n = builtins.fromJSON shards;
-              mine = i: i - (i / n) * n == s;
-            in
-            map (i: section.${builtins.elemAt names i})
-              (builtins.filter mine (builtins.genList (i: i) (builtins.length names)))'
+          build() {
+            # shellcheck disable=SC2016 # `${...}` below is Nix, not shell
+            nix build -L --keep-going --no-link --max-jobs 2 --impure \
+              --argstr group "$GROUP" --argstr shard "$SHARD" --argstr shards "$SHARDS" --expr '
+              { group, shard, shards }:
+              let
+                section = (builtins.getFlake "path:${toString ./.}").testSections.${builtins.currentSystem}.${group};
+                names = builtins.attrNames section;
+                s = builtins.fromJSON shard;
+                n = builtins.fromJSON shards;
+                mine = i: i - (i / n) * n == s;
+              in
+              map (i: section.${builtins.elemAt names i})
+                (builtins.filter mine (builtins.genList (i: i) (builtins.length names)))'
+          }
+          # Nix 2.22.1 (install-nix-action v27) itself occasionally dies while
+          # evaluating (exit 134 abort, 139 segfault; about 1 job in 80); a failed
+          # build or test exits 1 and is never retried.
+          for attempt in 1 2 3; do
+            rc=0
+            build || rc=$?
+            if [ "$rc" -ne 134 ] && [ "$rc" -ne 139 ]; then exit "$rc"; fi
+            echo "::warning::nix crashed with exit $rc (attempt $attempt of 3)"
+          done
+          exit "$rc"
