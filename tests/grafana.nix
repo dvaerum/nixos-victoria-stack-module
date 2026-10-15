@@ -1044,40 +1044,75 @@ in
           throw "the provisioning document changed.\nexpected: ${builtins.toJSON expected}\ngot:      ${builtins.toJSON got}"
       );
 
-  # The datasource plugins come in with the backends that need them (traces use
-  # Grafana's built-in jaeger type, so none): a missing plugin makes Grafana
-  # reject its own provisioning file at start.
+  # The datasource plugins come in with the backends that need them: a missing
+  # plugin makes Grafana reject its own provisioning file at start (VictoriaMetrics,
+  # VictoriaLogs) or answer 404 "Unable to find datasource plugin" (traces on
+  # Grafana 13.2+, where the "jaeger" type is no longer built in). The Grafana
+  # version is pinned per case so both sides of the 13.2 boundary are covered
+  # whatever nixpkgs ships.
   datasource-plugins-follow-the-enabled-backends =
     pkgs.runCommand "grafana-datasource-plugins-follow-the-enabled-backends" { }
       (
         let
+          # nixpkgs from before 13.2 has no grafanaPlugins.jaeger; stand it in so
+          # the 13.2 cases evaluate on every nixpkgs the suite runs against.
+          pkgsWithJaeger = pkgs.extend (
+            _: prev: {
+              grafanaPlugins = prev.grafanaPlugins // {
+                jaeger =
+                  prev.grafanaPlugins.jaeger or (prev.grafanaPlugins.victoriametrics-logs-datasource.overrideAttrs
+                    (_: {
+                      pname = "jaeger";
+                    })
+                  );
+              };
+            }
+          );
           pluginsFor =
-            backends:
+            grafanaVersion: backends:
             map (p: p.pname or p.name) (
               lib.defaultTo [ ] (
-                (evalWith {
+                (testLib.mkEvalWith [ module ] {
+                  nixpkgs.pkgs = lib.mkForce pkgsWithJaeger;
                   imports = [ grafanaTokenWiring ];
                   services.grafana.enable = true;
+                  # Only .version is read, the package is never built.
+                  services.grafana.package = pkgs.grafana.overrideAttrs (_: {
+                    version = grafanaVersion;
+                    __intentionallyOverridingVersion = true;
+                  });
                   services.victoriaStack = backends // {
                     grafana.enable = true;
                   };
                 }).config.services.grafana.declarativePlugins
               )
             );
+          all = {
+            metrics.enable = true;
+            logs.enable = true;
+            traces.enable = true;
+          };
           checks = {
             "metrics: the metrics plugin only" =
-              pluginsFor { metrics.enable = true; } == [ "victoriametrics-metrics-datasource" ];
+              pluginsFor "13.1.6" { metrics.enable = true; } == [ "victoriametrics-metrics-datasource" ];
             "logs: the logs plugin only" =
-              pluginsFor { logs.enable = true; } == [ "victoriametrics-logs-datasource" ];
-            "traces: none" = pluginsFor { traces.enable = true; } == [ ];
-            "all: metrics then logs" =
-              pluginsFor {
-                metrics.enable = true;
-                logs.enable = true;
-                traces.enable = true;
-              } == [
+              pluginsFor "13.1.6" { logs.enable = true; } == [ "victoriametrics-logs-datasource" ];
+            "traces on 13.1: none, the jaeger type is built in" =
+              pluginsFor "13.1.6" { traces.enable = true; } == [ ];
+            "traces on 13.2: the jaeger plugin" = pluginsFor "13.2.3" { traces.enable = true; } == [ "jaeger" ];
+            "traces on 14.0: the jaeger plugin" = pluginsFor "14.0.0" { traces.enable = true; } == [ "jaeger" ];
+            "metrics on 13.2: no jaeger without traces" =
+              pluginsFor "13.2.3" { metrics.enable = true; } == [ "victoriametrics-metrics-datasource" ];
+            "all on 13.1: metrics then logs" =
+              pluginsFor "13.1.6" all == [
                 "victoriametrics-metrics-datasource"
                 "victoriametrics-logs-datasource"
+              ];
+            "all on 13.2: metrics, logs, then jaeger" =
+              pluginsFor "13.2.3" all == [
+                "victoriametrics-metrics-datasource"
+                "victoriametrics-logs-datasource"
+                "jaeger"
               ];
           };
           failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) checks);
@@ -1085,15 +1120,7 @@ in
         if failed == [ ] then
           "echo OK > $out"
         else
-          throw "datasource plugins wrong for: ${builtins.toJSON failed}; metrics=${
-            builtins.toJSON (pluginsFor {
-              metrics.enable = true;
-            })
-          } logs=${
-            builtins.toJSON (pluginsFor {
-              logs.enable = true;
-            })
-          }"
+          throw "datasource plugins wrong for: ${builtins.toJSON failed}"
       );
 
   # ADR 0020's documented workaround for tweaking one auto-provisioned

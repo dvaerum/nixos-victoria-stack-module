@@ -554,6 +554,7 @@ in
     grafanaReadToken
     grafanaReadTokenFile
     vmauthReadTokensWithGrafana
+    mkEvalWith
     evalWith
     evalWithCollector
     mkAssertionFiresCheck

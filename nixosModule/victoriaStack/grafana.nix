@@ -143,12 +143,20 @@ in
       '';
 
     # VictoriaMetrics' own datasource plugins are used; VictoriaLogs speaks
-    # LogsQL, not LogQL, so the built-in "loki" type does not fit. Traces
-    # need no plugin: VictoriaTraces implements the Jaeger HTTP API, so the
-    # built-in "jaeger" type works.
+    # LogsQL, not LogQL, so the built-in "loki" type does not fit. Traces use
+    # the "jaeger" type (VictoriaTraces implements the Jaeger HTTP API), which
+    # Grafana 13.1 has built in; from 13.2 it is a separate plugin that Grafana
+    # would download at start, so the datasource answers 404 "Unable to find
+    # datasource plugin" on a host without internet.
     services.grafana.declarativePlugins = lib.mkMerge [
       (lib.mkIf topCfg.metrics.enable [ pkgs.grafanaPlugins.victoriametrics-metrics-datasource ])
       (lib.mkIf topCfg.logs.enable [ pkgs.grafanaPlugins.victoriametrics-logs-datasource ])
+      (lib.mkIf
+        (topCfg.traces.enable && lib.versionAtLeast config.services.grafana.package.version "13.2")
+        [
+          pkgs.grafanaPlugins.jaeger
+        ]
+      )
     ];
 
     # Role None: a new user lands in the main org (where the main datasources are)

@@ -1575,7 +1575,8 @@ in
       enable = mkEnableOption ''
         Grafana datasource provisioning for whichever of metrics/logs/traces
         is enabled. Configures services.grafana only for the datasources (and
-        the `declarativePlugins` the metrics and logs datasources need) and,
+        the `declarativePlugins` the datasources need: the VictoriaMetrics ones
+        and, from Grafana 13.2, `jaeger` for traces) and,
         when `nginx.enable` is on, a default `root_url` for the `/grafana/`
         sub-path; users and passwords are left to the consumer. It also gives
         the grafana unit the read token (`LoadCredential`, `ExecStartPre`) and
