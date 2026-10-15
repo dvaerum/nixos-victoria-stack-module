@@ -402,9 +402,17 @@ let
   # whole suite building at once, so 2m keeps about 8x headroom. mkDefault: a test
   # of the option itself sets its own value.
   testStartupTimeouts = {
-    services.victoriaStack = lib.genAttrs [ "metrics" "logs" "traces" ] (_: {
-      startupTimeout = lib.mkDefault "2m";
-    });
+    services.victoriaStack =
+      lib.recursiveUpdate
+        (lib.genAttrs [ "metrics" "logs" "traces" ] (_: {
+          startupTimeout = lib.mkDefault "2m";
+        }))
+        {
+          # By default a freshly written sample is invisible to "now" queries for
+          # ~30 s (-search.latencyOffset), which the ingest-then-query tests would
+          # sit through; no test asserts on that delay.
+          metrics.extraFlags = [ "-search.latencyOffset=0" ];
+        };
   };
   # Sends one syslog message the way a device would: RFC 3164 or 5424, over
   # UDP, TCP (newline or octet-counting framing) or TLS, with a timestamp of
