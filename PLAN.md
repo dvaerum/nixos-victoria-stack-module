@@ -960,9 +960,9 @@ Tenants, stage 3 (metrics tenants, per-caller MCP, Grafana orgs; the plan's stag
   `projectId` is ignored for metrics. Admin stays unstamped (tenant 0 for metrics).
 - Tenant tokens now get the module's own `/mcp/*` routes within their `backends`
   scope. The MCP servers forward the caller's token to the read tier, so vmauth's
-  stamp decides the tenant: a logs/traces `tenant` tool argument cannot override
-  it. Metrics MCP calls from list/`all` tokens end in vmauth's 400 (the MCP sends
-  no `AccountID`); that is intended and documented. vmauth cleans `..` before
+  stamp decides the tenant: a `tenant` tool argument (all three servers have it)
+  cannot override it. Metrics MCP calls from list/`all` tokens pick a listed tenant
+  with that argument; none or an unlisted one is vmauth's 400. vmauth cleans `..` before
   routing, so `/mcp/metrics/../logs` reaches the token's own logs route and
   nothing beyond its own routes (pinned in `tests/tenant-mcp.nix`).
 - Grafana: `tenants.<name>.grafanaOrgId` + `readTokenFile` provision that

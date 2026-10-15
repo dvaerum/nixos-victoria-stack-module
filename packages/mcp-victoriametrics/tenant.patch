@@ -1,0 +1,744 @@
+From fdacfec850c21b55d16007b8340f4165f799bac3 Mon Sep 17 00:00:00 2001
+From: Contributor <contributor@example.com>
+Date: Thu, 15 Oct 2026 14:19:03 +0200
+Subject: [PATCH] tools: add optional tenant argument for single-node instances
+ behind a proxy
+
+A single-node VictoriaMetrics has no tenants, but an authenticating proxy
+in front of it (for example vmauth with `tenants: [...]` or `tenants: all`
+users) lets the client pick the tenant with the AccountID and ProjectID
+request headers. The metrics tools had no way to set them, so such users
+always got the proxy's 400. mcp-victorialogs and mcp-victoriatraces already
+have a `tenant` tool argument that is sent as these headers.
+
+Add the same optional `tenant` string argument (format AccountID:ProjectID,
+AccountID alone is accepted too) to every tool that queries a single-node
+instance, and send it as AccountID/ProjectID after the headers from
+MCP_PASSTHROUGH_HEADERS, so the argument wins over a forwarded header. The
+value is parsed with auth.NewToken (also used for VM_DEFAULT_TENANT_ID)
+and refused before any request is made when it is not numeric.
+
+When the argument is absent nothing is sent: existing setups are unchanged.
+Cluster and cloud modes keep their path-based tenant argument.
+---
+ README.md                                     |   8 +
+ .../tools/active_queries.go                   |   1 +
+ cmd/mcp-victoriametrics/tools/alerts.go       |   1 +
+ .../tools/downsampling_filters_debug.go       |   1 +
+ .../tools/explain_query.go                    |  19 +-
+ cmd/mcp-victoriametrics/tools/export.go       |   1 +
+ cmd/mcp-victoriametrics/tools/labels.go       |   1 +
+ cmd/mcp-victoriametrics/tools/labelvalues.go  |   1 +
+ .../tools/metric_relabel_debug.go             |   1 +
+ cmd/mcp-victoriametrics/tools/metrics.go      |   1 +
+ .../tools/metrics_metadata.go                 |   1 +
+ cmd/mcp-victoriametrics/tools/metricstats.go  |   1 +
+ .../tools/prettify_query.go                   |   1 +
+ cmd/mcp-victoriametrics/tools/query.go        |   1 +
+ cmd/mcp-victoriametrics/tools/query_range.go  |   1 +
+ .../tools/retention_filters_debug.go          |   1 +
+ cmd/mcp-victoriametrics/tools/rules.go        |   1 +
+ cmd/mcp-victoriametrics/tools/series.go       |   1 +
+ cmd/mcp-victoriametrics/tools/tenant_test.go  | 310 ++++++++++++++++++
+ cmd/mcp-victoriametrics/tools/top_queries.go  |   1 +
+ cmd/mcp-victoriametrics/tools/tsdb_status.go  |   1 +
+ cmd/mcp-victoriametrics/tools/utils.go        |  57 ++++
+ 22 files changed, 407 insertions(+), 5 deletions(-)
+ create mode 100644 cmd/mcp-victoriametrics/tools/tenant_test.go
+
+diff --git a/README.md b/README.md
+index 15b6f2b..5a5e273 100644
+--- a/README.md
++++ b/README.md
+@@ -644,6 +644,14 @@ This is the main source of resource usage. To reduce it, add `documentation` to
+ 
+ You can use `MCP_PASSTHROUGH_HEADERS` parameter in the MCP Server together with [Header-based routing in vmauth](https://docs.victoriametrics.com/victoriametrics/vmauth/#routing-by-header) to route MCP calls between instances based on HTTP header values from your MCP client config.  
+ 
++### How to choose a tenant when `VM_INSTANCE_TYPE` is `single`?
++
++A single-node instance has no tenants of its own, but an authenticating proxy in front of it, such as [vmauth](https://docs.victoriametrics.com/victoriametrics/vmauth/), can map several tenants onto it
++and let the client choose with the `AccountID` and `ProjectID` request headers. For this case every tool that queries the instance has an optional `tenant` argument (format `AccountID:ProjectID`, both 32-bit integers).
++When set, the MCP server sends it as the `AccountID` and `ProjectID` headers (after the headers from `MCP_PASSTHROUGH_HEADERS`, so the argument wins);
++when omitted, no tenant headers are sent. An invalid value is refused before any request is made.
++In `cluster` mode the tenant is part of the URL path instead, as before.
++
+ ## Roadmap
+ 
+ - [x] Support "Prettify query" tool (done in [`v0.0.5`](https://github.com/VictoriaMetrics/mcp-victoriametrics/releases/tag/v0.0.5))
+diff --git a/cmd/mcp-victoriametrics/tools/active_queries.go b/cmd/mcp-victoriametrics/tools/active_queries.go
+index 6fe0752..1e1c7e0 100644
+--- a/cmd/mcp-victoriametrics/tools/active_queries.go
++++ b/cmd/mcp-victoriametrics/tools/active_queries.go
+@@ -44,6 +44,7 @@ This information is obtained from the "/api/v1/status/active_queries" HTTP endpo
+ 			),
+ 		)
+ 	}
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameActiveQueries, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/alerts.go b/cmd/mcp-victoriametrics/tools/alerts.go
+index 30cb484..b1e04cf 100644
+--- a/cmd/mcp-victoriametrics/tools/alerts.go
++++ b/cmd/mcp-victoriametrics/tools/alerts.go
+@@ -71,6 +71,7 @@ func toolAlerts(c *config.Config) mcp.Tool {
+ 			mcp.DefaultNumber(0),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameAlerts, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/downsampling_filters_debug.go b/cmd/mcp-victoriametrics/tools/downsampling_filters_debug.go
+index 3a377eb..bb256d2 100644
+--- a/cmd/mcp-victoriametrics/tools/downsampling_filters_debug.go
++++ b/cmd/mcp-victoriametrics/tools/downsampling_filters_debug.go
+@@ -48,6 +48,7 @@ This tool use "/downsampling-filters-debug" API endpoint of VictoriaMetrics API.
+ 			mcp.Pattern(`^([a-zA-Z_]*\{\s*(([a-zA-Z-_]+\s*\=\s*\".*\"))?(\s*,\s*([a-zA-Z-_]+\s*\=\s*\".*\"))*\s*\}\n)+$`),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameDownsamplingFiltersDebug, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/explain_query.go b/cmd/mcp-victoriametrics/tools/explain_query.go
+index 97f328d..b647839 100644
+--- a/cmd/mcp-victoriametrics/tools/explain_query.go
++++ b/cmd/mcp-victoriametrics/tools/explain_query.go
+@@ -21,8 +21,8 @@ import (
+ 
+ const toolNameExplainQuery = "explain_query"
+ 
+-var (
+-	toolExplainQuery = mcp.NewTool(toolNameExplainQuery,
++func toolExplainQuery(c *config.Config) mcp.Tool {
++	options := []mcp.ToolOption{
+ 		mcp.WithDescription("Explain how MetricsQL query works"),
+ 		mcp.WithToolAnnotation(mcp.ToolAnnotation{
+ 			Title:           "Explain Query",
+@@ -35,8 +35,10 @@ var (
+ 			mcp.Title("MetricsQL or PromQL expression"),
+ 			mcp.Description(`MetricsQL or PromQL expression for explanation`),
+ 		),
+-	)
+-)
++	}
++	options = withTenantHeaderOption(c, options)
++	return mcp.NewTool(toolNameExplainQuery, options...)
++}
+ 
+ func toolExplainQueryHandler(ctx context.Context, cfg *config.Config, tcr mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+ 	query, err := GetToolReqParam[string](tcr, "query", true)
+@@ -44,6 +46,13 @@ func toolExplainQueryHandler(ctx context.Context, cfg *config.Config, tcr mcp.Ca
+ 		return mcp.NewToolResultError(err.Error()), nil
+ 	}
+ 
++	// getQueryInfo skips metadata lookups whose request cannot be built, so refuse a bad tenant here
++	if usesTenantHeaders(cfg) {
++		if _, _, err := GetToolReqTenant(tcr); err != nil {
++			return mcp.NewToolResultError(fmt.Sprintf("failed to get tenant: %v", err)), nil
++		}
++	}
++
+ 	info, err := getQueryInfo(ctx, cfg, tcr, query)
+ 	if err != nil {
+ 		return mcp.NewToolResultError(fmt.Sprintf("error explaining query: %s", err)), nil
+@@ -67,7 +76,7 @@ func RegisterToolExplainQuery(s *server.MCPServer, c *config.Config) {
+ 	if err := initMetricsInfo(); err != nil {
+ 		panic(fmt.Sprintf("error initializing metrics info: %s", err))
+ 	}
+-	s.AddTool(toolExplainQuery, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
++	s.AddTool(toolExplainQuery(c), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+ 		return toolExplainQueryHandler(ctx, c, request)
+ 	})
+ }
+diff --git a/cmd/mcp-victoriametrics/tools/export.go b/cmd/mcp-victoriametrics/tools/export.go
+index 36ea532..347e93c 100644
+--- a/cmd/mcp-victoriametrics/tools/export.go
++++ b/cmd/mcp-victoriametrics/tools/export.go
+@@ -72,6 +72,7 @@ func toolExport(c *config.Config) mcp.Tool {
+ 		),
+ 	)
+ 
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameExport, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/labels.go b/cmd/mcp-victoriametrics/tools/labels.go
+index 6cd2ba0..31593a5 100644
+--- a/cmd/mcp-victoriametrics/tools/labels.go
++++ b/cmd/mcp-victoriametrics/tools/labels.go
+@@ -70,6 +70,7 @@ func toolLabels(c *config.Config) mcp.Tool {
+ 			mcp.Min(0),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameLabels, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/labelvalues.go b/cmd/mcp-victoriametrics/tools/labelvalues.go
+index e5e8386..c8972b9 100644
+--- a/cmd/mcp-victoriametrics/tools/labelvalues.go
++++ b/cmd/mcp-victoriametrics/tools/labelvalues.go
+@@ -76,6 +76,7 @@ func toolLabelsValues(c *config.Config) mcp.Tool {
+ 			mcp.Min(0),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameLabelValues, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/metric_relabel_debug.go b/cmd/mcp-victoriametrics/tools/metric_relabel_debug.go
+index ccba46e..663b689 100644
+--- a/cmd/mcp-victoriametrics/tools/metric_relabel_debug.go
++++ b/cmd/mcp-victoriametrics/tools/metric_relabel_debug.go
+@@ -48,6 +48,7 @@ The tool use "/metric-relabel-debug" endpoint of the VictoriaMetrics API. `),
+ 			mcp.Pattern(`^\{\s*(([a-zA-Z-_]+\s*\=\s*\".*\"))?(\s*,\s*([a-zA-Z-_]+\s*\=\s*\".*\"))*\s*\}$`),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameMetricRelabelDebug, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/metrics.go b/cmd/mcp-victoriametrics/tools/metrics.go
+index b682601..4bd68f9 100644
+--- a/cmd/mcp-victoriametrics/tools/metrics.go
++++ b/cmd/mcp-victoriametrics/tools/metrics.go
+@@ -69,6 +69,7 @@ func toolMetrics(c *config.Config) mcp.Tool {
+ 			mcp.Min(0),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameMetrics, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/metrics_metadata.go b/cmd/mcp-victoriametrics/tools/metrics_metadata.go
+index 1f5e328..e9cf976 100644
+--- a/cmd/mcp-victoriametrics/tools/metrics_metadata.go
++++ b/cmd/mcp-victoriametrics/tools/metrics_metadata.go
+@@ -75,6 +75,7 @@ func toolMetricsMetadata(c *config.Config) mcp.Tool {
+ 			mcp.Min(0),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameMetricsMetadata, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/metricstats.go b/cmd/mcp-victoriametrics/tools/metricstats.go
+index 6584c9f..f943ce1 100644
+--- a/cmd/mcp-victoriametrics/tools/metricstats.go
++++ b/cmd/mcp-victoriametrics/tools/metricstats.go
+@@ -61,6 +61,7 @@ func toolMetricStats(c *config.Config) mcp.Tool {
+ 			mcp.Description("less than or equal, is an integer threshold for filtering metric names by their usage count in queries. For example, with ?le=1 API returns metric names that were queried <=1 times."),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameMetricStats, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/prettify_query.go b/cmd/mcp-victoriametrics/tools/prettify_query.go
+index a92931e..9b1b3b1 100644
+--- a/cmd/mcp-victoriametrics/tools/prettify_query.go
++++ b/cmd/mcp-victoriametrics/tools/prettify_query.go
+@@ -52,6 +52,7 @@ func toolPrettifyQuery(c *config.Config) mcp.Tool {
+ 			mcp.Description(`MetricsQL or PromQL expression for prettification. This is the query that will be formatted.`),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNamePrettifyQuery, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/query.go b/cmd/mcp-victoriametrics/tools/query.go
+index 1d5c31e..70f475c 100644
+--- a/cmd/mcp-victoriametrics/tools/query.go
++++ b/cmd/mcp-victoriametrics/tools/query.go
+@@ -76,6 +76,7 @@ func toolQuery(c *config.Config) mcp.Tool {
+ 			mcp.DefaultBool(false),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameQuery, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/query_range.go b/cmd/mcp-victoriametrics/tools/query_range.go
+index 0ecb8fd..aa451fd 100644
+--- a/cmd/mcp-victoriametrics/tools/query_range.go
++++ b/cmd/mcp-victoriametrics/tools/query_range.go
+@@ -82,6 +82,7 @@ func toolQueryRange(c *config.Config) mcp.Tool {
+ 			mcp.DefaultBool(false),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameQueryRange, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/retention_filters_debug.go b/cmd/mcp-victoriametrics/tools/retention_filters_debug.go
+index f0a2a96..6f804b1 100644
+--- a/cmd/mcp-victoriametrics/tools/retention_filters_debug.go
++++ b/cmd/mcp-victoriametrics/tools/retention_filters_debug.go
+@@ -47,6 +47,7 @@ This tool use "/retention-filters-debug" API endpoint of VictoriaMetrics API.`),
+ 			mcp.Pattern(`^([a-zA-Z_]*\{\s*(([a-zA-Z-_]+\s*\=\s*\".*\"))?(\s*,\s*([a-zA-Z-_]+\s*\=\s*\".*\"))*\s*\}\n)+$`),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameRetentionFiltersDebug, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/rules.go b/cmd/mcp-victoriametrics/tools/rules.go
+index 1151051..88d41f7 100644
+--- a/cmd/mcp-victoriametrics/tools/rules.go
++++ b/cmd/mcp-victoriametrics/tools/rules.go
+@@ -78,6 +78,7 @@ func toolRules(c *config.Config) mcp.Tool {
+ 			mcp.Items(map[string]any{"type": "string"}),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameRules, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/series.go b/cmd/mcp-victoriametrics/tools/series.go
+index 909773f..929b04c 100644
+--- a/cmd/mcp-victoriametrics/tools/series.go
++++ b/cmd/mcp-victoriametrics/tools/series.go
+@@ -69,6 +69,7 @@ func toolSeries(c *config.Config) mcp.Tool {
+ 			mcp.Min(0),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameSeries, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/tenant_test.go b/cmd/mcp-victoriametrics/tools/tenant_test.go
+new file mode 100644
+index 0000000..f05748e
+--- /dev/null
++++ b/cmd/mcp-victoriametrics/tools/tenant_test.go
+@@ -0,0 +1,310 @@
++package tools
++
++import (
++	"context"
++	"net/http"
++	"net/http/httptest"
++	"sync"
++	"testing"
++
++	"github.com/mark3labs/mcp-go/mcp"
++	"github.com/mark3labs/mcp-go/server"
++
++	"github.com/VictoriaMetrics/mcp-victoriametrics/cmd/mcp-victoriametrics/config"
++)
++
++func newTenantTestConfig(t *testing.T, entrypoint, instanceType, passthrough string) *config.Config {
++	t.Helper()
++	t.Setenv("VM_INSTANCE_ENTRYPOINT", entrypoint)
++	t.Setenv("VM_INSTANCE_TYPE", instanceType)
++	t.Setenv("VM_INSTANCE_BEARER_TOKEN", "static-token")
++	t.Setenv("MCP_PASSTHROUGH_HEADERS", passthrough)
++	t.Setenv("MCP_DISABLED_TOOLS", "") // set but empty: register every tool, including those disabled by default
++	cfg, err := config.InitConfig()
++	if err != nil {
++		t.Fatalf("failed to init config: %v", err)
++	}
++	return cfg
++}
++
++func TestGetToolReqTenant(t *testing.T) {
++	testCases := []struct {
++		name              string
++		args              map[string]any
++		expectedAccountID string
++		expectedProjectID string
++		expectError       bool
++	}{
++		{name: "absent", args: map[string]any{}},
++		{name: "empty", args: map[string]any{"tenant": ""}},
++		{name: "full", args: map[string]any{"tenant": "3:7"}, expectedAccountID: "3", expectedProjectID: "7"},
++		{name: "zero", args: map[string]any{"tenant": "0:0"}, expectedAccountID: "0", expectedProjectID: "0"},
++		{name: "account only", args: map[string]any{"tenant": "123"}, expectedAccountID: "123", expectedProjectID: "0"},
++		{name: "max uint32", args: map[string]any{"tenant": "4294967295:4294967295"}, expectedAccountID: "4294967295", expectedProjectID: "4294967295"},
++		{name: "leading zeros are normalized", args: map[string]any{"tenant": "03:007"}, expectedAccountID: "3", expectedProjectID: "7"},
++		{name: "path traversal", args: map[string]any{"tenant": "x/../y"}, expectError: true},
++		{name: "non-numeric", args: map[string]any{"tenant": "a:b"}, expectError: true},
++		{name: "too many colons", args: map[string]any{"tenant": "1:2:3"}, expectError: true},
++		{name: "negative", args: map[string]any{"tenant": "-1:2"}, expectError: true},
++		{name: "signed", args: map[string]any{"tenant": "+1:2"}, expectError: true},
++		{name: "overflow", args: map[string]any{"tenant": "4294967296:1"}, expectError: true},
++		{name: "surrounding space", args: map[string]any{"tenant": " 3:7"}, expectError: true},
++		{name: "header injection", args: map[string]any{"tenant": "3:7\r\nX-Evil: 1"}, expectError: true},
++		{name: "not a string", args: map[string]any{"tenant": float64(1)}, expectError: true},
++	}
++	for _, tc := range testCases {
++		t.Run(tc.name, func(t *testing.T) {
++			tcr := mcp.CallToolRequest{}
++			tcr.Params.Arguments = tc.args
++			accountID, projectID, err := GetToolReqTenant(tcr)
++			if (err != nil) != tc.expectError {
++				t.Fatalf("expectError=%v, got err=%v", tc.expectError, err)
++			}
++			if accountID != tc.expectedAccountID || projectID != tc.expectedProjectID {
++				t.Errorf("expected %q:%q, got %q:%q", tc.expectedAccountID, tc.expectedProjectID, accountID, projectID)
++			}
++		})
++	}
++}
++
++func TestCreateSelectRequest_TenantHeaders(t *testing.T) {
++	cfg := newTenantTestConfig(t, "http://example.com", "single", "Authorization, AccountID")
++
++	t.Run("tenant argument becomes AccountID and ProjectID headers", func(t *testing.T) {
++		tcr := mcp.CallToolRequest{}
++		tcr.Params.Arguments = map[string]any{"tenant": "3:7"}
++		req, err := CreateSelectRequest(context.Background(), cfg, tcr, "api", "v1", "query")
++		if err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		if got := req.Header.Get("AccountID"); got != "3" {
++			t.Errorf("AccountID: expected 3, got %q", got)
++		}
++		if got := req.Header.Get("ProjectID"); got != "7" {
++			t.Errorf("ProjectID: expected 7, got %q", got)
++		}
++		if req.URL.Path != "/api/v1/query" {
++			t.Errorf("single-node URL must stay tenant-free, got %q", req.URL.Path)
++		}
++	})
++
++	t.Run("no tenant argument sends no tenant headers", func(t *testing.T) {
++		req, err := CreateSelectRequest(context.Background(), cfg, mcp.CallToolRequest{}, "api", "v1", "query")
++		if err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		if _, ok := req.Header["Accountid"]; ok {
++			t.Errorf("unexpected AccountID header: %v", req.Header)
++		}
++		if _, ok := req.Header["Projectid"]; ok {
++			t.Errorf("unexpected ProjectID header: %v", req.Header)
++		}
++	})
++
++	t.Run("no tenant argument keeps a forwarded AccountID header", func(t *testing.T) {
++		tcr := mcp.CallToolRequest{}
++		tcr.Header = http.Header{"Accountid": {"9"}}
++		req, err := CreateSelectRequest(context.Background(), cfg, tcr, "api", "v1", "query")
++		if err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		if got := req.Header.Get("AccountID"); got != "9" {
++			t.Errorf("forwarded AccountID: expected 9, got %q", got)
++		}
++	})
++
++	t.Run("tenant argument wins over a forwarded header", func(t *testing.T) {
++		tcr := mcp.CallToolRequest{}
++		tcr.Header = http.Header{"Accountid": {"9"}, "Authorization": {"Bearer client-token"}}
++		tcr.Params.Arguments = map[string]any{"tenant": "3:7"}
++		req, err := CreateSelectRequest(context.Background(), cfg, tcr, "api", "v1", "query")
++		if err != nil {
++			t.Fatalf("unexpected error: %v", err)
++		}
++		if got := req.Header.Get("AccountID"); got != "3" {
++			t.Errorf("AccountID: argument must win over forwarded header, got %q", got)
++		}
++		if got := req.Header.Get("Authorization"); got != "Bearer client-token" {
++			t.Errorf("forwarded Authorization lost, got %q", got)
++		}
++	})
++
++	t.Run("invalid tenant is refused", func(t *testing.T) {
++		for _, bad := range []any{"x/../y", "a:b", "1:2:3", float64(1)} {
++			tcr := mcp.CallToolRequest{}
++			tcr.Params.Arguments = map[string]any{"tenant": bad}
++			if req, err := CreateSelectRequest(context.Background(), cfg, tcr, "api", "v1", "query"); err == nil {
++				t.Errorf("tenant %v: expected an error, got request %v", bad, req.URL)
++			}
++		}
++	})
++}
++
++func TestCreateSelectRequest_TenantArgumentIgnoredInClusterMode(t *testing.T) {
++	// In cluster mode the tenant selects the URL path (/select/<tenant>/...), not headers.
++	cfg := newTenantTestConfig(t, "http://example.com", "cluster", "")
++	tcr := mcp.CallToolRequest{}
++	tcr.Params.Arguments = map[string]any{"tenant": "3:7"}
++	req, err := CreateSelectRequest(context.Background(), cfg, tcr, "api", "v1", "query")
++	if err != nil {
++		t.Fatalf("unexpected error: %v", err)
++	}
++	if req.URL.Path != "/select/3:7/prometheus/api/v1/query" {
++		t.Errorf("unexpected cluster path %q", req.URL.Path)
++	}
++	if _, ok := req.Header["Accountid"]; ok {
++		t.Errorf("cluster mode must not send tenant headers: %v", req.Header)
++	}
++}
++
++// tenantTools are the single-node tools that query the instance through CreateSelectRequest; each must
++// offer the optional tenant argument. Tools talking to admin endpoints or not to the instance must not.
++var tenantTools = []string{
++	"query", "query_range", "series", "labels", "label_values", "metrics", "export", "rules", "alerts",
++	"active_queries", "top_queries", "tsdb_status", "metric_statistics", "metrics_metadata", "explain_query",
++	"prettify_query", "metric_relabel_debug", "retention_filters_debug", "downsampling_filters_debug",
++}
++
++func registerAllToolsForTest(s *server.MCPServer, c *config.Config) {
++	RegisterToolQuery(s, c)
++	RegisterToolFlags(s, c)
++	RegisterToolRules(s, c)
++	RegisterToolAlerts(s, c)
++	RegisterToolLabels(s, c)
++	RegisterToolSeries(s, c)
++	RegisterToolExport(s, c)
++	RegisterToolTenants(s, c)
++	RegisterToolMetrics(s, c)
++	RegisterToolTestRules(s, c)
++	RegisterToolTSDBStatus(s, c)
++	RegisterToolQueryRange(s, c)
++	RegisterToolTopQueries(s, c)
++	RegisterToolMetricStats(s, c)
++	RegisterToolLabelValues(s, c)
++	RegisterToolExplainQuery(s, c)
++	RegisterToolActiveQueries(s, c)
++	RegisterToolDocumentation(s, c)
++	RegisterToolPrettifyQuery(s, c)
++	RegisterToolMetricsMetadata(s, c)
++	RegisterToolMetricRelabelDebug(s, c)
++	RegisterToolRetentionFiltersDebug(s, c)
++	RegisterToolDownsamplingFiltersDebug(s, c)
++}
++
++func TestSingleNodeToolsOfferTenantArgument(t *testing.T) {
++	cfg := newTenantTestConfig(t, "http://example.com", "single", "")
++	s := server.NewMCPServer("test", "test")
++	registerAllToolsForTest(s, cfg)
++	registered := s.ListTools()
++
++	for _, name := range tenantTools {
++		st, ok := registered[name]
++		if !ok {
++			t.Errorf("tool %q is not registered in single mode", name)
++			continue
++		}
++		prop, ok := st.Tool.InputSchema.Properties["tenant"].(map[string]any)
++		if !ok {
++			t.Errorf("tool %q has no tenant argument", name)
++			continue
++		}
++		if prop["type"] != "string" {
++			t.Errorf("tool %q: tenant must be a string, got %v", name, prop["type"])
++		}
++		for _, r := range st.Tool.InputSchema.Required {
++			if r == "tenant" {
++				t.Errorf("tool %q: tenant must be optional", name)
++			}
++		}
++	}
++	for _, name := range []string{"flags", "documentation", "test_rules"} {
++		if st, ok := registered[name]; ok {
++			if _, has := st.Tool.InputSchema.Properties["tenant"]; has {
++				t.Errorf("tool %q must not offer a tenant argument", name)
++			}
++		}
++	}
++}
++
++func TestClusterToolsKeepTheirTenantArgumentDefinition(t *testing.T) {
++	cfg := newTenantTestConfig(t, "http://example.com", "cluster", "")
++	s := server.NewMCPServer("test", "test")
++	RegisterToolQuery(s, cfg)
++	prop, ok := s.ListTools()["query"].Tool.InputSchema.Properties["tenant"].(map[string]any)
++	if !ok {
++		t.Fatal("cluster query tool lost its tenant argument")
++	}
++	if prop["default"] != "0" {
++		t.Errorf("cluster tenant default changed: %v", prop["default"])
++	}
++}
++
++type recordedRequest struct {
++	path   string
++	header http.Header
++}
++
++func newRecordingBackend(t *testing.T) (*httptest.Server, func() []recordedRequest) {
++	t.Helper()
++	var mu sync.Mutex
++	var seen []recordedRequest
++	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		mu.Lock()
++		seen = append(seen, recordedRequest{path: r.URL.Path, header: r.Header.Clone()})
++		mu.Unlock()
++		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
++	}))
++	t.Cleanup(ts.Close)
++	return ts, func() []recordedRequest {
++		mu.Lock()
++		defer mu.Unlock()
++		return append([]recordedRequest(nil), seen...)
++	}
++}
++
++func TestToolHandlersSendTenantHeadersToInstance(t *testing.T) {
++	ts, requests := newRecordingBackend(t)
++	cfg := newTenantTestConfig(t, ts.URL, "single", "Authorization")
++
++	call := func(args map[string]any) *mcp.CallToolResult {
++		tcr := mcp.CallToolRequest{}
++		tcr.Header = http.Header{"Authorization": {"Bearer client-token"}}
++		tcr.Params.Arguments = args
++		res, err := toolQueryHandler(context.Background(), cfg, tcr)
++		if err != nil {
++			t.Fatalf("handler error: %v", err)
++		}
++		return res
++	}
++
++	if res := call(map[string]any{"query": "up", "tenant": "3:7"}); res.IsError {
++		t.Fatalf("expected success, got %v", res.Content)
++	}
++	got := requests()
++	if len(got) != 1 {
++		t.Fatalf("expected 1 request, got %d", len(got))
++	}
++	if got[0].header.Get("AccountID") != "3" || got[0].header.Get("ProjectID") != "7" {
++		t.Errorf("tenant headers not sent: %v", got[0].header)
++	}
++	if got[0].header.Get("Authorization") != "Bearer client-token" {
++		t.Errorf("forwarded Authorization lost: %v", got[0].header)
++	}
++
++	for _, bad := range []any{"x/../y", "a:b", float64(1)} {
++		if res := call(map[string]any{"query": "up", "tenant": bad}); !res.IsError {
++			t.Errorf("tenant %v: expected an error result", bad)
++		}
++	}
++	if n := len(requests()); n != 1 {
++		t.Errorf("refused tenants must not reach the instance: %d requests seen", n)
++	}
++
++	if res := call(map[string]any{"query": "up"}); res.IsError {
++		t.Fatalf("expected success, got %v", res.Content)
++	}
++	last := requests()[1]
++	if _, ok := last.header["Accountid"]; ok {
++		t.Errorf("absent tenant must send no tenant headers: %v", last.header)
++	}
++}
+diff --git a/cmd/mcp-victoriametrics/tools/top_queries.go b/cmd/mcp-victoriametrics/tools/top_queries.go
+index 8c262fd..8c33e69 100644
+--- a/cmd/mcp-victoriametrics/tools/top_queries.go
++++ b/cmd/mcp-victoriametrics/tools/top_queries.go
+@@ -66,6 +66,7 @@ This information is obtained from the "/api/v1/status/top_queries" HTTP endpoint
+ 			mcp.Pattern(`^([0-9]+)([a-z]+)$`),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameTopQueries, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/tsdb_status.go b/cmd/mcp-victoriametrics/tools/tsdb_status.go
+index f956900..7dc33ee 100644
+--- a/cmd/mcp-victoriametrics/tools/tsdb_status.go
++++ b/cmd/mcp-victoriametrics/tools/tsdb_status.go
+@@ -82,6 +82,7 @@ This tool returns TSDB stats from "/api/v1/status/tsdb" endpoint of VictoriaMetr
+ 			mcp.DefaultString(""),
+ 		),
+ 	)
++	options = withTenantHeaderOption(c, options)
+ 	return mcp.NewTool(toolNameTSDBStatus, options...)
+ }
+ 
+diff --git a/cmd/mcp-victoriametrics/tools/utils.go b/cmd/mcp-victoriametrics/tools/utils.go
+index 9b84a95..419f824 100644
+--- a/cmd/mcp-victoriametrics/tools/utils.go
++++ b/cmd/mcp-victoriametrics/tools/utils.go
+@@ -6,8 +6,10 @@ import (
+ 	"io"
+ 	"net/http"
+ 	"net/url"
++	"strconv"
+ 	"sync"
+ 
++	"github.com/VictoriaMetrics/VictoriaMetrics/lib/auth"
+ 	"github.com/mark3labs/mcp-go/mcp"
+ 
+ 	vmcloud "github.com/VictoriaMetrics/victoriametrics-cloud-api-go/v1"
+@@ -16,6 +18,15 @@ import (
+ )
+ 
+ func CreateSelectRequest(ctx context.Context, cfg *config.Config, tcr mcp.CallToolRequest, path ...string) (*http.Request, error) {
++	accountID, projectID := "", ""
++	if usesTenantHeaders(cfg) {
++		var err error
++		accountID, projectID, err = GetToolReqTenant(tcr)
++		if err != nil {
++			return nil, fmt.Errorf("failed to get tenant: %v", err)
++		}
++	}
++
+ 	selectURL, err := getSelectURL(ctx, cfg, tcr, path...)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to get select URL: %v", err)
+@@ -43,6 +54,12 @@ func CreateSelectRequest(ctx context.Context, cfg *config.Config, tcr mcp.CallTo
+ 		}
+ 	}
+ 
++	// The tenant argument is applied last so it wins over a forwarded AccountID/ProjectID header
++	if accountID != "" {
++		req.Header.Set("AccountID", accountID)
++		req.Header.Set("ProjectID", projectID)
++	}
++
+ 	return req, nil
+ }
+ 
+@@ -291,6 +308,46 @@ func withCloudAccessKey(ctx context.Context, tcr mcp.CallToolRequest) context.Co
+ 	return ctx
+ }
+ 
++// usesTenantHeaders reports whether the tenant of a request is picked with AccountID/ProjectID headers.
++// A single-node instance has no tenants of its own, but an authenticating proxy in front of it
++// (e.g. vmauth) selects the tenant from these headers. Cluster and cloud use the URL path instead.
++func usesTenantHeaders(cfg *config.Config) bool {
++	return cfg.IsSingle() && !cfg.IsCloud()
++}
++
++// withTenantHeaderOption appends the optional tenant argument to the options of a tool that queries a
++// single-node instance. The cluster and cloud tools declare their own path-based tenant argument.
++func withTenantHeaderOption(cfg *config.Config, options []mcp.ToolOption) []mcp.ToolOption {
++	if !usesTenantHeaders(cfg) {
++		return options
++	}
++	return append(options,
++		mcp.WithString("tenant",
++			mcp.Title("Tenant name (Account ID and Project ID)"),
++			mcp.Description("Name of the tenant for which the data will be displayed (format AccountID:ProjectID). "+
++				"Optional: only needed when the instance is behind an authenticating proxy that lets the caller choose among several tenants."),
++			mcp.Pattern(`^[0-9]+(:[0-9]+)?$`),
++		),
++	)
++}
++
++// GetToolReqTenant returns the AccountID and ProjectID of the optional tenant argument,
++// or empty strings when it is absent or empty.
++func GetToolReqTenant(tcr mcp.CallToolRequest) (string, string, error) {
++	tenant, err := GetToolReqParam[string](tcr, "tenant", false)
++	if err != nil {
++		return "", "", fmt.Errorf("failed to get tenant: %v", err)
++	}
++	if tenant == "" {
++		return "", "", nil
++	}
++	token, err := auth.NewToken(tenant)
++	if err != nil {
++		return "", "", fmt.Errorf("failed to parse tenant %q: %v", tenant, err)
++	}
++	return strconv.FormatUint(uint64(token.AccountID), 10), strconv.FormatUint(uint64(token.ProjectID), 10), nil
++}
++
+ func ptr[T any](v T) *T {
+ 	return &v
+ }
+-- 
+2.54.0
+

@@ -15,6 +15,10 @@ buildGoModule (finalAttrs: {
     hash = "sha256-7kN7qwsvTL0scfBxMO/nrvikiysUxPY8nSFkhJsgGDM=";
   };
 
+  # Adds the optional `tenant` tool argument (sent as AccountID/ProjectID) that mcp-victorialogs and
+  # mcp-victoriatraces have, so a vmauth user with several tenants can pick one; drop once upstream ships it.
+  patches = [ ./tenant.patch ];
+
   # vendor/ is committed upstream, and buildGoModule refuses a non-null
   # vendorHash when a vendor/ directory exists ("vendor folder exists, please
   # set 'vendorHash = null;'"), so the modules are taken from the committed

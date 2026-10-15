@@ -129,12 +129,12 @@ applies, so vmauth alone bounds the tenant. Probed on the pinned binaries
 - `tenant: a`: every tool of the three servers returns only a's data. The logs and
   traces `tenant` argument goes out as `AccountID`/`ProjectID` headers (and defaults
   to `0`/`0`); vmauth's stamped headers replace them, so naming another tenant still
-  returns a's data. The metrics tools take no tenant and cannot move the path.
-- `tenants: [a, b]` / `all`: the routes exist, but the metrics tools send no
-  `AccountID`, so their calls are vmauth's 400 `missing route` (a tool error). The
-  logs and traces tools default to `AccountID: 0`, also a 400; the `tenant`
-  argument (`1`, `1:9`) picks a listed tenant (the project is forced), an unlisted
-  one is the 400, and under `all` a declared tenant nobody wrote to is empty.
+  returns a's data. The metrics tools cannot move the path (the tenant is in it).
+- `tenants: [a, b]` / `all`: the routes exist. Without a `tenant` argument every
+  tool of the three servers ends in vmauth's 400 `missing route` (a tool error); the
+  `tenant` argument (`1`, `1:9`) picks a listed tenant (the project is forced), an
+  unlisted one is the 400, and under `all` a declared tenant nobody wrote to is
+  empty (the metrics tools have the argument since the Update below).
 - Hostile arguments (`x/../../select/2/...`, absolute URL, CRLF) never reach the
   backend as anything but a path segment under the tenant's own `/select/<id>/`
   or vmauth's 400, as for a tenant-less token.
@@ -142,3 +142,13 @@ applies, so vmauth alone bounds the tenant. Probed on the pinned binaries
   `%2f`): a path that cleans into a route the token holds is that route, any other
   is the 400 `missing route` naming the cleaned path. `extraReadUrlMap` routes are
   still not given to a tenant token.
+
+Update: the metrics MCP server got the same optional `tenant` argument as the logs
+and traces ones (`packages/mcp-victoriametrics/tenant.patch`, single-node mode: sent as
+`AccountID`/`ProjectID` headers, after the forwarded headers, so the argument wins;
+`AccountID:ProjectID` or an account alone, anything else is refused before a request).
+All three servers now give the same result per token kind (`tests/tenant-mcp.nix`):
+list/`all` tokens pick a listed tenant, an unlisted or missing pick is the 400, a
+`tenant:` token and a tenant-less token ignore the argument. Only the admin password
+differs: logs and traces follow the argument, its metrics route is the default
+tenant's path, so the argument changes nothing there.

@@ -308,13 +308,15 @@ in
       MISSING = ("init", 400)
       NONE = ("data", [])
 
-      # Cells: (token, tenant argument) -> what the caller sees.
+      # Cells: (token, tenant argument) -> what the caller sees. All three servers behave the same:
       #  - a tenant token sees its tenant, whatever the `tenant` argument says;
-      #  - list/all tokens pick by the AccountID the MCP server sends, which only the logs and
-      #    traces tools can set (metrics sends none: vmauth's 400);
-      #  - no key: tenant 0 whatever is asked; admin is unstamped and picks;
+      #  - list/all tokens pick by the AccountID the MCP server sends (the tenant argument, sent as the
+      #    AccountID/ProjectID headers); no argument or an unlisted one is vmauth's 400;
+      #  - no key: tenant 0 whatever is asked;
+      #  - admin is unstamped: it picks the logs and traces tenant by header, but vmauth routes its
+      #    metrics to the default tenant's path, so only there the argument changes nothing;
       #  - a backend-scoped token has no route to the other servers.
-      for route in ("logs", "traces"):
+      for route in ("metrics", "logs", "traces"):
           cells = [
               ("read-a", None, data(route, "a")),
               ("read-a", "2", data(route, "a")),
@@ -336,8 +338,8 @@ in
               ("read-plain", None, data(route, "default")),
               ("read-plain", "1", data(route, "default")),
               ("admin", None, data(route, "default")),
-              ("admin", "1", data(route, "a")),
-              ("admin", "2", data(route, "b")),
+              ("admin", "1", data(route, "default" if route == "metrics" else "a")),
+              ("admin", "2", data(route, "default" if route == "metrics" else "b")),
           ]
           for token, tenant, expected in cells:
               got = outcome(route, token, tenant)
@@ -347,18 +349,6 @@ in
                                       ("traces", None, MISSING), ("metrics", None, MISSING)]:
           got = outcome(route, "read-a-logs-only", tenant)
           assert got == expected, (route, tenant, got, expected)
-
-      for token, expected in [
-          ("read-a", data("metrics", "a")),
-          ("read-b", data("metrics", "b")),
-          ("read-list", REFUSED),
-          ("read-all", REFUSED),
-          ("read-plain", data("metrics", "default")),
-          ("admin", data("metrics", "default")),
-          ("read-a-logs-only", MISSING),
-      ]:
-          got = outcome("metrics", token)
-          assert got == expected, ("metrics", token, got, expected)
 
       # No credential, an unknown one: vmauth's own 401 before any server.
       for route in CALLS:
@@ -486,16 +476,18 @@ in
       assert st == 200 and not is_error(r), r
       assert len(new) == 1 and new[0].endswith("| AccountID=1 ProjectID=0 X-Injected=None"), new
 
-      # A tool call that NAMES another tenant still reaches the backend as tenant a.
+      # A tool call that NAMES another tenant still reaches the backend as tenant a: logs and
+      # traces by vmauth's header override, metrics by the tenant in the stamped path.
+      METRICS_A = ["GET /select/1/prometheus/api/v1/labels HTTP/1.1"]
       for tenant in ["2", "2:5", "3:7", "0"]:
           st, r, new = seen_by_backend("logs", A, "query",
                                        {"query": "*", "start": "2000-01-01T00:00:00Z", "tenant": tenant})
           assert len(new) == 1 and new[0].endswith("| AccountID=1 ProjectID=0 X-Injected=None"), (tenant, new)
           st, r, new = seen_by_backend("traces", A, "services", {"tenant": tenant})
           assert len(new) == 1 and new[0].endswith("| AccountID=1 ProjectID=0 X-Injected=None"), (tenant, new)
-      # The metrics tools take no tenant: an extra argument is ignored or refused, the path is a's.
-      st, r, new = seen_by_backend("metrics", A, "labels", {"tenant": "2"})
-      assert [l.split(" | ")[0] for l in new] in ([], ["GET /select/1/prometheus/api/v1/labels HTTP/1.1"]), new
+          st, r, new = seen_by_backend("metrics", A, "labels", {"tenant": tenant})
+          assert st == 200 and not is_error(r), (tenant, r)
+          assert [l.split(" | ")[0] for l in new] == METRICS_A, (tenant, new)
 
       def hostile(route, token, tool, args, refusal):
           st, r, new = seen_by_backend(route, token, tool, args)
@@ -507,10 +499,14 @@ in
       for label in ["x/../../flags", "x\r\nX-Injected: 1", "%2e%2e/%2e%2e/flags",
                     "x/../../../select/2/prometheus/api/v1/labels"]:
           hostile("metrics", A, "label_values", {"label_name": label}, "missing route")
-      # The logs tenant must parse as AccountID:ProjectID before anything is sent.
-      for tenant in ["0:0/../../flags", "http://evil.example.invalid", "0\r\nX-Injected: 1"]:
-          hostile("logs", A, "query", {"query": "*", "start": "2000-01-01T00:00:00Z", "tenant": tenant},
-                  "failed to get tenant")
+      # The metrics and logs tenants must parse as AccountID:ProjectID before anything is sent.
+      for route, tool, args in [
+          ("metrics", "labels", {}),
+          ("metrics", "query", {"query": "up"}),
+          ("logs", "query", {"query": "*", "start": "2000-01-01T00:00:00Z"}),
+      ]:
+          for tenant in ["0:0/../../flags", "http://evil.example.invalid", "0\r\nX-Injected: 1", "a:b", "1:2:3"]:
+              hostile(route, A, tool, {**args, "tenant": tenant}, "failed to get tenant")
       deep = "../" * 5 + "flags"
       for tool, args in [
           ("trace", {"trace_id": deep}),
@@ -529,10 +525,16 @@ in
       st, r, new = seen_by_backend("traces", A, "service_operations", {"service_name": "http://evil.example.invalid/x"})
       assert all(l.startswith("GET /select/jaeger/api/services/") and "AccountID=1 ProjectID=0" in l for l in new) and len(new) <= 1, new
 
-      # Nothing outside the stamped paths, and never another tenant's id or header.
-      assert not any(" /flags HTTP" in l or "X-Injected=None" not in l for l in recorded()), recorded()
-      assert not any("/select/2/" in l or "/select/3/" in l or "AccountID=2" in l or "AccountID=0" in l
-                     for l in recorded()), recorded()
+      # Nothing outside the stamped paths, and never another tenant's id or header. A metrics
+      # request carries its tenant in the path (the AccountID header a tenant argument sets is
+      # not part of the routing there), so it is judged by the path.
+      lines = recorded()
+      assert not any(" /flags HTTP" in l or "X-Injected=None" not in l for l in lines), lines
+      for l in lines:
+          if l.startswith("GET /select/1/prometheus/"):
+              continue
+          assert not ("/select/2/" in l or "/select/3/" in l or "AccountID=2" in l or "AccountID=0" in l), l
+      assert not any("/select/2/" in l or "/select/3/" in l for l in lines), lines
     '';
   };
 }

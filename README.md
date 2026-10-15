@@ -325,10 +325,11 @@ The admin password reads the default tenant's metrics.
 The MCP servers work with tenant tokens: a `tenant` token reaches `/mcp/metrics`,
 `/mcp/logs` and `/mcp/traces` (within its `backends`) and sees only its tenant,
 because the server sends the caller's own token on to vmauth's read tier, which
-stamps it; the `tenant` argument of a logs or traces tool changes nothing for it.
-A `tenants` token reaches the MCP routes too, but the metrics tools send no
-`AccountID`, so its metrics calls end in vmauth's 400; its logs and traces tools
-pick a listed tenant with the `tenant` argument (`1` or `1:0`).
+stamps it; the `tenant` argument of a metrics, logs or traces tool changes nothing for it.
+A `tenants` token reaches the MCP routes too and picks a listed tenant with the `tenant`
+argument of any of the three servers (`1` or `1:0`; the metrics server needs the patch
+`packages/mcp-victoriametrics/tenant.patch`, which the module's package carries); a missing or
+unlisted tenant is vmauth's 400.
 
 Limits: tenant tokens get none of the routes added through
 `extraReadUrlMap`/`extraWriteUrlMap`; tokens without a tenant keep working and are

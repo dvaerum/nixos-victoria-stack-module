@@ -111,6 +111,10 @@ Update: a tenant token does get the `/mcp/*` routes now: the servers send its ow
 token to the read tier, which stamps the tenant, so the `tenant` argument cannot
 widen it ([0032](./0032-tenants-in-token-files.md), `tests/tenant-mcp.nix`).
 
+Update: the metrics MCP server has the optional `tenant` argument too, so for
+`tenants: [...]`/`all` tokens all three servers pick a listed tenant the same way and
+a missing or unlisted pick is vmauth's 400 ([0032](./0032-tenants-in-token-files.md)).
+
 Update: the "left on deliberately" tools `alerts`, `rules` and
 `metric_statistics`, plus `prettify_query`, are now disabled by default too.
 Their endpoints (`/vmalert/api/v1/alerts`, `/vmalert/api/v1/rules`,
