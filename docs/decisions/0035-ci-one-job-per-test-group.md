@@ -34,6 +34,17 @@ which unpacks it over the checkout in every job; a push job commits it only
 when every shard passed. Only the push jobs have `contents: write` and they run
 no Nix; the bump jobs and shards keep no git credentials.
 
+## Update: the push jobs can be pointed at a scratch branch
+
+The package stage only runs end to end when an upstream release is newer than
+the pin, which a normal week rarely gives. `update-dependencies.yml` therefore
+takes two `workflow_dispatch` inputs: `push_branch` (both push jobs push there
+instead of the branch the run started on, creating it if needed) and `dry_run`
+(print the commit instead of pushing). Dispatching on a scratch branch whose
+package is pinned one release back, with `push_branch` set, exercises bump,
+sharded check and push without any write to `main`. Scheduled runs have neither
+input and behave as before.
+
 ## Not covered
 
 `nix flake check` also evaluated the non-test outputs (packages, apps,

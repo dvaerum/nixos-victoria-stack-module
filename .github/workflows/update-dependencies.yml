@@ -39,7 +39,18 @@ concurrency:
 on:
   schedule:
     - cron: "0 3 * * 0"
+  # Both inputs exist to verify the push mechanics without touching the branch
+  # the run started on; left alone, a run behaves exactly like a scheduled one.
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Run everything except the final `git push`; the push jobs print the commit instead
+        type: boolean
+        default: false
+      push_branch:
+        description: Branch both push jobs push to (created if missing); empty pushes to the branch the run started on
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -105,13 +116,10 @@ jobs:
           name: bumped-flake
 
       - name: Commit and push flake.lock
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add flake.lock
-          git commit -m "bump flake inputs"
-          git pull --rebase
-          git push
+        env:
+          PUSH_BRANCH: ${{ inputs.push_branch || github.ref_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: .github/scripts/commit-and-push.sh "bump flake inputs" flake.lock
 
   bump-packages:
     needs: push-flake
@@ -204,11 +212,9 @@ jobs:
       # (push-flake) and was unpacked for the shards' sake alone; restoring it
       # keeps the tree clean for `git pull --rebase`.
       - name: Commit and push packages/
+        env:
+          PUSH_BRANCH: ${{ inputs.push_branch || github.ref_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           git checkout -- flake.lock
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add packages/
-          git commit -m "packages: bump versions"
-          git pull --rebase
-          git push
+          .github/scripts/commit-and-push.sh "packages: bump versions" packages/

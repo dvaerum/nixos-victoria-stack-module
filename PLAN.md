@@ -32,7 +32,9 @@ docs/decisions/NNNN-*.md         — ADRs, terse, WHY only
   check.yml                       — reusable: one matrix job per test group/shard
   update-dependencies.yml         — weekly nixpkgs bump + MCP package bump: per stage
                                     bump -> check.yml -> push (docs/decisions/0018, 0035)
+                                    workflow_dispatch inputs `dry_run`, `push_branch`
   update-docs.yml                 — regenerate + commit docs/options.md
+.github/scripts/commit-and-push.sh — the push jobs' commit, rebase and push
 nixosModule/
   default.nix                     — nixosModules.default (both trees)
   victoriaStack/{options,config,metrics,logs,traces,vmauth,grafana,nginx,mcp}.nix
