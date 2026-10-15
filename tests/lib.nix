@@ -26,6 +26,8 @@ let
           # Silences the stateVersion warning noise, nothing more --
           # doesn't affect our own module's own assertions/warnings.
           system.stateVersion = lib.trivial.release;
+          # One shared package set: each evaluation otherwise instantiates nixpkgs again.
+          nixpkgs.pkgs = pkgs;
         }
       ];
     };
