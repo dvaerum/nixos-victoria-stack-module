@@ -151,6 +151,14 @@ in
       (lib.mkIf topCfg.logs.enable [ pkgs.grafanaPlugins.victoriametrics-logs-datasource ])
     ];
 
+    # Role None: a new user lands in the main org (where the main datasources are)
+    # without datasource rights. An env var because nixpkgs types
+    # settings.users.auto_assign_org_role as Viewer/Editor/Admin, refusing "None".
+    # Existing users keep their role: docs/runbooks/grafana-tenant-org.md.
+    systemd.services.grafana.environment = lib.mkIf (tenantOrgs != { }) {
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE = lib.mkDefault "None";
+    };
+
     systemd.services.grafana.serviceConfig = lib.mkMerge [
       (lib.mkIf (allTokens != [ ]) {
         LoadCredential = map (t: "${t.credential}:${t.path}") allTokens;

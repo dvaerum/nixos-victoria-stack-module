@@ -311,7 +311,10 @@ that token, through vmauth's read tier:
 Create the organisation before setting `grafanaOrgId` (Grafana does not start
 with a datasource for an organisation that is missing); the steps, checks and
 the reason are in the
-[runbook](./docs/runbooks/grafana-tenant-org.md).
+[runbook](./docs/runbooks/grafana-tenant-org.md). While a tenant has `grafanaOrgId`,
+new Grafana users get the role `None` in the main organisation (no access to
+the main datasources) and you add them to their tenant organisation as Viewer or
+Editor; the runbook covers existing users and the limits.
 
 Metrics follow the same tokens: vmauth sends a `tenant` token's metrics reads and
 writes to that tenant's own path of the metrics cluster (`/select/<accountId>/...`,

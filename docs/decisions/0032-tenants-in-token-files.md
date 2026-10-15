@@ -97,6 +97,12 @@ caps a datasource uid at 40 characters). Tenant datasources are not removed
 when the options are, like a disabled backend's
 ([0029](./0029-grafana-datasources-through-vmauth-read-tier.md)).
 
+Update: while some tenant has `grafanaOrgId`, the module sets Grafana's new-user
+role in the main organisation to `None` (`GF_USERS_AUTO_ASSIGN_ORG_ROLE`, a
+`mkDefault`), because Grafana's default Viewer let any new user query the main
+datasources. `auto_assign_org = false` was measured worse (a personal organisation
+as Admin per user). Existing users and the other limits are in the runbook.
+
 Update: vmauth now stamps metrics per tenant token, and the warning that metrics
 were dropped is gone. The tenant is in the backend path, so a `tenant: a` token's
 metrics routes keep the unchanged client paths and the same closed allow-list but

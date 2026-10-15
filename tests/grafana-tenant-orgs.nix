@@ -199,6 +199,32 @@ let
         throw "tenant datasource provisioning broken: ${builtins.toJSON failed}"
     );
 
+  # New users get role None in the main org only while some tenant has an org
+  # (the env var, because nixpkgs' typed setting refuses "None").
+  roleVar = "GF_USERS_AUTO_ASSIGN_ORG_ROLE";
+  newUserRole =
+    let
+      envOf = args: (evalWith (tenantsModule args)).config.systemd.services.grafana.environment;
+      forced = evalWith {
+        imports = [
+          (tenantsModule { tenants.a = tenant 1 2 tokenA; })
+          { systemd.services.grafana.environment.${roleVar} = lib.mkForce "Viewer"; }
+        ];
+      };
+      checks = {
+        "None when a tenant has an org" =
+          (envOf { tenants.a = tenant 1 2 tokenA; }).${roleVar} or null == "None";
+        "untouched when no tenant has an org" = !((envOf { tenants.a = tenant 1 null null; }) ? ${roleVar});
+        "untouched without tenants" = !((envOf { tenants = { }; }) ? ${roleVar});
+        "the operator can force another role" =
+          forced.config.systemd.services.grafana.environment.${roleVar} == "Viewer";
+      };
+      failed = lib.attrNames (lib.filterAttrs (_: ok: !ok) checks);
+    in
+    pkgs.runCommand "grafana-tenant-orgs-new-user-role-eval" { } (
+      if failed == [ ] then "echo OK > $out" else throw "new-user role broken: ${builtins.toJSON failed}"
+    );
+
   # Only the backends that are enabled get a tenant datasource.
   followsBackends =
     let
@@ -745,9 +771,159 @@ let
       eventually(lambda: log_rows(3, "vl-b"), ["log-b"], "org 3 logs after a's rotation")
     '';
   };
+
+  # A user created after tenant orgs are enabled is None in the main org: no
+  # datasource rights there, nothing of other tenants, own org as usual.
+  newUsers = pkgs.testers.nixosTest {
+    name = "victoria-stack-grafana-tenant-orgs-new-users";
+    skipLint = true;
+    nodes.machine = {
+      imports = [
+        module
+        testLib.testStartupTimeouts
+        grafanaConsumerConfig
+      ];
+      virtualisation.memorySize = 2048;
+      services.victoriaStack = {
+        logs.enable = true;
+        grafana = {
+          enable = true;
+          readTokenFile = "${testLib.grafanaReadTokenFile}";
+        };
+        tenants = {
+          a.accountId = 1;
+          b.accountId = 2;
+        };
+        vmauth.readTokensFile = "${pkgs.writeText "read.yaml" ''
+          tokens:
+            - token: ${testLib.grafanaReadToken}
+            - token: ${tokenFixtureA}
+              tenant: a
+            - token: ${tokenFixtureB}
+              tenant: b
+        ''}";
+      };
+      specialisation.with-orgs.configuration.services.victoriaStack.tenants = tenantsWithOrgs {
+        a = 2;
+        b = 3;
+      };
+      specialisation.opt-out.configuration = {
+        services.victoriaStack.tenants = tenantsWithOrgs {
+          a = 2;
+          b = 3;
+        };
+        systemd.services.grafana.environment.GF_USERS_AUTO_ASSIGN_ORG_ROLE = lib.mkForce "Viewer";
+      };
+    };
+
+    testScript = ''
+      import json
+      import shlex
+      ${testLib.waitActivePython}
+      GRAFANA = "http://127.0.0.1:3000"
+      ADM = "admin:admin"  # gitleaks:allow
+
+
+      def g(path, user, org=None, method="GET", data=None):
+          cmd = f"curl -s -g -w '\\n%{{http_code}}' -u {shlex.quote(user)} -X {method} "
+          if org is not None:
+              cmd += f"-H 'X-Grafana-Org-Id: {org}' "
+          if data is not None:
+              cmd += f"-H 'Content-Type: application/json' -d {shlex.quote(json.dumps(data))} "
+          out = machine.succeed(cmd + shlex.quote(GRAFANA + path))
+          body, code = out.rsplit("\n", 1)
+          return code.strip(), body
+
+
+      def orgs_of(user):
+          c, b = g("/api/user/orgs", user)
+          assert c == "200", (c, b)
+          return sorted((o["orgId"], o["role"]) for o in json.loads(b))
+
+
+      def mkuser(login):
+          c, b = g("/api/admin/users", ADM, method="POST", data={"name": login, "email": login + "@example.com", "login": login, "password": "pw-" + login})
+          assert c == "200", (c, b)
+
+
+      def healthy():
+          machine.wait_until_succeeds(f"curl -sf -u {ADM} {GRAFANA}/api/health", timeout=200)
+
+
+      for unit in ["victorialogs", "vmauth", "grafana"]:
+          wait_active(machine, f"{unit}.service")
+      machine.wait_for_open_port(3000)
+      healthy()
+      machine.succeed(
+          "install -d -m 0700 ${secretDir}; printf %s ${tokenFixtureA} > ${secretDir}/a; printf %s ${tokenFixtureB} > ${secretDir}/b; chmod 0600 ${secretDir}/a ${secretDir}/b"
+      )
+      # No tenant orgs yet: Grafana's default stays.
+      assert "GF_USERS_AUTO_ASSIGN_ORG_ROLE" not in machine.succeed("systemctl show -p Environment grafana.service")
+      mkuser("pre")
+      PRE = "pre:pw-pre"  # gitleaks:allow
+      assert orgs_of(PRE) == [(1, "Viewer")]
+
+      for name, expected in [("team-a", 2), ("team-b", 3)]:
+          c, b = g("/api/orgs", ADM, method="POST", data={"name": name})
+          assert c == "200" and json.loads(b)["orgId"] == expected, (c, b)
+      machine.succeed("/run/current-system/specialisation/with-orgs/bin/switch-to-configuration test")
+      wait_active(machine, "grafana.service")
+      machine.wait_for_open_port(3000)
+      healthy()
+      assert "GF_USERS_AUTO_ASSIGN_ORG_ROLE=None" in machine.succeed("systemctl show -p Environment grafana.service")
+
+      for u in ["ua", "ub", "ue"]:
+          mkuser(u)
+          assert orgs_of(f"{u}:pw-{u}") == [(1, "None")], orgs_of(f"{u}:pw-{u}")
+      for u, org, role in [("ua", 2, "Viewer"), ("ub", 3, "Viewer"), ("ue", 2, "Editor")]:
+          c, b = g(f"/api/orgs/{org}/users", ADM, method="POST", data={"loginOrEmail": u, "role": role})
+          assert c == "200", (c, b)
+      UA, UE = "ua:pw-ua", "ue:pw-ue"  # gitleaks:allow
+      assert orgs_of(UA) == [(1, "None"), (2, "Viewer")]
+
+      # own tenant datasource works; the main one and other tenants' do not
+      c, b = g("/api/datasources/proxy/uid/vl-a/select/logsql/query?query=*", UA, org=2)
+      assert c == "200", (c, b)
+      for org, uid in [(1, "victorialogs-ds"), (3, "vl-b")]:
+          c, b = g(f"/api/datasources/proxy/uid/{uid}/select/logsql/query?query=*", UA, org=org)
+          assert c == "403", (org, uid, c, b)
+      c, b = g("/api/ds/query", UA, org=1, method="POST", data={"queries": [{"refId": "A", "datasource": {"uid": "victorialogs-ds"}, "expr": "*"}], "from": "now-5m", "to": "now"})
+      assert c == "403", (c, b)
+      c, b = g("/api/datasources", UA, org=1)
+      assert c == "403", (c, b)
+      # Viewer and Editor cannot create datasources (a loopback URL would bypass vmauth)
+      evil = {"name": "evil", "uid": "evil", "type": "prometheus", "url": "http://127.0.0.1:8428", "access": "proxy"}
+      for user in [UA, UE]:
+          for org in [1, 2]:
+              c, b = g("/api/datasources", user, org=org, method="POST", data=evil)
+              assert c == "403", (user, org, c, b)
+      # no org creation, so no personal org
+      c, b = g("/api/orgs", UA, method="POST", data={"name": "mine"})
+      assert c == "403", (c, b)
+      assert [o["name"] for o in json.loads(g("/api/orgs", ADM)[1])] == ["Main Org.", "team-a", "team-b"]
+      # the admin is unaffected
+      assert g("/api/user", ADM)[0] == "200"
+      assert {d["uid"] for d in json.loads(g("/api/datasources", ADM, org=1)[1])} == {"victorialogs-ds"}
+
+      # Known limit: a user from before the switch stays Viewer in org 1.
+      assert orgs_of(PRE) == [(1, "Viewer")]
+      c, b = g("/api/datasources/proxy/uid/victorialogs-ds/select/logsql/query?query=*", PRE, org=1)
+      assert c == "200", (c, b)
+
+      # The operator's escape hatch: mkForce "Viewer".
+      machine.succeed("/run/booted-system/specialisation/opt-out/bin/switch-to-configuration test")
+      wait_active(machine, "grafana.service")
+      machine.wait_for_open_port(3000)
+      healthy()
+      mkuser("late")
+      assert orgs_of("late:pw-late") == [(1, "Viewer")]
+    '';
+  };
 in
 {
   provisioning-is-per-org-with-the-tenants-token = provisioning;
+  new-user-role-eval = newUserRole;
+  new-users-have-no-main-org-rights = newUsers;
   follows-the-enabled-backends = followsBackends;
   nothing-without-the-options = nothingWithoutOptIn;
   escapes-the-token-path = escapesPaths;

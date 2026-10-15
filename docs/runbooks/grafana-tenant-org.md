@@ -64,17 +64,24 @@ from the tenant, deploy, and start again at step 2.
    # {"message":"Organization created","orgId":<org-id>}
    ```
 
-   Add the tenant's users to the organisation with the role you want
+   Add the tenant's users to the organisation with the role Viewer or Editor
    (Administration, Users and access). Every member of the organisation can
-   query every datasource in it.
+   query every datasource in it. Do not make a tenant's user Admin of its
+   organisation: an organisation Admin can add a datasource that points at any
+   URL, including the backends directly, past vmauth's tenant tokens, and
+   Grafana OSS cannot prevent that. Viewers and Editors cannot create
+   datasources.
 
-   Grafana also adds every new user to the main organisation as a Viewer
-   (default `[users] auto_assign_org = true`), where the main datasources are,
-   and that user can query them through Grafana's datasource API. For a tenant
-   user, either remove them from the main organisation (Administration, Users
-   and access, Users, the user, Organizations) or set
-   `services.grafana.settings.users.auto_assign_org = false` and add users to
-   organisations yourself.
+   By default Grafana adds every new user to the main organisation (id 1) as a
+   Viewer, where the main datasources are, and that user can query them through
+   Grafana's datasource API. Once a tenant has `grafanaOrgId` (step 3), the
+   module sets Grafana's `GF_USERS_AUTO_ASSIGN_ORG_ROLE` to `None`: a new user is
+   still listed in the main organisation, but with no rights there (the
+   datasource API answers 403), and organisation ids do not shift. Add the user
+   to their tenant organisation as in this step. Do not use
+   `services.grafana.settings.users.auto_assign_org = false`: Grafana then gives
+   every new user a personal organisation of their own as Admin (which can add
+   datasources, see above) and shifts the organisation ids.
 
 3. **Set `grafanaOrgId` and `readTokenFile` and deploy.** Both together, or the
    build stops. The id must not be 1 (the organisation of the main
@@ -120,6 +127,28 @@ from the tenant, deploy, and start again at step 2.
      ```
 
    The main organisation keeps only the main datasources.
+
+## Users and the main organisation
+
+The module's `None` role applies to users created after the deploy of step 3
+(the test `grafana-tenant-orgs-new-users-have-no-main-org-rights`). What it
+does not cover:
+
+- **Users created before.** They stay Viewer in the main organisation and can
+  still query the main datasources. For each tenant user: Administration, Users
+  and access, Users, the user, Organizations, remove the main organisation (or
+  change the role to `None`). Grafana caches permissions: right after the
+  removal the main datasource still answered 200, about 30 seconds later 403.
+- **Staff who should see the main datasources**, created after the deploy, get
+  `None` too. An admin promotes them in the main organisation (to Viewer or
+  more).
+- **Sign-in through OAuth, LDAP or proxy auth.** Their role mapping may
+  override `None` (not tested). Check what role such a user gets in the main
+  organisation.
+- **Back to Grafana's default** (Viewer for new users):
+  `systemd.services.grafana.environment.GF_USERS_AUTO_ASSIGN_ORG_ROLE = lib.mkForce "Viewer";`.
+  `services.grafana.settings.users.auto_assign_org_role` does not do it: the
+  environment variable wins over it, and the option's type refuses `None`.
 
 ## Rotating the token
 

@@ -1023,7 +1023,9 @@ in
                 create one, so you create it by hand (see
                 docs/runbooks/grafana-tenant-org.md). Must differ from the id of the
                 organisation the main datasources use (1) and from every other
-                tenant's. Needs `grafana.enable`.
+                tenant's. Needs `grafana.enable`. While any tenant sets it, new
+                Grafana users get the role `None` in the main organisation
+                (`GF_USERS_AUTO_ASSIGN_ORG_ROLE`, overridable with `lib.mkForce`).
               '';
             };
 
