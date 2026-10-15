@@ -665,16 +665,13 @@ let
       machine.succeed("$(readlink -f /run/booted-system)/bin/switch-to-configuration test")
       # The switch stops the crash loop mid-start, which can leave Grafana's DB
       # lock (oss-ac-basic-role-seeder) behind: the next starts exit 1 until it
-      # expires and use up the unit's start limit, leaving it failed for good
-      # while the port never opens. Reset and start it again, as an operator would.
-      deadline = time.monotonic() + 300
+      # expires. The unit's restart backoff (grafana-recovery.nix) outlasts it,
+      # so Grafana comes back on its own, as for an operator.
+      deadline = time.monotonic() + 200
       while machine.execute(f"curl -sf {ADMIN} {GRAFANA}/api/health")[0] != 0:
-          state = machine.succeed("systemctl show -p ActiveState --value grafana.service").strip()
-          if state == "failed":
-              machine.succeed("systemctl reset-failed grafana.service; systemctl start --no-block grafana.service")
           if time.monotonic() > deadline:
               _, journal = machine.execute("journalctl -u grafana.service -n 30 --no-pager")
-              assert False, f"Grafana not healthy 300s after the switch back ({state}); journal:\n{journal}"
+              assert False, f"Grafana not healthy 200s after the switch back; journal:\n{journal}"
           time.sleep(2)
 
       # Runbook step 2: create the orgs through the API.

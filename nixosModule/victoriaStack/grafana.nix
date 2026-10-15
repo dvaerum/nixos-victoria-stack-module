@@ -10,6 +10,7 @@ let
   cfg = topCfg.grafana;
   listen = import ./listen.nix { inherit lib; };
   inherit (import ./exec-escape.nix { inherit lib; }) escapeEnvironment;
+  restartBackoff = import ../restart-backoff.nix;
 
   # LoadCredential= and PathChanged= expand systemd specifiers, so a `%` in the
   # path is doubled. A `:` needs nothing: only the first one splits ID:PATH.
@@ -150,10 +151,22 @@ in
       (lib.mkIf topCfg.logs.enable [ pkgs.grafanaPlugins.victoriametrics-logs-datasource ])
     ];
 
-    systemd.services.grafana.serviceConfig = lib.mkIf (allTokens != [ ]) {
-      LoadCredential = map (t: "${t.credential}:${t.path}") allTokens;
-      ExecStartPre = [ (lib.getExe buildAuthHeader) ];
-    };
+    systemd.services.grafana.serviceConfig = lib.mkMerge [
+      (lib.mkIf (allTokens != [ ]) {
+        LoadCredential = map (t: "${t.credential}:${t.path}") allTokens;
+        ExecStartPre = [ (lib.getExe buildAuthHeader) ];
+      })
+      # A Grafana killed inside its start-up leaves a row in its own database
+      # (server_lock "oss-ac-basic-role-seeder") that fails every start for
+      # 2 minutes; at nixpkgs' RestartSec=100ms that spends the start limit in
+      # under a second and the unit stays failed. The backed-off retries outlast
+      # the lock (docs/decisions/0015). mkDefault: the operator owns Grafana's unit.
+      {
+        RestartSec = lib.mkDefault 5;
+        RestartSteps = lib.mkDefault restartBackoff.RestartSteps;
+        RestartMaxDelaySec = lib.mkDefault restartBackoff.RestartMaxDelaySec;
+      }
+    ];
 
     # try-restart: a rotation while Grafana is stopped must not start it.
     # --no-block: the path unit only re-arms once this helper finishes, so waiting

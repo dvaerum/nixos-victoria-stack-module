@@ -9,7 +9,7 @@ let
   inherit (testLib) evalWith evalWithCollector;
 
   # Units that restart themselves and carry the module's backoff, and the ones
-  # that must not: nixpkgs-owned units keep their own policy, helpers never restart.
+  # that must not: nginx keeps nixpkgs' own policy, helpers never restart.
   backedOff = {
     stack = [
       "vmstorage"
@@ -21,6 +21,7 @@ let
       "mcp-victoriametrics"
       "mcp-victorialogs"
       "mcp-victoriatraces"
+      "grafana"
     ];
     collector = [ "alloy" ];
   };

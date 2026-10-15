@@ -111,5 +111,14 @@ bounded and the collector's disk queue absorbs it; a helper that runs
 this reason, instead of a couple of minutes.
 
 Left out: `systemd-journal-upload` (nixpkgs' own escalating restart policy, see
-`nixosModule/victoriaCollector/config.nix`), Grafana and nginx (nixpkgs-owned),
-and the oneshot and path helper units (they never restart).
+`nixosModule/victoriaCollector/config.nix`), nginx (nixpkgs-owned), and the
+oneshot and path helper units (they never restart).
+
+Update: Grafana now carries the backoff too, with `RestartSec = 5`, all three
+`mkDefault` because the operator owns Grafana's unit. A Grafana killed inside its
+start-up (a deploy that stops it mid-start) leaves a row in its own database
+(`server_lock`, `oss-ac-basic-role-seeder`) that makes every start exit 1 for
+2 minutes. At nixpkgs' default `RestartSec` (100 ms) the five starts of the start
+limit are spent in under a second and the unit stays failed (`start-limit-hit`)
+until `reset-failed`; with the backoff the 6th start, about 2 minutes later,
+succeeds without anyone touching it (`tests/grafana-recovery.nix`).

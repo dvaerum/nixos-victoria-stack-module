@@ -20,6 +20,7 @@ let
     vmauth-cluster = import ./vmauth-cluster.nix { inherit pkgs nixosModule; };
     grafana = import ./grafana.nix { inherit pkgs nixosModule; };
     grafana-tenant-orgs = import ./grafana-tenant-orgs.nix { inherit pkgs nixosModule; };
+    grafana-recovery = import ./grafana-recovery.nix { inherit pkgs nixosModule; };
     nginx = import ./nginx.nix { inherit pkgs nixosModule; };
     mcp = import ./mcp.nix { inherit pkgs nixosModule; };
     mcp-passthrough = import ./mcp-passthrough.nix { inherit pkgs nixosModule; };
