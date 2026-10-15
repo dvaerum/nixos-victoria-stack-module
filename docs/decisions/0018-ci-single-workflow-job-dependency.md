@@ -34,3 +34,7 @@ Update: the merged file is `.github/workflows/update-dependencies.yml`. `needs:`
 alone did not make the second job see the first's push (checkout resolves to
 the SHA that triggered the run), so each job also runs `git pull --rebase`
 before its push, and a `concurrency:` group queues overlapping runs.
+
+Update: each stage is now bump, `check.yml` (ADR 0035), push, as separate jobs
+chained by `needs:`. Only the push jobs hold `contents: write`; the bumped
+files reach the shards as an artifact.

@@ -25,6 +25,15 @@ Groups come from the flake, so a new `tests/*.nix` file is covered without
 editing the workflow. Shards are every n-th check by sorted name, so every
 check is built exactly once.
 
+## Update: the weekly bump gates on the same matrix
+
+`update-dependencies.yml` ran `nix flake check -L` in its two jobs and hit the
+same kill. Each stage is now: a read-only bump job uploads `flake.lock` (stage 2:
+plus `packages/`) as an artifact; `check.yml` runs with its `artifact` input,
+which unpacks it over the checkout in every job; a push job commits it only
+when every shard passed. Only the push jobs have `contents: write` and they run
+no Nix; the bump jobs and shards keep no git credentials.
+
 ## Not covered
 
 `nix flake check` also evaluated the non-test outputs (packages, apps,

@@ -1,17 +1,29 @@
 name: Update dependencies
 
-# Both jobs share one schedule but run strictly in sequence via `needs:`
-# -- a structural guarantee from GitHub Actions itself, not a timing
-# assumption: a long `nix flake check -L` in one job can't let another's push
-# land on a stale ref. docs/decisions/0018.
+# Two bump stages run strictly in sequence via `needs:` -- a structural
+# guarantee from GitHub Actions itself, not a timing assumption: a long test
+# run in one stage can't let another's push land on a stale ref.
+# docs/decisions/0018.
 #
-# `needs:` alone does NOT make update-mcp-packages see update-flake's own
-# push: with no `ref:` override, actions/checkout resolves to the SHA that
-# triggered the run (identical in every job), not the branch tip.
-# update-mcp-packages therefore sets `ref: ${{ github.ref }}`, and both jobs
-# `git pull --rebase` right before pushing, which also covers any other
-# concurrent writer (this workflow racing itself via workflow_dispatch,
-# update-docs.yml's auto-commits, a human push).
+# Each stage is bump -> test -> push (docs/decisions/0035: the tests are the
+# sharded check.yml matrix, never one `nix flake check`):
+#   1. bump-flake    `nix flake update`; uploads flake.lock as an artifact
+#      check-flake   check.yml on the checkout with that flake.lock unpacked
+#      push-flake    commits the artifact's flake.lock, only if every shard passed
+#   2. bump-packages MCP packages + VictoriaMetrics cluster package; uploads
+#                    flake.lock and packages/ as an artifact
+#      check-packages / push-packages  likewise
+# Only the push jobs hold `contents: write`, and they run no Nix and no
+# bumped code: the bump jobs (which build upstream release sources) and the
+# shards are read-only and keep no git credentials.
+#
+# `needs:` alone does NOT make bump-packages see push-flake's own push: with
+# no `ref:` override, actions/checkout resolves to the SHA that triggered the
+# run (identical in every job), not the branch tip. The stage-2 jobs therefore
+# set `ref: ${{ github.ref }}`, and both push jobs `git pull --rebase` right
+# before pushing, which also covers any other concurrent writer (this workflow
+# racing itself via workflow_dispatch, update-docs.yml's auto-commits, a human
+# push). The shards check the triggering SHA plus the artifact's files.
 #
 # `concurrency:` below guards the OTHER overlap this same race shape
 # allows: workflow_dispatch firing while last week's scheduled run (or a
@@ -30,13 +42,17 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  update-flake:
+  bump-flake:
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: cachix/install-nix-action@v27
         with:
@@ -47,15 +63,49 @@ jobs:
       - name: nix flake update
         run: nix flake update
 
-      - name: nix flake check
-        run: nix flake check -L
-
-      - name: Commit and push if flake.lock changed
+      - name: Detect a flake.lock change
+        id: diff
         run: |
           if git diff --quiet -- flake.lock; then
-            echo "flake.lock unchanged, nothing to commit"
-            exit 0
+            echo "flake.lock unchanged, nothing to test or push"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Upload the bumped flake.lock
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bumped-flake
+          path: flake.lock
+          retention-days: 1
+          if-no-files-found: error
+
+  check-flake:
+    needs: bump-flake
+    if: needs.bump-flake.outputs.changed == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/check.yml
+    with:
+      artifact: bumped-flake
+
+  push-flake:
+    needs: [bump-flake, check-flake]
+    # The default `success()` of `if:` is implied: every shard must have passed.
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bumped-flake
+
+      - name: Commit and push flake.lock
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add flake.lock
@@ -63,16 +113,23 @@ jobs:
           git pull --rebase
           git push
 
-  update-mcp-packages:
-    needs: update-flake
+  bump-packages:
+    needs: push-flake
+    # push-flake is skipped when flake.lock did not change; a failed bump or
+    # failed shard in stage 1 still stops the run (`failure()` covers every
+    # ancestor job).
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.diff.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
         with:
           # See the top-of-file comment -- without this, checkout
           # resolves to the SHA that triggered the run, not the branch
-          # tip update-flake just pushed to.
+          # tip push-flake just pushed to.
           ref: ${{ github.ref }}
+          persist-credentials: false
 
       - uses: cachix/install-nix-action@v27
         with:
@@ -90,22 +147,65 @@ jobs:
           done
 
       # Not "latest release": the cluster binaries must match the vmauth
-      # that nixpkgs' victoriametrics ships (after update-flake's bump),
+      # that nixpkgs' victoriametrics ships (after stage 1's bump),
       # and the `-cluster` tag is not a release nix-update would pick.
       - name: Bump the VictoriaMetrics cluster package to pkgs.victoriametrics' version
         run: |
           version=$(nix eval --raw --inputs-from . nixpkgs#victoriametrics.version)
           nix-update --flake victoriametrics-cluster --version "$version" --build
 
-      - name: nix flake check
-        run: nix flake check -L
-
-      - name: Commit and push if anything changed
+      - name: Detect a packages/ change
+        id: diff
         run: |
           if git diff --quiet -- packages/; then
-            echo "no package changes, nothing to commit"
-            exit 0
+            echo "no package changes, nothing to test or push"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # flake.lock too: the shards check the triggering SHA, which predates
+      # stage 1's pushed flake.lock.
+      - name: Upload the bumped packages
+        if: steps.diff.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bumped-packages
+          path: |
+            flake.lock
+            packages/
+          retention-days: 1
+          if-no-files-found: error
+
+  check-packages:
+    needs: bump-packages
+    if: needs.bump-packages.outputs.changed == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/check.yml
+    with:
+      artifact: bumped-packages
+
+  push-packages:
+    needs: [bump-packages, check-packages]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: bumped-packages
+
+      # Only packages/: flake.lock in the artifact is already on the branch
+      # (push-flake) and was unpacked for the shards' sake alone; restoring it
+      # keeps the tree clean for `git pull --rebase`.
+      - name: Commit and push packages/
+        run: |
+          git checkout -- flake.lock
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add packages/

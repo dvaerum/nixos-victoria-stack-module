@@ -30,8 +30,8 @@ docs/decisions/NNNN-*.md         — ADRs, terse, WHY only
   ci.yml                          — calls check.yml (docs/decisions/0035)
   ci-stable.yml                   — same, with the current-stable nixpkgs override
   check.yml                       — reusable: one matrix job per test group/shard
-  update-dependencies.yml         — weekly nixpkgs bump + MCP package bump
-                                    (two sequential jobs, docs/decisions/0018)
+  update-dependencies.yml         — weekly nixpkgs bump + MCP package bump: per stage
+                                    bump -> check.yml -> push (docs/decisions/0018, 0035)
   update-docs.yml                 — regenerate + commit docs/options.md
 nixosModule/
   default.nix                     — nixosModules.default (both trees)

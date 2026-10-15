@@ -15,6 +15,12 @@ on:
         description: nixpkgs branch to test against; empty keeps the flake.lock pin
         type: string
         default: ""
+      artifact:
+        description: >-
+          name of a workflow artifact (flake.lock and/or packages/) to unpack over
+          the checkout before testing; empty tests the checked-out commit as is
+        type: string
+        default: ""
 
 env:
   # Checks per job. Keeps each job well inside the 14 GB runner disk and far
@@ -29,6 +35,14 @@ jobs:
       matrix: ${{ steps.groups.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Unpack ${{ inputs.artifact }}
+        if: inputs.artifact != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
 
       - uses: cachix/install-nix-action@v27
         with:
@@ -62,6 +76,14 @@ jobs:
         include: ${{ fromJSON(needs.groups.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Unpack ${{ inputs.artifact }}
+        if: inputs.artifact != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
 
       # Nix's default store is on the root filesystem; the preinstalled
       # toolchains below are never used and take ~30 GB of it.
