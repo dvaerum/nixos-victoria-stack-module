@@ -2116,7 +2116,8 @@ in
   };
 
   # queue.directory outside alloy's own StateDirectory: Alloy must really
-  # write its queue there (not just have the path in ReadWritePaths).
+  # write its queue there (not just have the path in ReadWritePaths). The path
+  # carries a colon: tmpfiles, ReadWritePaths= and Alloy all take it verbatim.
   queue-directory-outside-statedir-is-really-written = pkgs.testers.nixosTest {
     name = "victoria-collector-queue-directory-outside-statedir";
 
@@ -2130,7 +2131,7 @@ in
         writeEndpoint = "http://stack:4204";
         writeTokenFile = "${writeTokenFixture}";
         hostType = "server";
-        queue.directory = "/run/alloy-queue-test";
+        queue.directory = "/run/alloy-q:ueue-test";
         # A dynamic user cannot write outside its StateDirectory (nothing owns the
         # directory for it); a static user plus the module's tmpfiles rule can.
         alloy.dynamicUser = false;
@@ -2159,9 +2160,9 @@ in
           "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query?query=alloy_up' | grep -q '\"value\"'",
           timeout=120,
       )
-      collector.succeed("test -n \"$(ls -A /run/alloy-queue-test)\"")
+      collector.succeed("test -n \"$(ls -A /run/alloy-q:ueue-test)\"")
       # Owned by the static user, not world-writable.
-      assert collector.succeed("stat -c '%U %a' /run/alloy-queue-test").strip() == "alloy 750"
+      assert collector.succeed("stat -c '%U %a' /run/alloy-q:ueue-test").strip() == "alloy 750"
       # The sandbox a dynamic user would have implied is still in force.
       assert collector.succeed("systemctl show -p ProtectSystem --value alloy.service").strip() == "strict"
     '';
