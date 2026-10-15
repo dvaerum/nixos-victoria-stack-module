@@ -84,20 +84,32 @@ let
                 failed_at = None
         return delays[:restarts]
 
-    # Measured: every delay is within 0.3 s of the nominal one
-    # (5, 9, 16.5, 30 s; Alloy 2, 5, 12, 30 s), so the 0.5-2 s windows below
-    # have at least 6x headroom.
-    def assert_backoff(unit, delays, first, cap=30):
+    # Measured: every delay is within 0.3 s of the nominal one, so the 0.5-2 s
+    # windows below have at least 6x headroom. The boot tests run a scaled-down
+    # schedule (test-only RestartSec/RestartMaxDelaySec, see `scaledBackoff`):
+    # the shape is what they prove, the production numbers are pinned by
+    # `pinsCheck`. systemd's steps are geometric: RestartSec * (cap/RestartSec)^(n/3).
+    def assert_backoff(unit, delays, first, cap):
         print(f"{unit}: restart delays {delays}")
         assert first - 0.5 <= delays[0] <= first + 2, f"{unit}: first retry {delays[0]}s, RestartSec is {first}"
-        assert delays[2] > delays[0] + 5, f"{unit}: third retry {delays[2]}s is not clearly longer than the first {delays[0]}s: {delays}"
+        assert delays[2] > delays[0] * 1.8, f"{unit}: third retry {delays[2]}s is not clearly longer than the first {delays[0]}s: {delays}"
         assert all(a <= b + 1 for a, b in zip(delays, delays[1:])), f"{unit}: delays shrink: {delays}"
         assert max(delays) <= cap + 2, f"{unit}: a retry waited {max(delays)}s, the cap is {cap}s: {delays}"
-        assert delays[4] >= cap - 5, f"{unit}: the fifth retry ({delays[4]}s) has not reached the {cap}s cap: {delays}"
+        assert delays[4] >= cap * 0.8, f"{unit}: the fifth retry ({delays[4]}s) has not reached the {cap}s cap: {delays}"
   '';
 
+  # Test-only: the production schedule (5 s first delay, 30 s cap) needs ~2 minutes
+  # to reach its cap; the same geometric shape at 2 s / 12 s takes under a minute.
+  # `pinsCheck` below pins the production numbers on the evaluated units.
+  scaledBackoff = {
+    serviceConfig = {
+      RestartSec = lib.mkForce 2;
+      RestartMaxDelaySec = lib.mkForce 12;
+    };
+  };
+
   pinsCheck =
-    name: services: expected:
+    name: services: restartSec: expected:
     pkgs.runCommand name { } (
       let
         withSteps = lib.attrNames (
@@ -108,7 +120,9 @@ let
           let
             sc = services.${u}.serviceConfig;
           in
-          (sc.RestartSteps or null) != 3 || (sc.RestartMaxDelaySec or null) != 30
+          (sc.RestartSteps or null) != 3
+          || (sc.RestartMaxDelaySec or null) != 30
+          || (sc.RestartSec or null) != restartSec
         ) expected;
         missing = lib.filter (u: !(services ? ${u})) expected;
         unexpected = lib.subtractLists expected withSteps;
@@ -116,16 +130,16 @@ let
       if missing == [ ] && wrong == [ ] && unexpected == [ ] then
         "echo OK > $out"
       else
-        throw "restart backoff: missing units ${toString missing}; not RestartSteps=3/RestartMaxDelaySec=30: ${toString wrong}; carry it but must not: ${toString unexpected}"
+        throw "restart backoff: missing units ${toString missing}; not RestartSteps=3/RestartMaxDelaySec=30/RestartSec=${toString restartSec}: ${toString wrong}; carry it but must not: ${toString unexpected}"
     );
 in
 {
   stack-units-carry-the-backoff-and-the-others-do-not =
-    pinsCheck "restart-backoff-stack" stackEval.config.systemd.services
+    pinsCheck "restart-backoff-stack" stackEval.config.systemd.services 5
       backedOff.stack;
 
   collector-alloy-carries-the-backoff-and-the-others-do-not =
-    pinsCheck "restart-backoff-collector" collectorEval.config.systemd.services
+    pinsCheck "restart-backoff-collector" collectorEval.config.systemd.services 2
       backedOff.collector;
 
   # Alloy keeps nixpkgs' own first delay: the backoff only adds the growth.
@@ -167,6 +181,7 @@ in
       # A unit failing in a loop keeps the container's boot job pending.
       systemd.services = lib.genAttrs [ "victorialogs" "vmauth" "mcp-victoriametrics" ] (_: {
         wantedBy = lib.mkForce [ ];
+        inherit (scaledBackoff) serviceConfig;
       });
     };
 
@@ -178,13 +193,13 @@ in
       for u in units:
           machine.succeed(f"systemctl start --no-block {u}.service")
       for u in units:
-          assert_backoff(u, restart_delays(machine, f"{u}.service"), first=5)
+          assert_backoff(u, restart_delays(machine, f"{u}.service"), first=2, cap=12)
     '';
   };
 
   # All three at once: a start job for a unit waiting out its backoff would cut
   # that wait short (metrics-cluster-units.nix says why the units carry no
-  # `wants`). Each unit's delays must still be the nominal 5, 9, 16.5, 30 s.
+  # `wants`). Each unit's delays must still be the nominal 2, 3.6, 6.6, 12 s.
   broken-cluster-units-back-off = pkgs.testers.nixosTest {
     name = "victoria-stack-broken-cluster-units-back-off";
 
@@ -202,6 +217,7 @@ in
       # A unit failing in a loop keeps the container's boot job pending.
       systemd.services = lib.genAttrs [ "vmstorage" "vminsert" "vmselect" ] (_: {
         wantedBy = lib.mkForce [ ];
+        inherit (scaledBackoff) serviceConfig;
       });
     };
 
@@ -213,7 +229,7 @@ in
       for u in units:
           machine.succeed(f"systemctl start --no-block {u}.service")
       for u in units:
-          assert_backoff(u, restart_delays(machine, f"{u}.service"), first=5)
+          assert_backoff(u, restart_delays(machine, f"{u}.service"), first=2, cap=12)
     '';
   };
 
@@ -226,6 +242,8 @@ in
         "d /var/lib/backoff 0700 root root -"
         "f /var/lib/backoff/token 0600 root root - tokens:\\n  - token: invalid-token-one\\n" # gitleaks:allow
       ];
+      # nixpkgs' RestartSec=2 stays the first delay; only the cap is scaled (30 s -> 10 s).
+      systemd.services.alloy.serviceConfig.RestartMaxDelaySec = lib.mkForce 10;
       services.victoriaCollector = {
         metrics.enable = true;
         writeEndpoint = "http://127.0.0.1:4210";
@@ -238,7 +256,7 @@ in
       ${delaysPython}
       start_all()
       collector.wait_for_unit("multi-user.target")
-      assert_backoff("alloy", restart_delays(collector, "alloy.service"), first=2)
+      assert_backoff("alloy", restart_delays(collector, "alloy.service"), first=2, cap=10)
     '';
   };
 }

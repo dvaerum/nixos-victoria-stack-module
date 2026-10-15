@@ -1495,6 +1495,9 @@ in
       ];
       services.victoriaCollector = {
         metrics.enable = true;
+        # Each token is waited for in a delivered scrape; Alloy's default 60 s
+        # interval made that two ~50 s waits.
+        metrics.scrapeInterval = "5s";
         logs.enable = true;
         writeEndpoint = "http://127.0.0.1:4210";
         writeTokenFile = "/var/lib/rotation/token";
