@@ -2598,7 +2598,7 @@ package
 
 
 
-Directory the victoria-metrics binary stores its data in
+Directory the vmstorage binary stores its data in
 (` -storageDataPath `)\. Changing this away from the default
 ` /var/lib/victoriametrics ` – e\.g\. to point at an externally-mounted
 dataset – requires ` dynamicUser = false ` (static user); see
@@ -2609,8 +2609,6 @@ this is a warning, not a hard assertion\.
 Only letters, digits and ` . _ / - ` are allowed (an absolute path
 with no space, ` % ` or quote); anything else fails the build for
 an enabled service, since the path is written into unit files\.
-
-The data lives in vmstorage, which reads this\.
 
 
 
@@ -2634,7 +2632,7 @@ absolute path
 
 
 
-Whether to run victoria-metrics under a systemd ` DynamicUser `
+Whether to run vmstorage under a systemd ` DynamicUser `
 (nixpkgs’ own default behavior for these binaries) or a static,
 stable system user\. ` DynamicUser `’s ` StateDirectory ` handling
 tries to migrate a pre-existing ` dataDir ` into a private
@@ -2673,7 +2671,7 @@ true
 
 
 
-Extra command-line flags passed straight through to victoria-metrics,
+Extra command-line flags passed straight through to vmselect,
 for anything not worth promoting to its own typed option\.
 
 Flags that change addressing or auth (` -http.pathPrefix* `, ` -tls* `,
@@ -2681,14 +2679,10 @@ Flags that change addressing or auth (` -http.pathPrefix* `, ` -tls* `,
 readiness check and self-push use plain http on the known address and path\.
 Put nginx in front of the service instead\.
 
-While ` snapshots.enable ` is true, the flag that makes the snapshot
-endpoint demand a key (` -snapshotAuthKey ` on VictoriaMetrics,
-` -partitionManageAuthKey ` on VictoriaLogs and VictoriaTraces) is
-rejected at build time too: the snapshot timer sends no key, so it
-would fail every run\. Drop the flag, or disable ` snapshots.enable ` and
-take snapshots yourself\.
+The flag that makes the snapshot endpoint demand a key
+(` -snapshotAuthKey `) belongs to vmstorage, which serves it: it is
+rejected in ` storage.extraFlags ` while ` snapshots.enable ` is true\.
 
-These go to vmselect, the process behind ` listenAddress `;
 ` insert.extraFlags ` and ` storage.extraFlags ` take the flags of the
 other two processes\.
 
@@ -2790,7 +2784,7 @@ string
 
 
 
-Address victoria-metrics listens on\. Defaults to loopback-only –
+Address vmselect listens on\. Defaults to loopback-only –
 ` services.victoriaStack.vmauth ` is the sanctioned way to reach it
 from outside this host\. Override to ` 0.0.0.0:<port> ` to bypass
 vmauth entirely and expose it directly, if that’s deliberately
@@ -3100,16 +3094,16 @@ false
 
 
 How long to retain data for\. ` null ` (the default) means
-whatever victoria-metrics itself does when the flag is omitted
-entirely (a 1 month default for this binary, NOT unbounded) – matching
+whatever vmstorage itself does when the flag is omitted
+entirely (a 1 month default for vmstorage, NOT unbounded) – matching
 upstream’s own default rather than imposing an opinionated one\.
 
 The minimum is 1 day: a shorter value (` 1h `, ` 23h `, ` 0 `) makes
-victoria-metrics refuse to start, and evaluation warns about it\. A bare
+vmstorage refuse to start, and evaluation warns about it\. A bare
 number means months, so ` 1 ` is one month, not one day\.
 
 The maximum is 1200 months (a month counts as 31 days): a longer
-value (` 1201 `, ` 37231d `) makes victoria-metrics refuse to start, and
+value (` 1201 `, ` 37231d `) makes vmstorage refuse to start, and
 evaluation warns about it\. At most 10 digits before and 9 after the
 decimal point are accepted\.
 
@@ -3145,7 +3139,7 @@ null
 
 
 
-Whether victoria-metrics pushes its own ` /metrics ` page into the local
+Whether each process of the VictoriaMetrics cluster pushes its own ` /metrics ` page into the local
 VictoriaMetrics instance\. The push goes straight to vminsert’s address
 (` metrics.insert.listenAddress `, tenant 0), not through vmauth\.
 
@@ -3178,7 +3172,7 @@ config.services.victoriaStack.metrics.enable
 
 
 
-How often victoria-metrics pushes its own metrics (` -pushmetrics.interval `)\.
+How often each process of the VictoriaMetrics cluster pushes its own metrics (` -pushmetrics.interval `)\.
 Only used when ` selfMonitoring.enable ` is true\. The series carry a
 ` job ` label naming the service, so the four services stay apart\.
 
@@ -3204,7 +3198,7 @@ string matching the pattern (\[0-9]+(ms|s|m|h))+
 
 
 
-Whether to enable periodic on-disk snapshot creation (a systemd timer calling victoria-metrics’s own snapshot API)\.
+Whether to enable periodic on-disk snapshot creation (a systemd timer calling vmstorage’s own snapshot API)\.
 
 
 
@@ -3308,7 +3302,7 @@ string
 
 
 
-How long the unit’s readiness probe waits for a running victoria-metrics
+How long the unit’s readiness probe waits for a running process of the VictoriaMetrics cluster
 to answer before the start counts as failed\. systemd’s ` TimeoutStartSec ` is
 derived from it, always one minute longer, so systemd never kills the
 unit before its own probe gives up\.
