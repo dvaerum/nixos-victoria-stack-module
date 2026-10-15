@@ -1,4 +1,4 @@
-# VictoriaLogs' syslog listeners (docs/decisions/0031, 0035), turned into flags.
+# VictoriaLogs' syslog listeners (docs/decisions/0031, 0036), turned into flags.
 #
 # Every -syslog.*.<transport> flag is an array that is POSITIONAL per
 # transport: entry N belongs to the Nth -syslog.listenAddr.<transport>. The

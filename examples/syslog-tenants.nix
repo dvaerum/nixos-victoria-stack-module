@@ -7,7 +7,7 @@
 #
 # A module, not a function of a fleet like fleet.nix: import it next to
 # nixosModules.victoriaStack. tests/syslog-listeners.nix evaluates it so it
-# cannot drift from the option set. docs/decisions/0035.
+# cannot drift from the option set. docs/decisions/0036.
 #
 # Addresses are documentation placeholders (RFC 5737); secret file paths are
 # placeholders too (docs/decisions/0008).

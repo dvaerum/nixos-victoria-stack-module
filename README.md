@@ -177,7 +177,7 @@ For more than one listener of a transport (one address per tenant, say) use
 `transport`; the three slots are shorthand for three of them (see [Tenants](#tenants)).
 Unix sockets and stream fields go through `logs.extraFlags`. See
 [`docs/decisions/0031`](./docs/decisions/0031-victorialogs-syslog-listeners.md) and
-[`docs/decisions/0035`](./docs/decisions/0035-syslog-listeners-are-a-named-set.md).
+[`docs/decisions/0036`](./docs/decisions/0036-syslog-listeners-are-a-named-set.md).
 
 ### Tenants
 
@@ -245,7 +245,7 @@ same transport on two addresses is two listeners:
 ```
 
 The full example is [`examples/syslog-tenants.nix`](./examples/syslog-tenants.nix),
-the design [`docs/decisions/0035`](./docs/decisions/0035-syslog-listeners-are-a-named-set.md).
+the design [`docs/decisions/0036`](./docs/decisions/0036-syslog-listeners-are-a-named-set.md).
 
 ```yaml
 # victoria-write-tokens.yaml: one tenant per write token

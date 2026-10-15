@@ -730,7 +730,7 @@ let
       the second, and so on, so one entry applies to the first listener only and
       the others keep the default. Give the flag once per listener in that order
       (twice for two; a blank value means the default), or use fewer listeners
-      (docs/decisions/0031, docs/decisions/0035).
+      (docs/decisions/0031, docs/decisions/0036).
     ''
   ) syslogLib.transports;
 

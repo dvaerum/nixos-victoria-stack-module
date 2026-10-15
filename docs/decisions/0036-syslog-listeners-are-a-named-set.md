@@ -1,4 +1,4 @@
-# 0035: Syslog listeners are a named set; the fixed slots are sugar
+# 0036: Syslog listeners are a named set; the fixed slots are sugar
 
 ## Decision
 

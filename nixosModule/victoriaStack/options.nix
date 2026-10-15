@@ -145,7 +145,7 @@ let
     never opened.
   '';
 
-  # The options of one syslog listener (docs/decisions/0031, 0035). The slots
+  # The options of one syslog listener (docs/decisions/0031, 0036). The slots
   # and the entries of `listeners` differ only in how the transport is chosen
   # (`proto` null: by the listener's own `transport` option) and in the
   # default port; the notes below are shared so every listener says the same
@@ -630,7 +630,7 @@ let
             Syslog has no authentication and bypasses vmauth, so the listener a
             packet reaches is the only thing that decides its tenant: keep each
             tenant's devices on their own address (firewall or VLAN). See
-            docs/decisions/0035-syslog-listeners-are-a-named-set.md.
+            docs/decisions/0036-syslog-listeners-are-a-named-set.md.
           '';
         };
       };

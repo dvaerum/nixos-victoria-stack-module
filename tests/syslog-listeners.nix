@@ -1,6 +1,6 @@
 { pkgs, nixosModule }:
 
-# `logs.syslog.listeners` (docs/decisions/0035): any number of named syslog
+# `logs.syslog.listeners` (docs/decisions/0036): any number of named syslog
 # listeners, each with its own address, port and tenant. The slots (udp, tcp,
 # tls) are sugar over the same list; tests/syslog.nix keeps covering them.
 let
