@@ -1781,7 +1781,7 @@ one list, so they cannot drift apart\.
 Syslog has no authentication and bypasses vmauth, so the listener a
 packet reaches is the only thing that decides its tenant: keep each
 tenant’s devices on their own address (firewall or VLAN)\. See
-docs/decisions/0035-syslog-listeners-are-a-named-set\.md\.
+docs/decisions/0036-syslog-listeners-are-a-named-set\.md\.
 
 
 
