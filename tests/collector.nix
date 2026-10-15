@@ -2006,7 +2006,7 @@ in
     name = "victoria-collector-switch-keeps-deliberate-stop";
 
     nodes.machine =
-      { ... }:
+      { lib, ... }:
       {
         imports = [ collectorModule ];
         services.victoriaCollector = {
@@ -2015,10 +2015,12 @@ in
           writeTokenFile = "${writeTokenFixture}";
           hostType = "server";
         };
-        # Widens the window the test must not race: a loaded build server
-        # delays the helper's `systemctl start` the same way.
-        systemd.services.victoria-collector-write-token-appeared.serviceConfig.ExecStartPre =
-          "${pkgs.coreutils}/bin/sleep 6";
+        # Every switch also runs `systemctl start` on the active targets
+        # (switch-to-configuration-ng), which starts a stopped alloy that
+        # multi-user.target wants; the test would then pass only when the switch
+        # lands before boot reaches multi-user.target. Dropping that want makes
+        # the helper alloy's only starter, which is what the test isolates.
+        systemd.services.alloy.wantedBy = lib.mkForce [ ];
         specialisation.changed-helper.configuration = {
           systemd.services.victoria-collector-write-token-appeared.environment.PROBE = "1";
         };
@@ -2027,25 +2029,24 @@ in
     testScript = ''
       ${testLib.waitActivePython}
       machine.start()
+      # Only the helper starts alloy here, so an active alloy means the helper's
+      # start was already queued and cannot land after the stop below.
       wait_active(machine, "alloy.service")
-      machine.wait_for_unit("victoria-collector-write-token-appeared.path")
       helper = "victoria-collector-write-token-appeared.service"
-      invocation = lambda: machine.succeed(f"systemctl show -p InvocationID --value {helper}").strip()
-      # Active, not merely started: the helper's `systemctl start --no-block
-      # alloy` is only queued once its ExecStart ran, and a queued start after
-      # the stop below would be the helper's, not the switch's.
       machine.wait_for_unit(helper)
-      before = invocation()
+      show = lambda unit, prop: machine.succeed(f"systemctl show -p {prop} --value {unit}").strip()
+      before = show(helper, "InvocationID")
 
       machine.succeed("systemctl stop alloy.service")
       machine.succeed(
           "/run/current-system/specialisation/changed-helper/bin/switch-to-configuration test 2>&1"
       )
-      machine.sleep(3)
+      # A start the switch queued shows up as a job; none left means all settled.
+      machine.wait_until_succeeds("test -z \"$(systemctl list-jobs --no-legend)\"")
 
-      state = machine.succeed("systemctl show -p ActiveState --value alloy.service").strip()
+      state = show("alloy.service", "ActiveState")
       assert state == "inactive", f"alloy.service was started by the switch although it was stopped on purpose: {state}"
-      assert invocation() == before, "the start helper was re-run by the switch"
+      assert show(helper, "InvocationID") == before, "the start helper was re-run by the switch"
     '';
   };
 
