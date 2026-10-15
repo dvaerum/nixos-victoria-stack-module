@@ -1,10 +1,13 @@
 name: CI
 
-# cancel-in-progress: true, unlike the push-capable workflows (0018,
-# update-docs.yml): this job only reads, so no write can race.
+# cancel-in-progress for PR/branch runs, unlike the push-capable workflows
+# (0018, update-docs.yml): this job only reads, so no write can race. Not on
+# main: the suite takes about an hour and main gets several pushes an hour, so
+# cancelling would mean no run ever finishes; a newer push replaces only the
+# run still waiting.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 on:
   push:

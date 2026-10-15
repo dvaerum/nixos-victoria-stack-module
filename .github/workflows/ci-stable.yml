@@ -7,11 +7,10 @@ name: CI (current stable)
 # here means "breaks on stable," distinguishable at a glance from a
 # regular ci.yml failure.
 #
-# cancel-in-progress: true, same reasoning as ci.yml -- read-only, no
-# in-flight write to race.
+# cancel-in-progress except on main, same reasoning as ci.yml.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 on:
   push:
