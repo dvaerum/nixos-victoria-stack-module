@@ -66,7 +66,7 @@ let
     KINDS = ["read-plain", "read-a", "read-b", "read-list", "read-all", "admin"]
 
 
-    def http(path, token=None, headers=(), method="GET", data=None, basic=None):
+    def curl_cmd(path, token=None, headers=(), method="GET", data=None, basic=None):
         cmd = f"curl -s -g --path-as-is -w '\\n%{{http_code}}' -X {method} "
         if token:
             cmd += f"-H {shlex.quote('Authorization: Bearer ' + token)} "
@@ -76,9 +76,28 @@ let
             cmd += f"-H {shlex.quote(h)} "
         if data is not None:
             cmd += f"--data-binary {shlex.quote(data)} "
-        out = machine.succeed(cmd + shlex.quote(VMAUTH + path))
+        return cmd + shlex.quote(VMAUTH + path)
+
+
+    def http(path, token=None, headers=(), method="GET", data=None, basic=None):
+        out = machine.succeed(curl_cmd(path, token, headers, method, data, basic))
         body, code = out.rsplit("\n", 1)
         return code.strip(), body
+
+
+    def http_batch(specs):
+        # Many requests in ONE driver round trip: each machine.succeed costs
+        # far more on a loaded host than the curl it runs (the hundreds of
+        # refusal probes below took minutes as single calls). `set -e` keeps
+        # a failing curl as fatal as it is in http().
+        script = "set -e\n" + "".join(curl_cmd(**sp) + "; printf '\\n@@END@@\\n'\n" for sp in specs)
+        out = machine.succeed(f"sh -c {shlex.quote(script)}")
+        results = []
+        for chunk in out.split("\n@@END@@\n")[:-1]:
+            body, code = chunk.rsplit("\n", 1)
+            results.append((code.strip(), body))
+        assert len(results) == len(specs), (len(results), len(specs))
+        return results
 
 
     def rows(res, parse):
@@ -255,8 +274,8 @@ in
       write_markers(["metrics"])
       T0, T1, T2 = data("metrics", 0), data("metrics", 1), data("metrics", 2)
 
-      def no_route(res):
-          assert res[0] == "400" and res[1] == "missing route", res
+      def no_route(res, what=None):
+          assert res[0] == "400" and res[1] == "missing route", (what, res)
 
       # Authoritative source: the cluster's own tenant paths, not vmauth.
       def backend_names(tenant):
@@ -307,10 +326,11 @@ in
       for token, basic, hdrs in [("read-a", None, []), ("read-b", None, []), ("read-plain", None, []),
                                  ("read-list", None, ["AccountID: 1"]), ("read-all", None, ["AccountID: 1"]),
                                  (None, ADMIN, [])]:
-          for other in (1, 2, 3, 4):
-              for path in ESCAPES:
-                  for method, data_ in [("GET", None), ("POST", "match[]=probe_m_t1")]:
-                      no_route(rows(http(path.format(o=other), token, hdrs, method, data_, basic), json.loads))
+          specs = [dict(path=path.format(o=other), token=token, headers=hdrs, method=method, data=data_, basic=basic)
+                   for other in (1, 2, 3, 4) for path in ESCAPES
+                   for method, data_ in [("GET", None), ("POST", "match[]=probe_m_t1")]]
+          for spec, res in zip(specs, http_batch(specs)):
+              no_route(rows(res, json.loads), spec)
 
       # Writes: the tenant is the token's, in the path nothing else is accepted.
       WRITE_ESCAPES = [
@@ -322,10 +342,14 @@ in
           "/insert/multitenant/opentelemetry/v1/metrics",
           "/api/v1/import/prometheus",
       ]
+      machine.succeed("${otlpMetricGenerator}/bin/gen-otlp-metric probe_m_escape 1 > /tmp/m.bin")
       for token in ["write-a", "write-b", "write-plain"]:
-          for other in (1, 2, 3, 4):
-              for path in WRITE_ESCAPES:
-                  no_route(rows(send_metric(token, "probe_m_escape", ["AccountID: 2"], path.format(o=other)), json.loads))
+          specs = [dict(path=path.format(o=other), token=token,
+                        headers=["Content-Type: application/x-protobuf", "AccountID: 2"],
+                        method="POST", data="@/tmp/m.bin")
+                   for other in (1, 2, 3, 4) for path in WRITE_ESCAPES]
+          for spec, res in zip(specs, http_batch(specs)):
+              no_route(rows(res, json.loads), spec)
       # Read credentials cannot write, write tokens cannot read, a `tenants:` write entry has no access.
       for token in ["read-a", "read-list", "read-all", "read-plain"]:
           no_route(rows(send_metric(token, "probe_m_escape"), json.loads))
