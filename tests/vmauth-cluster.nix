@@ -166,7 +166,7 @@ let
         assert metrics_routes(config["unauthorized_user"]["url_map"]) == [WRITE]
 
         journal = machine.succeed("journalctl -u vmauth.service --no-pager")
-        assert "metrics tenants are not supported" not in journal, journal
+        assert "vmauth-render-config: warning:" not in journal, journal
         for secret in ["cluster-read-tenant-a", "cluster-write-tenant-a"]:
             assert secret not in journal, secret
 

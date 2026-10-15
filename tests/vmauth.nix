@@ -1538,19 +1538,19 @@ in
       throw "vmauth's ExecStart did not resolve through the overridden package: ${execStart}"
   );
 
-  package-default-falls-back-to-upstream-victoriametrics-without-metrics-enabled =
-    pkgs.runCommand "vmauth-package-default-fallback" { }
-      (
-        let
-          # Any enabled backend: the default is the same.
-          evaluated = evalWith { services.victoriaStack.logs.enable = true; };
-          execStart = evaluated.config.systemd.services.vmauth.serviceConfig.ExecStart;
-        in
-        if lib.hasPrefix "${pkgs.victoriametrics}/bin/vmauth" execStart then
-          "echo OK > $out"
-        else
-          throw "vmauth's package fallback (no metrics enabled) did not resolve to pkgs.victoriametrics: ${execStart}"
-      );
+  # vmauth.package is `mkDefault pkgs.victoriametrics` unconditionally (its
+  # binary is not in the cluster tag metrics.package is built from); the
+  # default does not depend on which backends are enabled.
+  package-default-is-nixpkgs-victoriametrics = pkgs.runCommand "vmauth-package-default" { } (
+    let
+      evaluated = evalWith { services.victoriaStack.logs.enable = true; };
+      execStart = evaluated.config.systemd.services.vmauth.serviceConfig.ExecStart;
+    in
+    if lib.hasPrefix "${pkgs.victoriametrics}/bin/vmauth" execStart then
+      "echo OK > $out"
+    else
+      throw "vmauth's default package did not resolve to pkgs.victoriametrics: ${execStart}"
+  );
 
   # docs/decisions/0021 -- the read tier (readTokensFile/adminPasswordFile)
   # must not be a blanket passthrough to each backend's ENTIRE native HTTP API:

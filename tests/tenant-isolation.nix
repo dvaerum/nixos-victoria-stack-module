@@ -243,8 +243,8 @@ in
       assert admin["url_map"] == read_map, admin
 
       # Tenant entries lose nothing, so nothing is warned about.
-      assert not journal_has("metrics tenants are not supported"), "the metrics warning is gone"
       journal = machine.succeed("journalctl -u vmauth.service --no-pager")
+      assert "vmauth-render-config: warning:" not in journal, journal
       for secret in ["read-single-a", "read-list-a-c", "read-all", "read-plain", "write-single-a",
                      "write-plain", "admin-password-value"]:
           assert secret not in journal, secret
