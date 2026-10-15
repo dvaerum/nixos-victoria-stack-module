@@ -714,7 +714,8 @@ let
 
       # Each tenant has its own header file; the token is only in the credential
       # directory and the header files, never in the unit or the provisioning files.
-      ini = machine.succeed("systemctl cat grafana.service | grep -oE -e '-config [^ ]+' | cut -d' ' -f2").strip()
+      # From the process: nixos-26.05 starts Grafana from a script, not an ExecStart line.
+      ini = machine.succeed("tr '\\0' '\\n' < /proc/$(systemctl show -p MainPID --value grafana.service)/cmdline | grep -x -A1 -e -config | tail -1").strip()
       prov = machine.succeed(f"sed -n 's/^provisioning=//p' {ini}").strip()
       assert prov.startswith("/nix/store/"), prov
       for n, token in [("a", "${tokenFixtureA}"), ("b", "${tokenFixtureB}")]:

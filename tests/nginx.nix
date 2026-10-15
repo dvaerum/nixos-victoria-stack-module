@@ -13,6 +13,19 @@ let
     ;
   otlpMetric = "${otlpMetricGenerator}/bin/gen-otlp-metric";
 
+  # `nginx -T` on the config the running unit uses, taken from its ExecStart:
+  # /etc/nginx/nginx.conf exists only with services.nginx.enableReload on
+  # nixos-26.05 (always on unstable), and `-T` without `-c` dumps nginx's
+  # built-in default config instead.
+  nginxConfigDump = pkgs.writeShellApplication {
+    name = "nginx-config-dump";
+    runtimeInputs = [
+      pkgs.nginx
+      pkgs.gnused
+    ];
+    text = builtins.readFile ./nginx-config-dump.sh;
+  };
+
   # Throwaway self-signed server cert, generated at build time (not a
   # secret). Needs a SAN for 127.0.0.1, not just a CN: without it curl
   # --cacert fails with exit 60 (cert verify failed).
@@ -386,12 +399,7 @@ in
       wait_active(machine, "nginx.service")
       machine.wait_for_open_port(80)
 
-      # "-T" with no "-c" silently dumps the nginx *binary's own
-      # compiled-in default config* (its stock example server block,
-      # server_name "localhost"), not the actual NixOS-rendered config
-      # the running service uses, so the domain would not show up. NixOS's nginx module exposes the real config at
-      # /etc/nginx/nginx.conf (nixos/modules/services/web-servers/nginx).
-      config_dump = machine.succeed("${pkgs.nginx}/bin/nginx -T -c /etc/nginx/nginx.conf 2>&1")
+      config_dump = machine.succeed("${nginxConfigDump}/bin/nginx-config-dump")
       assert "victoria-stack-test.example.com" in config_dump, (
           "expected the configured domain to appear in nginx's own rendered config"
       )
@@ -448,7 +456,7 @@ in
       wait_active(machine, "vmselect.service")
       machine.wait_for_open_port(4201)
 
-      config_dump = machine.succeed("${pkgs.nginx}/bin/nginx -T -c /etc/nginx/nginx.conf 2>&1")
+      config_dump = machine.succeed("${nginxConfigDump}/bin/nginx-config-dump")
       assert "victoria-stack-test.example.com" in config_dump, (
           "expected the configured domain to appear in nginx's own rendered config"
       )
