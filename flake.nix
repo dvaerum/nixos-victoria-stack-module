@@ -48,11 +48,28 @@
               # `nix` itself comes from the caller's PATH, so it matches their daemon.
               runtimeInputs = [
                 pkgs.coreutils
+                pkgs.findutils
                 pkgs.jq
                 pkgs.nix-eval-jobs
                 pkgs.openssh
               ];
               text = builtins.readFile ./scripts/gate.sh;
+            }
+          );
+        };
+
+        apps.update-durations = {
+          type = "app";
+          program = nixpkgs.lib.getExe (
+            pkgs.writeShellApplication {
+              name = "update-durations";
+              runtimeInputs = [
+                pkgs.coreutils
+                pkgs.gnugrep
+                pkgs.gnused
+                pkgs.jq
+              ];
+              text = builtins.readFile ./scripts/update-durations.sh;
             }
           );
         };

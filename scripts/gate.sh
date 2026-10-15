@@ -17,6 +17,8 @@ options:
   --workers N           evaluation workers (default min(nproc/2, 8))
   --max-memory-size MB  per-worker memory limit before it is recycled (default 6144)
   --max-jobs N          passed to `nix build` (0 = build only on remote builders)
+  --parallel N          boot tests built at once (default: --max-jobs when positive,
+                        else the host's core count)
   --remote HOST         ship the tree to HOST over ssh and run there
                         (default: $GATE_REMOTE; unset = run locally)
 EOF
@@ -28,6 +30,7 @@ sections=
 remote=${GATE_REMOTE:-}
 max_mem=6144
 max_jobs=
+parallel=
 ref=
 workers=
 
@@ -56,6 +59,11 @@ while [ $# -gt 0 ]; do
     max_jobs=$2
     shift
     ;;
+  --parallel)
+    [ $# -ge 2 ] || usage
+    parallel=$2
+    shift
+    ;;
   --remote)
     [ $# -ge 2 ] || usage
     remote=$2
@@ -82,6 +90,7 @@ if [ -n "$remote" ]; then
   remote_args=(--flake "path:$src" --max-memory-size "$max_mem")
   [ -z "$workers" ] || remote_args+=(--workers "$workers")
   [ -z "$max_jobs" ] || remote_args+=(--max-jobs "$max_jobs")
+  [ -z "$parallel" ] || remote_args+=(--parallel "$parallel")
   case $mode in
   all) remote_args+=(--all) ;;
   sections) remote_args+=(--sections "$sections") ;;
@@ -151,7 +160,21 @@ nix-eval-jobs "${eval_args[@]}" --workers "$workers" --max-memory-size "$max_mem
   --force-recurse >"$jobs_file" || eval_failed=1
 
 eval_errors=$(jq -s '[.[] | select(has("error"))] | length' "$jobs_file")
-mapfile -t drvs < <(jq -r 'select(has("error") | not) | .drvPath + "^*"' "$jobs_file")
+durations=
+[[ $ref != path:* ]] || durations=${ref#path:}/tests/durations.json
+[ -f "$durations" ] || durations=/dev/null
+# The derivations of the boot tests ($1 = true) or of the eval-only checks (false),
+# one per line behind the seconds the test took last time (9999 when
+# tests/durations.json does not know it: a new test goes first).
+# shellcheck disable=SC2016 # `$d` below is jq's
+checks() {
+  jq -r --argjson boot "$1" --slurpfile d "$durations" \
+    'select(has("error") | not) | select((.name | test("^(container|vm)-test-run-")) == $boot)
+     | "\(($d[0] // {})[.name] // 9999)\t\(.drvPath)^*"' "$jobs_file"
+}
+checks false | cut -f2 >"$tmp/plain.txt"
+checks true | sort -s -t $'\t' -k1,1nr | cut -f2 >"$tmp/boot.txt"
+mapfile -t drvs < <(cat "$tmp/plain.txt" "$tmp/boot.txt")
 mapfile -t outs < <(jq -r 'select(has("error") | not) | .outputs[]' "$jobs_file")
 evaluated=${#drvs[@]}
 echo "gate: evaluated $evaluated of $expected checks, $eval_errors evaluation errors" >&2
@@ -162,10 +185,26 @@ if [ "$eval_failed" -ne 0 ] || [ "$eval_errors" -ne 0 ] || [ "$evaluated" -eq 0 
   exit 1
 fi
 
-build_args=(--no-link --keep-going -L --stdin)
+# One `nix build` ignores the order of its arguments (measured: the same start order
+# with and without sorting them; its goals are ordered by derivation name), so it
+# cannot be told to begin with the slow tests. The eval-only checks (fast) go through
+# one `nix build`; the boot tests are built by xargs, one `nix build` each, slowest
+# first (tests/durations.json, refreshed by scripts/update-durations.sh): a long test
+# that starts last ends the gate late.
+build_args=(--no-link --keep-going -L)
 [ -z "$max_jobs" ] || build_args+=(--max-jobs "$max_jobs")
+if [ -z "$parallel" ]; then
+  parallel=${max_jobs:-0}
+  [ "$parallel" -gt 0 ] || parallel=$(nproc)
+fi
 build_failed=0
-printf '%s\n' "${drvs[@]}" | nix build "${build_args[@]}" || build_failed=1
+plain_pid=
+if [ -s "$tmp/plain.txt" ]; then
+  nix build "${build_args[@]}" --stdin <"$tmp/plain.txt" &
+  plain_pid=$!
+fi
+xargs -r -a "$tmp/boot.txt" -d '\n' -P "$parallel" -n 1 nix build "${build_args[@]}" || build_failed=1
+[ -z "$plain_pid" ] || wait "$plain_pid" || build_failed=1
 
 # `nix build` prints failures but not a count; what is still not in the store is what failed.
 # The exit status only says "some path is invalid" and the paths are counted from stdout.

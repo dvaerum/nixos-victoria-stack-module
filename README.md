@@ -492,7 +492,8 @@ already cover them:
 The suite is about 630 checks (`nix flake check -L`), most of them VM or
 container boots. Evaluating it in one process takes about 12 minutes (731 s
 measured); a cold full `nix flake check` takes about 20 minutes. `nix run .#gate`
-evaluates it in parallel instead and builds only what changed.
+evaluates it in parallel instead and builds only what changed (a cold run takes
+about 9 minutes on 32 threads).
 
 ```sh
 nix run .#gate -- --all                    # per task: every check, fail-closed
@@ -505,7 +506,10 @@ nix flake check -L                         # per stage: the final full gate
 `--all` exits non-zero on any evaluation error, any failed build, or if the
 evaluated checks differ in number from the flake's `checks`. Tuning:
 `--workers`, `--max-memory-size`, `--max-jobs 0` (build on remote builders
-only). See [ADR 0034](docs/decisions/0034-parallel-evaluation-test-gate.md).
+only), `--parallel N` (boot tests built at once). The boot tests start slowest
+first, from the timings in `tests/durations.json`; refresh them from the logs of
+a full run with `nix run .#update-durations -- gate.log > tests/durations.json`.
+See [ADR 0034](docs/decisions/0034-parallel-evaluation-test-gate.md).
 
 ## License
 
