@@ -44,7 +44,7 @@ jobs:
         with:
           name: ${{ inputs.artifact }}
 
-      - uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@v31.11.1
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes auto-allocate-uids cgroups
@@ -101,7 +101,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@v31.11.1
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes auto-allocate-uids cgroups
@@ -138,9 +138,10 @@ jobs:
               map (i: section.${builtins.elemAt names i})
                 (builtins.filter mine (builtins.genList (i: i) (builtins.length names)))'
           }
-          # Nix 2.22.1 (install-nix-action v27) itself occasionally dies while
-          # evaluating (exit 134 abort, 139 segfault; about 1 job in 80); a failed
-          # build or test exits 1 and is never retried.
+          # Nix 2.22.1 (the former install-nix-action v27 default) occasionally died
+          # while evaluating (exit 134 abort, 139 segfault; about 1 job in 80). Kept
+          # for the newer Nix until it has run clean for a while; a failed build or
+          # test exits 1 and is never retried.
           for attempt in 1 2 3; do
             rc=0
             build || rc=$?
