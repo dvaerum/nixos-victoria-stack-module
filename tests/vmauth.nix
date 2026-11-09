@@ -1540,19 +1540,68 @@ in
       throw "vmauth's ExecStart did not resolve through the overridden package: ${execStart}"
   );
 
-  # vmauth.package is `mkDefault pkgs.victoriametrics` unconditionally (its
-  # binary is not in the cluster tag metrics.package is built from); the
-  # default does not depend on which backends are enabled.
-  package-default-is-nixpkgs-victoriametrics = pkgs.runCommand "vmauth-package-default" { } (
+  # vmauth.package is `mkDefault` the cluster package (vmauth is built from
+  # the same -cluster tag as vminsert/vmselect/vmstorage, docs/decisions/0007);
+  # the default does not depend on which backends are enabled.
+  package-default-is-the-cluster-package = pkgs.runCommand "vmauth-package-default" { } (
     let
+      clusterPackage = pkgs.callPackage ../packages/victoriametrics-cluster/package.nix { };
       evaluated = evalWith { services.victoriaStack.logs.enable = true; };
       execStart = evaluated.config.systemd.services.vmauth.serviceConfig.ExecStart;
     in
-    if lib.hasPrefix "${pkgs.victoriametrics}/bin/vmauth" execStart then
+    if lib.hasPrefix "${clusterPackage}/bin/vmauth" execStart then
       "echo OK > $out"
     else
-      throw "vmauth's default package did not resolve to pkgs.victoriametrics: ${execStart}"
+      throw "vmauth's default package did not resolve to the cluster package: ${execStart}"
   );
+
+  # A vmauth older than 1.138.0 rejects the config the module renders
+  # (`access_log` is only accepted from that release; docs/decisions/0007).
+  # Fake packages: only the version matters at evaluation time.
+  package-below-the-floor-warns =
+    let
+      fake = pkgs.runCommand "vmauth-1.137.9" { version = "1.137.9"; } "mkdir -p $out/bin";
+    in
+    mkWarningFiresCheck {
+      name = "vmauth-package-below-the-floor-warns";
+      expectMessageSubstring = "1.138.0";
+      module = {
+        services.victoriaStack = {
+          metrics.enable = true;
+          vmauth.package = fake;
+        };
+      };
+    };
+
+  package-at-the-floor-does-not-warn =
+    let
+      fake = pkgs.runCommand "vmauth-1.138.0" { version = "1.138.0"; } "mkdir -p $out/bin";
+    in
+    mkNoWarningsCheck {
+      name = "vmauth-package-at-the-floor-does-not-warn";
+      module = {
+        services.victoriaStack = {
+          metrics.enable = true;
+          vmauth.package = fake;
+        };
+      };
+    };
+
+  # No version at all (name without one, no `version` attribute) must not
+  # crash evaluation or warn.
+  package-without-a-version-does-not-warn =
+    let
+      fake = pkgs.runCommand "vmauth" { } "mkdir -p $out/bin";
+    in
+    mkNoWarningsCheck {
+      name = "vmauth-package-without-a-version-does-not-warn";
+      module = {
+        services.victoriaStack = {
+          metrics.enable = true;
+          vmauth.package = fake;
+        };
+      };
+    };
 
   # docs/decisions/0021 -- the read tier (readTokensFile/adminPasswordFile)
   # must not be a blanket passthrough to each backend's ENTIRE native HTTP API:

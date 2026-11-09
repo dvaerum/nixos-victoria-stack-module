@@ -23,6 +23,13 @@ tag; nixpkgs has no cluster package). `vmauth.package` stays
 two versions differ, and the weekly dependency workflow bumps the cluster package
 to `pkgs.victoriametrics`' version.
 
+Update: vmauth is in the cluster tag after all (same source as the single-node
+tag), and the cluster package builds it. `vmauth.package` defaults to the same
+derivation as `metrics.package`; the version check is removed because nothing is
+left to skew, and the weekly workflow bumps the cluster package to the latest
+`-cluster` tag, independent of nixpkgs. vmauth must be 1.138.0 or newer
+(`access_log`); see [0007](./0007-package-override-options.md).
+
 Client-facing paths do not change: vmauth still serves `/metrics/...` and
 `/opentelemetry/...`, and rewrites them onto vmselect's `/select/0/prometheus/...`
 and vminsert's `/insert/0/...` ([0021](./0021-vmauth-read-tier-allow-list.md),

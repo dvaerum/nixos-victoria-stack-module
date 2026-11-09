@@ -29,3 +29,21 @@ Update: `metrics.package` is now the cluster package, which has no vmauth, so
 `vmauth.package` defaults to `pkgs.victoriametrics` again and no longer follows
 `metrics.package`. A check keeps the two versions equal
 ([0033](./0033-metrics-cluster-replaces-single-node.md)).
+
+## Update: vmauth is built from the cluster tag
+
+The claim above that vmauth is not part of the cluster tag was wrong about the
+source: `app/vmauth` is byte-identical in `v<version>` and `v<version>-cluster`
+for every mainline release checked; the cluster package just never built it.
+`packages/victoriametrics-cluster` now builds all four binaries, and
+`vmauth.package` defaults to that same derivation as `metrics.package`, so the
+two cannot skew. The version check is removed, and with it the deadlock where a
+nixpkgs bump moved `pkgs.victoriametrics` before the cluster package could
+follow (four failed weekly bumps in a row). `vmauth.package` stays overridable
+(`pkgs.victoriametrics` still works).
+
+The floor is vmauth 1.138.0: the module's rendered config uses `access_log`,
+which 1.136.0 rejects at start and which is accepted from 1.138.0. A
+`vmauth.package` with a version below it triggers a warning; a package with no
+version is not checked. Cluster and vmauth versions one release apart passed the
+module's vmauth tests in both directions.

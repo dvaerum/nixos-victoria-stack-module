@@ -275,13 +275,15 @@ in
         ];
         "not after the single-node unit" = !(lib.elem "victoriametrics.service" (afterOf cluster));
         "no MCP unit (they start after vmauth)" = !(lib.any (lib.hasPrefix "mcp-") (afterOf withMcp));
-        "package is pkgs.victoriametrics, not the cluster package" =
-          cluster.config.services.victoriaStack.vmauth.package.outPath == pkgs.victoriametrics.outPath;
+        "package is the cluster package (vmauth is built from the same tag)" =
+          cluster.config.services.victoriaStack.vmauth.package.outPath
+          == cluster.config.services.victoriaStack.metrics.package.outPath;
         "an overridden metrics.package is not used for vmauth" =
           (stack { metrics.package = pkgs.hello; }).config.services.victoriaStack.vmauth.package.outPath
-          == pkgs.victoriametrics.outPath;
+          == cluster.config.services.victoriaStack.vmauth.package.outPath;
         "logs only: still evaluates, same package" =
-          logsOnly.config.services.victoriaStack.vmauth.package.outPath == pkgs.victoriametrics.outPath;
+          logsOnly.config.services.victoriaStack.vmauth.package.outPath
+          == cluster.config.services.victoriaStack.vmauth.package.outPath;
       };
 
   # --- render script ---

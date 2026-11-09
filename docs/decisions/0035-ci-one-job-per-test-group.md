@@ -45,6 +45,20 @@ package is pinned one release back, with `push_branch` set, exercises bump,
 sharded check and push without any write to `main`. Scheduled runs have neither
 input and behave as before.
 
+## Update: the cluster bump no longer depends on nixpkgs
+
+The package stage used to bump the cluster package to `pkgs.victoriametrics`'
+version, with a check failing when they differed. A nixpkgs bump in stage 1
+then failed that check before stage 2 could move the cluster package: four
+weekly runs in a row. The cluster package now builds vmauth itself
+([0007](./0007-package-override-options.md)), the check is gone, and stage 2
+runs `nix-update --flake victoriametrics-cluster` with a regex on the
+`-cluster` tag. The two stages stay (their push ordering is unchanged) but no
+longer block each other. A final `report-failure` job opens, or comments on, an
+issue titled "Weekly dependency bump failed" with the run URL when any job of
+a scheduled run fails (a manual run does so only with the `report_failure`
+input); it is the only job with `issues: write`.
+
 ## Not covered
 
 `nix flake check` also evaluated the non-test outputs (packages, apps,

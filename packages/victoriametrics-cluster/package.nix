@@ -6,10 +6,10 @@
 
 # nixpkgs' `victoriametrics` builds only the single-node tag (v<version>);
 # the cluster binaries live under the separate `v<version>-cluster` tag and
-# have no nixpkgs package. The version is pinned by hand to
-# pkgs.victoriametrics.version so vmauth (from that package) and these
-# binaries never skew; tests/victoriametrics-cluster.nix fails when they
-# diverge, and the weekly dependency workflow bumps both together.
+# have no nixpkgs package. vmauth is built from the same tag (its source is
+# identical to the single-node tag's), so all four binaries come from one
+# derivation and cannot skew; the weekly dependency workflow bumps the version
+# to the latest `-cluster` tag, independent of nixpkgs (docs/decisions/0033).
 buildGo127Module (finalAttrs: {
   pname = "victoriametrics-cluster";
   version = "1.153.0";
@@ -33,6 +33,7 @@ buildGo127Module (finalAttrs: {
     "app/vminsert"
     "app/vmselect"
     "app/vmstorage"
+    "app/vmauth"
   ];
 
   postPatch = ''
@@ -49,7 +50,7 @@ buildGo127Module (finalAttrs: {
   ];
 
   meta = {
-    description = "VictoriaMetrics cluster components (vminsert, vmselect, vmstorage)";
+    description = "VictoriaMetrics cluster components (vminsert, vmselect, vmstorage, vmauth)";
     homepage = "https://github.com/VictoriaMetrics/VictoriaMetrics";
     license = lib.licenses.asl20;
     maintainers = [ ];

@@ -16,7 +16,7 @@ confirmed structural problems in nixpkgs' own `services.victoriametrics` /
 `victorialogs` / `victoriatraces` modules (hardcoded `-storageDataPath`,
 `DynamicUser` incompatible with a pre-mounted dataset, no `retentionPeriod` on
 `victorialogs`) by not wrapping them at all — storage services are written
-from scratch directly on `pkgs.victoriametrics`'s binaries.
+from scratch directly on the Victoria binaries.
 
 ## Repository layout (original target, historical)
 
@@ -116,7 +116,7 @@ exposed directly via its own `listenAddress` when vmauth is off).
   `Header=` line (ADR 0012).
 - Every service (metrics/logs/traces/vmauth/all 3 MCP packages) gets its own
   `.package` option; vmauth's defaults from metrics' via `mkDefault`
-  (superseded: vmauth.package defaults to `pkgs.victoriametrics`).
+  (superseded: vmauth.package defaults to the cluster package, ADR 0007).
 - Secrets: fully agnostic `...File` path options everywhere. No sops-nix
   dependency in module code. Composes with sops-nix's native one-key-per-secret
   addressing (documented, not re-implemented).
@@ -925,8 +925,8 @@ Tenants, stage 1 (logs and traces; the plan's stage 1):
   cross-container test; a tenant host ships logs and traces only for now).
 - The token render moved into `nixosModule/victoriaStack/vmauth-jq/`.
 - Metrics cluster build-up started: the cluster binaries are packaged
-  (`packages/victoriametrics-cluster`, same version as `pkgs.victoriametrics`,
-  a guard check and the weekly bump workflow follow it) and the option layout
+  (`packages/victoriametrics-cluster`, which also builds vmauth, and the weekly
+  bump workflow) and the option layout
   and ports exist (ADR 0033). The transitional `metrics.mode` switch is gone: the
   cluster replaced the single-node unit and every test was ported.
 
@@ -934,10 +934,10 @@ Metrics cluster, stage 2 (the plan's stage 2):
 - The VictoriaMetrics cluster replaces single-node for everyone (ADR 0033):
   `vmstorage` (data, retention, snapshots), `vminsert` (writes, 4209) and
   `vmselect` (reads, `metrics.listenAddress`, 4201) on one host, built from the
-  upstream `v<version>-cluster` tag (`packages/victoriametrics-cluster`, the
-  same version as `pkgs.victoriametrics`, guard check and weekly bump kept).
+  upstream `v<version>-cluster` tag (`packages/victoriametrics-cluster`, which
+  also builds vmauth; the weekly bump follows the latest `-cluster` tag).
   `metrics.mode` and `metrics.clusterPackage` were transitional and are gone;
-  `vmauth.package` stays `pkgs.victoriametrics`.
+  `vmauth.package` defaults to the same derivation.
 - vmauth maps the unchanged client paths onto `/insert/0/...` and
   `/select/0/prometheus/...`; Grafana and the metrics MCP server go through
   vmauth's read tier as before. The MCP keeps `VM_INSTANCE_TYPE=single`

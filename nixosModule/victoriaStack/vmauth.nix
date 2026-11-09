@@ -9,6 +9,11 @@ let
   topCfg = config.services.victoriaStack;
   cfg = topCfg.vmauth;
 
+  # `access_log` in the rendered config is only accepted from this release.
+  minVmauthVersion = "1.138.0";
+  # "" for a package carrying no version (nothing to compare).
+  packageVersion = lib.getVersion cfg.package;
+
   anyBackendEnabled = topCfg.metrics.enable || topCfg.logs.enable || topCfg.traces.enable;
   # Reads go to vmselect, writes to vminsert, each under the default tenant 0
   # prefix; tenant tokens are retargeted from it (vmauth-jq/tenant-routes.jq).
@@ -493,10 +498,11 @@ in
       lib.optional (cfg.https.enable && cfg.https.openFirewall) cfg.https.port
       ++ lib.optional (cfg.http.enable && cfg.http.openFirewall) cfg.http.port;
 
-    # vmauth's binary is not in the cluster tag the metrics package is built
-    # from, so it comes from nixpkgs' victoriametrics (docs/decisions/0007,
-    # 0033); tests/victoriametrics-cluster.nix keeps the two versions equal.
-    services.victoriaStack.vmauth.package = lib.mkDefault pkgs.victoriametrics;
+    # The cluster package builds vmauth from the same tag as vminsert/vmselect/
+    # vmstorage, so the two cannot skew (docs/decisions/0007, 0033).
+    services.victoriaStack.vmauth.package = lib.mkDefault (
+      pkgs.callPackage ../../packages/victoriametrics-cluster/package.nix { }
+    );
     services.victoriaStack.vmauth.openIngestPaths = lib.mkDefault autoOpenIngestPaths;
 
     # requireAuthForWrites = false already grants unauthenticated write
@@ -553,6 +559,11 @@ in
         requireAuthForWrites = false already permits unauthenticated writes --
         the configured write tokens provide no additional protection for the
         write path in this configuration.
+      ''
+      ++ lib.optional (packageVersion != "" && lib.versionOlder packageVersion minVmauthVersion) ''
+        services.victoriaStack.vmauth.package is vmauth ${packageVersion}, older
+        than ${minVmauthVersion}: the rendered config uses `access_log`, which
+        earlier releases reject at start (docs/decisions/0007).
       '';
 
     systemd.services.vmauth = {

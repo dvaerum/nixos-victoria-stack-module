@@ -13,6 +13,11 @@ name: Update dependencies
 #   2. bump-packages MCP packages + VictoriaMetrics cluster package; uploads
 #                    flake.lock and packages/ as an artifact
 #      check-packages / push-packages  likewise
+# The cluster package is bumped to the latest `-cluster` tag whatever nixpkgs
+# did in stage 1 (it builds vmauth itself), so a flake bump cannot fail a
+# version check and block stage 2.
+#   3. report-failure  scheduled runs only: any failed job above opens (or
+#                    comments on) an issue, so a stuck bump is not silent.
 # Only the push jobs hold `contents: write`, and they run no Nix and no
 # bumped code: the bump jobs (which build upstream release sources) and the
 # shards are read-only and keep no git credentials.
@@ -51,6 +56,10 @@ on:
         description: Branch both push jobs push to (created if missing); empty pushes to the branch the run started on
         type: string
         default: ""
+      report_failure:
+        description: Let report-failure open or update the issue on a failure (it always does on scheduled runs)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -154,13 +163,13 @@ jobs:
             nix-update --flake "$pkg" --build
           done
 
-      # Not "latest release": the cluster binaries must match the vmauth
-      # that nixpkgs' victoriametrics ships (after stage 1's bump),
-      # and the `-cluster` tag is not a release nix-update would pick.
-      - name: Bump the VictoriaMetrics cluster package to pkgs.victoriametrics' version
+      # The -cluster tags are not GitHub releases, but they are in releases.atom,
+      # which nix-update reads; the regex keeps LTS patch tags and pmm-* entries
+      # out. The package builds vmauth too, so nothing here depends on nixpkgs.
+      - name: Bump the VictoriaMetrics cluster package to the latest -cluster tag
         run: |
-          version=$(nix eval --raw --inputs-from . nixpkgs#victoriametrics.version)
-          nix-update --flake victoriametrics-cluster --version "$version" --build
+          nix-update --flake victoriametrics-cluster \
+            --version-regex '^v([0-9]+\.[0-9]+\.[0-9]+)-cluster$' --build
 
       - name: Detect a packages/ change
         id: diff
@@ -224,3 +233,27 @@ jobs:
         run: |
           git checkout -- flake.lock
           .github/scripts/commit-and-push.sh "packages: bump versions" packages/
+
+  report-failure:
+    needs: [bump-flake, check-flake, push-flake, bump-packages, check-packages, push-packages]
+    # `always()` so it runs after a failed ancestor; `contains` so it stays
+    # quiet for skipped jobs and cancelled runs.
+    if: ${{ always() && (github.event_name == 'schedule' || inputs.report_failure) && contains(needs.*.result, 'failure') }}
+    # The only job with `issues: write`; it runs no bumped code.
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    steps:
+      # The script lives in the repo, which this job would not otherwise
+      # check out: a sparse checkout is the least that gets it.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Open or update the failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: .github/scripts/report-failure.sh

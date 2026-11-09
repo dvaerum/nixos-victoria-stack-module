@@ -380,10 +380,8 @@ in
       "metrics.package is exactly the flake's package" =
         c.metrics.package.outPath == (pkgs.callPackage ../packages/victoriametrics-cluster/package.nix { })
         .outPath;
-      "metrics.package has the version of pkgs.victoriametrics" =
-        c.metrics.package.version == pkgs.victoriametrics.version;
-      "vmauth.package stays pkgs.victoriametrics" =
-        c.vmauth.package.outPath == pkgs.victoriametrics.outPath;
+      "vmauth.package is the same derivation as metrics.package" =
+        c.vmauth.package.outPath == c.metrics.package.outPath;
     };
 }
 // lib.mapAttrs' (
