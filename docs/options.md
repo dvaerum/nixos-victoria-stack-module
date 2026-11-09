@@ -2945,9 +2945,9 @@ true
 The package with the cluster binaries (` vminsert `, ` vmselect `,
 ` vmstorage `)\. Defaults to this flake’s own
 ` packages/victoriametrics-cluster `, built from upstream’s
-` v<version>-cluster ` tag at the version of ` pkgs.victoriametrics `
-(nixpkgs has no cluster package; docs/decisions/0033)\. A replacement
-must be version-matched to vmauth’s package\.
+` v<version>-cluster ` tag (nixpkgs has no cluster package;
+docs/decisions/0033)\. That package also builds ` vmauth `, and it is
+the default of ` vmauth.package `\.
 
 
 
@@ -5005,7 +5005,7 @@ false
 
 
 
-The victoriametrics package vmauth’s binary is bundled in\. Defaults (via mkDefault) to pkgs\.victoriametrics: vmauth is not part of the cluster tag that ` metrics.package ` is built from – see docs/decisions/0007-package-override-options\.md and 0033\.
+The package whose ` bin/vmauth ` is used\. Defaults (via mkDefault) to this flake’s own cluster package, the same derivation as the default of ` metrics.package ` (vmauth is built from the same ` -cluster ` tag, so the two cannot skew); any package with ` bin/vmauth ` at version 1\.138\.0 or newer works, for example ` pkgs.victoriametrics ` – see docs/decisions/0007-package-override-options\.md and 0033\.
 
 
 
