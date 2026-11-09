@@ -12,13 +12,13 @@
 # to the latest `-cluster` tag, independent of nixpkgs (docs/decisions/0033).
 buildGo127Module (finalAttrs: {
   pname = "victoriametrics-cluster";
-  version = "1.153.0";
+  version = "1.156.0";
 
   src = fetchFromGitHub {
     owner = "VictoriaMetrics";
     repo = "VictoriaMetrics";
     tag = "v${finalAttrs.version}-cluster";
-    hash = "sha256-/h677p/ozlm1UGfIird5T6xKMR6dddO8R8TrPCxxlF4=";
+    hash = "sha256-uZYZTScJLvLvuMBYHmPCjqzY39BjbXtr0WWR0bwaxN0=";
   };
 
   # vendor/ is committed upstream, so modules come from it directly.
