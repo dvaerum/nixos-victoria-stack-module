@@ -1564,7 +1564,9 @@ config.services.victoriaStack.metrics.enable
 
 How often victoria-logs pushes its own metrics (` -pushmetrics.interval `)\.
 Only used when ` selfMonitoring.enable ` is true\. The series carry a
-` job ` label naming the service, so the four services stay apart\.
+` job ` label naming the service, so the services stay apart, and an
+` instance ` label with the host name (` networking.hostName `), which the
+upstream VictoriaMetrics dashboards select on\.
 
 
 
@@ -3537,7 +3539,9 @@ config.services.victoriaStack.metrics.enable
 
 How often each process of the VictoriaMetrics cluster pushes its own metrics (` -pushmetrics.interval `)\.
 Only used when ` selfMonitoring.enable ` is true\. The series carry a
-` job ` label naming the service, so the four services stay apart\.
+` job ` label naming the service, so the services stay apart, and an
+` instance ` label with the host name (` networking.hostName `), which the
+upstream VictoriaMetrics dashboards select on\.
 
 
 
@@ -4774,7 +4778,9 @@ config.services.victoriaStack.metrics.enable
 
 How often victoria-traces pushes its own metrics (` -pushmetrics.interval `)\.
 Only used when ` selfMonitoring.enable ` is true\. The series carry a
-` job ` label naming the service, so the four services stay apart\.
+` job ` label naming the service, so the services stay apart, and an
+` instance ` label with the host name (` networking.hostName `), which the
+upstream VictoriaMetrics dashboards select on\.
 
 
 
@@ -6093,7 +6099,9 @@ config.services.victoriaStack.metrics.enable
 
 How often vmauth pushes its own metrics (` -pushmetrics.interval `)\.
 Only used when ` selfMonitoring.enable ` is true\. The series carry a
-` job ` label naming the service, so the four services stay apart\.
+` job ` label naming the service, so the services stay apart, and an
+` instance ` label with the host name (` networking.hostName `), which the
+upstream VictoriaMetrics dashboards select on\.
 
 
 
