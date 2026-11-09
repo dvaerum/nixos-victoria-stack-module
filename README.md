@@ -440,7 +440,7 @@ What changed incompatibly, and what to do:
 
 ## Escape hatches for things this module deliberately doesn't wrap
 
-Three things have no first-class option because generic NixOS mechanisms
+Four things have no first-class option because generic NixOS mechanisms
 already cover them:
 
 - **Systemd resource limits** (`MemoryMax`, `CPUQuota`, etc.) for the
@@ -486,6 +486,22 @@ already cover them:
     acceptTerms = true;
     defaults.email = "admin@example.com";
   };
+  ```
+
+- **Relabelling OTLP resource attributes** (`instance`/`job` from
+  `service.instance.id`/`service.name`): `metrics.insert.extraFlags` takes
+  vminsert's `-relabelConfig`, which applies to the OTLP path. OTLP
+  resource attributes arrive as labels with their dots kept, so the rules name
+  `service.instance.id` and `service.name`. Keep the `(.+)` guard, or series without
+  the attribute get an empty `instance`/`job`. Tested in `tests/relabel-otlp.nix`.
+
+  ```nix
+  services.victoriaStack.metrics.insert.extraFlags = [
+    "-relabelConfig=${(pkgs.formats.yaml { }).generate "relabel.yaml" [
+      { source_labels = [ "service.instance.id" ]; regex = "(.+)"; target_label = "instance"; }
+      { source_labels = [ "service.name" ]; regex = "(.+)"; target_label = "job"; }
+    ]}"
+  ];
   ```
 
 ## Running the tests

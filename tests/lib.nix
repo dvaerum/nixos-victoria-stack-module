@@ -170,8 +170,13 @@ let
 
         req = ExportMetricsServiceRequest()
         rm = req.resource_metrics.add()
-        svc_name = AnyValue(string_value="victoria-stack-test")
+        svc = sys.argv[4] if len(sys.argv) > 4 else "victoria-stack-test"
+        svc_name = AnyValue(string_value=svc)
         rm.resource.attributes.add(key="service.name", value=svc_name)
+        # Optional 3rd/4th arguments: service.instance.id and service.name.
+        if len(sys.argv) > 3:
+            inst = AnyValue(string_value=sys.argv[3])
+            rm.resource.attributes.add(key="service.instance.id", value=inst)
         sm = rm.scope_metrics.add()
         m = sm.metrics.add()
         m.name = metric_name

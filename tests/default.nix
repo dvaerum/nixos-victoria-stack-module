@@ -31,6 +31,7 @@ let
     testlib = import ./testlib.nix { inherit pkgs nixosModule; };
     restart-backoff = import ./restart-backoff.nix { inherit pkgs nixosModule; };
     sections = import ./sections.nix { inherit pkgs nixosModule; };
+    relabel-otlp = import ./relabel-otlp.nix { inherit pkgs nixosModule; };
     full = import ./full.nix { inherit pkgs nixosModule; };
   };
 in
