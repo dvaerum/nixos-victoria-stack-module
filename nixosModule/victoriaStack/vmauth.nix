@@ -677,6 +677,7 @@ in
               metricsEnabled = topCfg.metrics.enable;
               insertUrl = topCfg.metrics.effectiveInsertUrl;
               job = "vmauth";
+              instance = config.networking.hostName;
             }
           )
           ++ map escape cfg.extraFlags

@@ -17,6 +17,9 @@
       # enabled): the instance's own write address, bypassing vmauth.
       insertUrl,
       job,
+      # The host name: the upstream VictoriaMetrics dashboards select and
+      # template on `instance`, which pushed series otherwise lack.
+      instance,
     }:
     lib.optionals (selfMonitoring.enable && metricsEnabled) [
       # vminsert's tenant-0 path.
@@ -25,5 +28,6 @@
       # Without a per-service job, series like the Go runtime's would
       # collide across the services.
       "-pushmetrics.extraLabel=job=\"${job}\""
+      "-pushmetrics.extraLabel=instance=\"${instance}\""
     ];
 }

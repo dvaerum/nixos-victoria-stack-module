@@ -203,6 +203,7 @@ in
                     metricsEnabled = topCfg.metrics.enable;
                     insertUrl = topCfg.metrics.effectiveInsertUrl;
                     job = unitName;
+                    instance = config.networking.hostName;
                   }
                   ++ snapshot.maxAgeFlags cfg.snapshots
                   ++ lib.optional (

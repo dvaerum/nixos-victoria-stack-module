@@ -78,7 +78,9 @@ let
       description = ''
         How often ${pusher} pushes its own metrics (`-pushmetrics.interval`).
         Only used when `selfMonitoring.enable` is true. The series carry a
-        `job` label naming the service, so the four services stay apart.
+        `job` label naming the service, so the services stay apart, and an
+        `instance` label with the host name (`networking.hostName`), which the
+        upstream VictoriaMetrics dashboards select on.
       '';
     };
   };

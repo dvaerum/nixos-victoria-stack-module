@@ -1628,6 +1628,10 @@ in
         "${unit}: labelled with its own job" = lib.hasInfix "'-pushmetrics.extraLabel=job=\"${job}\"'" (
           execStart byDefault unit
         );
+        "${unit}: labelled with the host name as instance" =
+          lib.hasInfix "'-pushmetrics.extraLabel=instance=\"${byDefault.config.networking.hostName}\"'" (
+            execStart byDefault unit
+          );
         "${unit}: explicit false turns it off" =
           !(lib.hasInfix "pushmetrics" (execStart explicitlyOff unit));
       };
@@ -1731,6 +1735,8 @@ in
         };
         vmauth.selfMonitoring.interval = "5s";
       };
+      # Distinct from the node name: proves instance comes from networking.hostName.
+      networking.hostName = "stackhost";
     };
 
     testScript = ''
@@ -1743,7 +1749,7 @@ in
       for job in ["vmstorage", "vminsert", "vmselect", "victorialogs", "victoriatraces", "vmauth"]:
           machine.wait_until_succeeds(
               "curl -sfG 'http://127.0.0.1:4201/select/0/prometheus/api/v1/query' "
-              f"--data-urlencode 'query=count({{job=\"{job}\"}})' | grep -q '\"value\"'",
+              f"--data-urlencode 'query=count({{job=\"{job}\",instance=\"stackhost\"}})' | grep -q '\"value\"'",
               timeout=120,
           )
     '';

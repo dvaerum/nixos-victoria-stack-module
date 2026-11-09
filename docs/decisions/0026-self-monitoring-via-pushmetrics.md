@@ -40,3 +40,14 @@ endpoint on its own address (`http://<insert.listenAddress>/insert/0/prometheus/
 straight to it and not through vmauth. vmstorage, vminsert and vmselect each push
 their own metrics with `job="vmstorage"`, `"vminsert"` and `"vmselect"`, like the
 single-node process did, so `metrics.selfMonitoring` covers all three.
+
+## Update: instance label
+
+Every push also carries `-pushmetrics.extraLabel=instance="<networking.hostName>"`
+next to the `job` one. Pushed series otherwise had no `instance` label, and the
+upstream VictoriaMetrics dashboards (cluster, vmauth, logs, traces) filter and
+template on it, so their panels were empty. There is no option for it
+([0024](./0024-option-stability-stance.md)): the host name is the one sensible
+value, and a different one can be set at ingest by relabelling. An
+operator-supplied `-pushmetrics.*` flag in `extraFlags` is treated as before:
+it doubles the push and raises the existing warning.

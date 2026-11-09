@@ -68,6 +68,7 @@ let
                 metricsEnabled = cfg.enable;
                 insertUrl = cfg.effectiveInsertUrl;
                 job = proc.binary;
+                instance = config.networking.hostName;
               }
               ++ flags
               ++ proc.extraFlags

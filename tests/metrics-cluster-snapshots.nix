@@ -103,15 +103,16 @@ let
     };
   };
 
-  push = job: url: [
+  push = host: job: url: [
     "-pushmetrics.url=${url}"
     "-pushmetrics.interval=30s"
     "-pushmetrics.extraLabel=job=\"${job}\""
+    "-pushmetrics.extraLabel=instance=\"${host}\""
   ];
   insertPush = "http://127.0.0.1:4209/insert/0/prometheus/api/v1/import/prometheus";
   hasPush =
     c: unit: job: url:
-    lib.hasInfix (lib.escapeShellArgs (push job url)) (exec c unit);
+    lib.hasInfix (lib.escapeShellArgs (push c.networking.hostName job url)) (exec c unit);
   hasNoPush = c: unit: !(lib.hasInfix "pushmetrics" (exec c unit));
 
   python = ''
@@ -350,6 +351,9 @@ in
           selfMonitoring.interval = "2s";
         };
       };
+      # Distinct from the node name so the assertion below can only pass
+      # when the label comes from networking.hostName.
+      networking.hostName = "stackhost";
     };
 
     testScript = ''
@@ -358,13 +362,14 @@ in
       for u in ["vmstorage", "vminsert", "vmselect", "victorialogs"]:
           wait_active(machine, f"{u}.service")
 
-      # Each process's own vm_app_version arrives with its own job label,
-      # through vminsert and out of vmselect (/export: not held back by
+      # Each process's own vm_app_version arrives with its own job label and
+      # the host name as instance (the label the upstream dashboards select
+      # on), through vminsert and out of vmselect (/export: not held back by
       # -search.latencyOffset, unlike an instant query).
       for job in ["vmstorage", "vminsert", "vmselect", "victorialogs"]:
           machine.wait_until_succeeds(
               "curl -sf 'http://127.0.0.1:4201/select/0/prometheus/api/v1/export"
-              f"?match[]=vm_app_version%7Bjob%3D%22{job}%22%7D' | grep -q vm_app_version",
+              f"?match[]=vm_app_version%7Bjob%3D%22{job}%22%2Cinstance%3D%22stackhost%22%7D' | grep -q vm_app_version",
               timeout=90,
           )
     '';
