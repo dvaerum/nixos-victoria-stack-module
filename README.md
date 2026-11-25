@@ -392,7 +392,9 @@ else -- see `docs/decisions/0008-agnostic-secrets-file-options.md`.
 The collector takes over a few things; everything else on those services stays yours.
 
 - **Alloy** (when `metrics` or `traces` is enabled): sets `services.alloy.enable`,
-  `package` (default), `extraFlags` (appends to yours) and, when `writeTokenFile` is set,
+  `package` (default), `extraFlags` (appends to yours), `checkConfig = false` (default
+  priority, only on nixpkgs that has the option; its build-time `alloy validate` cannot pass
+  `--stability.level`, see [`docs/decisions/0037`](./docs/decisions/0037-alloy-checkconfig-off-for-the-collector-config.md)) and, when `writeTokenFile` is set,
   the unit's `LoadCredential=` (the token never goes through `environmentFile`). The generated pipeline is written to
   `environment.etc."alloy/config.alloy".text`, a text option whose definitions are
   concatenated with any text you add there. Block labels must be unique across the

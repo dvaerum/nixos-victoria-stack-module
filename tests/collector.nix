@@ -3032,6 +3032,75 @@ in
         echo OK > $out
       '';
 
+  # nixosModule/victoriaCollector/config.nix switches off nixpkgs' own build-time
+  # `alloy validate` (it cannot pass --stability.level); this is the replacement,
+  # over the config as rendered for the main option combinations.
+  default-rendered-config-validates-with-stability-flag =
+    let
+      textFor =
+        m:
+        (evalWithCollector {
+          services.victoriaCollector = {
+            hostType = "server";
+            writeEndpoint = "http://127.0.0.1:4204";
+          }
+          // m;
+        }).config.environment.etc."alloy/config.alloy".text;
+      cases = {
+        metrics = textFor { metrics.enable = true; };
+        traces = textFor { traces.enable = true; };
+        metrics-traces = textFor {
+          metrics.enable = true;
+          traces.enable = true;
+        };
+        metrics-logs = textFor {
+          metrics.enable = true;
+          logs.enable = true;
+        };
+        metrics-token = textFor {
+          metrics.enable = true;
+          writeTokenFile = "${writeTokenFixture}";
+        };
+        metrics-traces-token = textFor {
+          metrics.enable = true;
+          traces.enable = true;
+          writeTokenFile = "${writeTokenFixture}";
+        };
+        metrics-https-ca = textFor {
+          metrics.enable = true;
+          traces.enable = true;
+          writeEndpoint = "https://gateway.example.com";
+          writeTokenFile = "${writeTokenFixture}";
+          alloy.tlsCaFile = "/etc/ssl/gateway-ca.pem";
+        };
+        metrics-https-insecure = textFor {
+          metrics.enable = true;
+          writeEndpoint = "https://gateway.example.com";
+          alloy.tlsInsecureSkipVerify = true;
+        };
+      };
+    in
+    pkgs.runCommand "default-rendered-config-validates" { nativeBuildInputs = [ pkgs.grafana-alloy ]; }
+      ''
+        export HOME=$TMPDIR
+        ${lib.concatStringsSep "\n" (
+          lib.mapAttrsToList (name: text: ''
+            cat > ${name}.alloy <<'ALLOY_EOF'
+            ${text}
+            ALLOY_EOF
+            alloy validate --stability.level=public-preview ${name}.alloy \
+              || { echo "alloy rejects the default config rendered for ${name}" >&2; exit 1; }
+          '') cases
+        )}
+        # Control: without the flag the same config must be rejected, i.e. the
+        # flag is what these checks rely on.
+        if alloy validate metrics-traces.alloy 2>/dev/null; then
+          echo "alloy accepted the config without --stability.level: the flag is no longer needed (drop it from config.nix and this test)" >&2
+          exit 1
+        fi
+        echo OK > $out
+      '';
+
   queue-directory-with-dotdot-is-rejected = pkgs.runCommand "queue-directory-dotdot" { } (
     let
       fires =

@@ -1,5 +1,6 @@
 {
   config,
+  options,
   lib,
   pkgs,
   ...
@@ -104,6 +105,12 @@ in
         # config.alloy.nix) is still "Public preview" upstream -- this
         # flag is what those blocks actually need to be honored at all.
         extraFlags = [ "--stability.level=public-preview" ] ++ cfg.alloy.extraFlags;
+      }
+      # nixpkgs' build-time check cannot pass --stability.level (extraFlags are not
+      # honoured) and would reject otelcol.storage.file; the collector tests
+      # validate the rendered config with the flag instead (docs/decisions/0037).
+      // lib.optionalAttrs (options.services.alloy ? checkConfig) {
+        checkConfig = lib.mkDefault false;
       };
 
       environment.etc."alloy/config.alloy".text = configAlloyText;

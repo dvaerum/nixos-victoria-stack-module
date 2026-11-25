@@ -3,6 +3,8 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Test-only: a nixpkgs that has services.alloy.checkConfig (docs/decisions/0037).
+    nixpkgs-alloy-check.url = "github:NixOS/nixpkgs/nixos-unstable-small";
     utils.url = "github:numtide/flake-utils";
   };
 
@@ -11,6 +13,7 @@
       self,
       nixpkgs,
       utils,
+      ... # nixpkgs-alloy-check: read through self.inputs by tests/alloy-checkconfig.nix
     }:
     {
       nixosModules = {

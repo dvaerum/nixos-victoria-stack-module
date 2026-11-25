@@ -27,6 +27,7 @@ let
     escaping = import ./escaping.nix { inherit pkgs nixosModule; };
     syslog = import ./syslog.nix { inherit pkgs nixosModule; };
     syslog-listeners = import ./syslog-listeners.nix { inherit pkgs nixosModule; };
+    alloy-checkconfig = import ./alloy-checkconfig.nix { inherit pkgs nixosModule; };
     collector = import ./collector.nix { inherit pkgs nixosModule; };
     testlib = import ./testlib.nix { inherit pkgs nixosModule; };
     restart-backoff = import ./restart-backoff.nix { inherit pkgs nixosModule; };
